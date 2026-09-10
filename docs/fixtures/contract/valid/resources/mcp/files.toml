@@ -1,0 +1,13 @@
+name = "team-files"
+type = "stdio"
+command = "uvx"
+args = ["mcp-server-files"]
+shared = true
+projects = []
+roles = []
+namespace = "common"
+targets = ["claude"]
+
+[mcp.env]
+API_BASE = "https://files.example.internal"
+TOKEN = "$ENV:AILOOM_MCP_TOKEN"

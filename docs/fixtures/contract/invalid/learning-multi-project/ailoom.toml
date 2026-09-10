@@ -1,0 +1,18 @@
+# 无效：learning 归属多于一个项目（期望 E3002）
+schema_version = 1
+team_id = "example-team"
+
+[projects.a]
+name = "Project A"
+
+[projects.b]
+name = "Project B"
+
+[roles.dev]
+
+[namespaces]
+known = ["common"]
+shared = ["common"]
+
+[paths]
+learnings = "resources/learnings"

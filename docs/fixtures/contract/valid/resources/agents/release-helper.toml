@@ -1,0 +1,13 @@
+name = "release-helper"
+description = "按团队流程辅助发布检查"
+instructions = "检查发布清单并汇总缺失项，只输出结论。"
+model = "inherit"
+tools = ["Read", "Grep"]
+shared = true
+projects = []
+roles = []
+namespace = "common"
+targets = ["claude"]
+
+[tool_extras.claude]
+permission-mode = "plan"

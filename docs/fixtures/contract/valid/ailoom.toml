@@ -1,0 +1,30 @@
+# AILoom 团队源清单 v1 有效示例（AIL-001）
+schema_version = 1
+team_id = "example-team"
+
+[projects.a]
+name = "Project A"
+
+[projects.b]
+name = "Project B"
+
+[roles.dev]
+description = "Developer"
+
+[roles.pm]
+description = "Product manager"
+
+[namespaces]
+known = ["common", "team-lib"]
+shared = ["common"]
+
+[paths]
+skills = "resources/skills"
+rules = "resources/rules"
+docs = "resources/docs"
+agents = "resources/agents"
+mcp = "resources/mcp"
+learnings = "resources/learnings"
+env = "resources/env"
+hooks = "resources/hooks"
+packages = "resources/packages"

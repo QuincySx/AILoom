@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "team": {
+      "type": "git",
+      "identity": "git+https://example.com/team/resources.git",
+      "ref": "main",
+      "resolved_commit": "97fe5b79cd77063e8ea8a2effd4812fb668574a2",
+      "content_digest": "sha256:3f7a1c0b9d2e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a",
+      "locked_at": "2026-09-09T12:00:00Z"
+    }
+  }
+}

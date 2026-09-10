@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "workspace_root": "/Users/dev/work/project-a",
+  "repository_anchor": "git+https://example.com/team/business.git",
+  "workspace_id": "1a2b3c4d5e6f7081",
+  "device_id": "b0c9e2f1a3d45f6e",
+  "created_at": "2026-09-09T12:00:00Z",
+  "updated_at": "2026-09-09T12:00:00Z"
+}

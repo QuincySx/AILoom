@@ -1,0 +1,475 @@
+[
+  {
+    "id": "AIL-001",
+    "title": "冻结初版领域与配置契约",
+    "status": "Done",
+    "milestone": "M0",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-001.md"
+  },
+  {
+    "id": "AIL-002",
+    "title": "建立 Rust CLI 与工程基础",
+    "status": "Done",
+    "milestone": "M0",
+    "size": "S",
+    "depends_on": [
+      "AIL-001"
+    ],
+    "file": "cards/AIL-002.md"
+  },
+  {
+    "id": "AIL-003",
+    "title": "工作区识别与机器数据分区",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-001",
+      "AIL-002"
+    ],
+    "file": "cards/AIL-003.md"
+  },
+  {
+    "id": "AIL-004",
+    "title": "Git 资源源、缓存与版本锁定",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-002",
+      "AIL-003"
+    ],
+    "file": "cards/AIL-004.md"
+  },
+  {
+    "id": "AIL-005",
+    "title": "项目绑定与 init/status 命令",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-003",
+      "AIL-004"
+    ],
+    "file": "cards/AIL-005.md"
+  },
+  {
+    "id": "AIL-006",
+    "title": "资源清单与项目角色解析器",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-001",
+      "AIL-004",
+      "AIL-005"
+    ],
+    "file": "cards/AIL-006.md"
+  },
+  {
+    "id": "AIL-007",
+    "title": "同步计划、托管清单与差异预览",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-006"
+    ],
+    "file": "cards/AIL-007.md"
+  },
+  {
+    "id": "AIL-008",
+    "title": "同步执行、锁与失败恢复",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-007"
+    ],
+    "file": "cards/AIL-008.md"
+  },
+  {
+    "id": "AIL-009",
+    "title": "Skills 适配：Claude Code 与 Codex",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-009.md"
+  },
+  {
+    "id": "AIL-010",
+    "title": "规则与项目文档适配",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-007",
+      "AIL-008",
+      "AIL-009"
+    ],
+    "file": "cards/AIL-010.md"
+  },
+  {
+    "id": "AIL-011",
+    "title": "专用 Agent 统一定义与适配",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-011.md"
+  },
+  {
+    "id": "AIL-012",
+    "title": "MCP 定义、适配与托管更新",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-012.md"
+  },
+  {
+    "id": "AIL-013",
+    "title": "doctor 与安全卸载",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-009",
+      "AIL-010",
+      "AIL-011",
+      "AIL-012"
+    ],
+    "file": "cards/AIL-013.md"
+  },
+  {
+    "id": "AIL-014",
+    "title": "资源贡献与审核发布",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-014.md"
+  },
+  {
+    "id": "AIL-015",
+    "title": "经验文档与项目归属",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-005",
+      "AIL-006",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-015.md"
+  },
+  {
+    "id": "AIL-016",
+    "title": "知识索引与隔离召回",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-015"
+    ],
+    "file": "cards/AIL-016.md"
+  },
+  {
+    "id": "AIL-017",
+    "title": "召回 Agent 与经验总结 Skill",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "M",
+    "depends_on": [
+      "AIL-009",
+      "AIL-011",
+      "AIL-015",
+      "AIL-016"
+    ],
+    "file": "cards/AIL-017.md"
+  },
+  {
+    "id": "AIL-018",
+    "title": "Hook 生命周期与事件协议",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-003",
+      "AIL-005",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-018.md"
+  },
+  {
+    "id": "AIL-019",
+    "title": "会话、Token 与人工干预聚合",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-018"
+    ],
+    "file": "cards/AIL-019.md"
+  },
+  {
+    "id": "AIL-020",
+    "title": "经验总结提示与会话摘要",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "M",
+    "depends_on": [
+      "AIL-015",
+      "AIL-017",
+      "AIL-019"
+    ],
+    "file": "cards/AIL-020.md"
+  },
+  {
+    "id": "AIL-021",
+    "title": "本地实时看板",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "M",
+    "depends_on": [
+      "AIL-019"
+    ],
+    "file": "cards/AIL-021.md"
+  },
+  {
+    "id": "AIL-022",
+    "title": "团队统计上报与 digest",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-014",
+      "AIL-019",
+      "AIL-020"
+    ],
+    "file": "cards/AIL-022.md"
+  },
+  {
+    "id": "AIL-023",
+    "title": "初版跨项目端到端验收与文档",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-013",
+      "AIL-014",
+      "AIL-017",
+      "AIL-020",
+      "AIL-021",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-023.md"
+  },
+  {
+    "id": "AIL-024",
+    "title": "成员名册与项目查询",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-005",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-024.md"
+  },
+  {
+    "id": "AIL-025",
+    "title": "多源订阅、标签和资源版本更新",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-006",
+      "AIL-007",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-025.md"
+  },
+  {
+    "id": "AIL-026",
+    "title": "代码事实与增量知识图谱",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "XL",
+    "depends_on": [
+      "AIL-016"
+    ],
+    "file": "cards/AIL-026.md"
+  },
+  {
+    "id": "AIL-027",
+    "title": "图关系辅助召回",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-016",
+      "AIL-026"
+    ],
+    "file": "cards/AIL-027.md"
+  },
+  {
+    "id": "AIL-028",
+    "title": "知识反馈、晋升与维护",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-016",
+      "AIL-017",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-028.md"
+  },
+  {
+    "id": "AIL-029",
+    "title": "安装分发与 npm 包装",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-002",
+      "AIL-023"
+    ],
+    "file": "cards/AIL-029.md"
+  },
+  {
+    "id": "AIL-030",
+    "title": "管理后端、身份与审核模型设计",
+    "status": "Done",
+    "milestone": "LATER",
+    "size": "XL",
+    "depends_on": [
+      "AIL-001",
+      "AIL-014",
+      "AIL-022",
+      "AIL-024"
+    ],
+    "file": "cards/AIL-030.md"
+  },
+  {
+    "id": "AIL-031",
+    "title": "共享环境配置与团队文化",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-010",
+      "AIL-012"
+    ],
+    "file": "cards/AIL-031.md"
+  },
+  {
+    "id": "AIL-032",
+    "title": "团队自定义 Hook 分发",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-008",
+      "AIL-018"
+    ],
+    "file": "cards/AIL-032.md"
+  },
+  {
+    "id": "AIL-033",
+    "title": "团队声明的软件包与插件依赖",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-007",
+      "AIL-009",
+      "AIL-029"
+    ],
+    "file": "cards/AIL-033.md"
+  },
+  {
+    "id": "AIL-034",
+    "title": "目录、仓库与批量知识导入",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-015",
+      "AIL-016",
+      "AIL-026"
+    ],
+    "file": "cards/AIL-034.md"
+  },
+  {
+    "id": "AIL-035",
+    "title": "PR/MR 经验与 CI 知识更新",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-014",
+      "AIL-015",
+      "AIL-026",
+      "AIL-034"
+    ],
+    "file": "cards/AIL-035.md"
+  },
+  {
+    "id": "AIL-036",
+    "title": "业务仓库同仓资源模式与迁移",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "XL",
+    "depends_on": [
+      "AIL-003",
+      "AIL-004",
+      "AIL-008",
+      "AIL-014",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-036.md"
+  },
+  {
+    "id": "AIL-037",
+    "title": "事件留存、数据导出与清理",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-003",
+      "AIL-018",
+      "AIL-019",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-037.md"
+  }
+]

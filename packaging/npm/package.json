@@ -1,0 +1,20 @@
+{
+  "name": "ailoom-cli",
+  "version": "0.0.0-draft",
+  "description": "AILoom npm wrapper: locates and runs the platform ailoom binary (no Rust toolchain required)",
+  "license": "Apache-2.0",
+  "bin": {
+    "ailoom": "./cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": ["cli.js", "PLATFORMS.md"],
+  "repository": {
+    "type": "git",
+    "url": "https://example.invalid/ailoom"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

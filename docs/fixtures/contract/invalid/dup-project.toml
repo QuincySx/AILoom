@@ -1,0 +1,12 @@
+# 项目声明无效：projects 含重复项（期望 E3008）
+schema_version = 1
+projects = ["a", "a"]
+roles = ["dev"]
+
+[source]
+name = "team"
+type = "git"
+url = "https://example.com/team/resources.git"
+
+[targets]
+claude = true

@@ -1,0 +1,12 @@
+# 无效：未知 schema_version（期望 E3001）
+schema_version = 2
+team_id = "example-team"
+
+[projects.a]
+name = "Project A"
+
+[roles.dev]
+
+[namespaces]
+known = ["common"]
+shared = ["common"]

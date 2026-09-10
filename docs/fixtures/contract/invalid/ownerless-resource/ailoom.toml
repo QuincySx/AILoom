@@ -1,0 +1,15 @@
+# 无效：资源归属全空（期望 E3005）
+schema_version = 1
+team_id = "example-team"
+
+[projects.a]
+name = "Project A"
+
+[roles.dev]
+
+[namespaces]
+known = ["common"]
+shared = ["common"]
+
+[paths]
+skills = "resources/skills"

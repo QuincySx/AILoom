@@ -1,0 +1,10 @@
+# 项目声明无效：含绝对机器路径（期望 E3007）
+schema_version = 1
+
+[source]
+name = "team"
+type = "local"
+path = "/Users/dev/secret-team-resources"
+
+[targets]
+claude = true

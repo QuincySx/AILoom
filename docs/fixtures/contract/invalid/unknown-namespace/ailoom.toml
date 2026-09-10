@@ -1,0 +1,15 @@
+# 无效：资源引用未声明 namespace（期望 E3004）
+schema_version = 1
+team_id = "example-team"
+
+[projects.a]
+name = "Project A"
+
+[roles.dev]
+
+[namespaces]
+known = ["common"]
+shared = ["common"]
+
+[paths]
+skills = "resources/skills"

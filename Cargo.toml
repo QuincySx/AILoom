@@ -1,0 +1,41 @@
+[package]
+name = "ailoom"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Team AI resource, learning and observation manager (AILoom)"
+license = "Apache-2.0"
+
+[lib]
+name = "ailoom"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ailoom"
+path = "src/main.rs"
+
+# AIL-002: CLI 基础（clap 标准解析库）、JSON envelope（serde/serde_json）、错误类型（thiserror）
+# AIL-004/006: toml（源清单/声明）、serde_yaml（SKILL.md frontmatter）、sha2（内容哈希）、walkdir（资源枚举）
+# AIL-003/008/018: chrono（时间戳）、uuid（事件/会话 ID）、fs2（工作区锁）
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+serde_yaml = "0.9"
+thiserror = "2"
+sha2 = "0.10"
+walkdir = "2"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+fs2 = "0.4"
+syn = { version = "3.0.5", features = ["full", "parsing", "visit"] }
+# 行号定位（span-locations 由 proc-macro2 提供；syn 透传）
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = "thin"

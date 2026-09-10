@@ -1,0 +1,15 @@
+# AILoom 项目声明 v1 有效示例（AIL-001）
+# 注意：TOML 顶层键必须位于任何 [table] 之前
+schema_version = 1
+projects = ["a"]
+roles = ["dev"]
+
+[source]
+name = "team"
+type = "git"
+url = "https://example.com/team/resources.git"
+ref = "main"
+
+[targets]
+claude = true
+codex = true
