@@ -53,6 +53,7 @@ pub fn render_index(
         let entry_file = match tool {
             Tool::Claude => "CLAUDE.md",
             Tool::Codex => "AGENTS.md",
+            Tool::Alva => continue, // alva 文档索引无处安放（不碰其 AGENTS.md），skills-first
         };
         artifacts.push(Artifact {
             resource_id: rid.into(),

@@ -100,16 +100,21 @@ pub fn run(
         let mut t = TargetsDeclaration {
             claude: false,
             codex: false,
+            extra: vec![],
         };
         for target in &args.targets {
             match target.as_str() {
                 "claude" => t.claude = true,
                 "codex" => t.codex = true,
                 other => {
-                    return Err(Error::new(
-                        code::USAGE,
-                        format!("未知 target: {other}（支持 claude/codex）"),
-                    ))
+                    if crate::adapters::registry::lookup(other).is_some() {
+                        t.extra.push(other.to_string());
+                    } else {
+                        return Err(Error::new(
+                            code::USAGE,
+                            format!("未知 target: {other}（支持 claude/codex/cursor/antigravity）"),
+                        ));
+                    }
                 }
             }
         }

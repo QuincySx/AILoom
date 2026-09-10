@@ -55,6 +55,9 @@ pub struct TargetsDeclaration {
     pub claude: bool,
     #[serde(default = "yes")]
     pub codex: bool,
+    /// 声明式 rules 宿主（registry 已注册的 tool 名，如 cursor/antigravity）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -66,6 +69,7 @@ impl Default for TargetsDeclaration {
         TargetsDeclaration {
             claude: true,
             codex: true,
+            extra: vec![],
         }
     }
 }

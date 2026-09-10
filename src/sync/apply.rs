@@ -265,6 +265,52 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             }
             crate::sync_common::atomic_write(&file, serde_json::to_vec_pretty(&root)?.as_slice())
         }
+        ArtifactBody::TomlArrayEntry {
+            table,
+            key_field,
+            entry: value,
+        } => {
+            let mut root: toml::Value = if file.is_file() {
+                std::fs::read_to_string(&file)?.parse().map_err(|e| {
+                    Error::new(code::USER_CONTENT_CONFLICT, format!("TOML 解析失败: {e}"))
+                })?
+            } else {
+                toml::Value::Table(Default::default())
+            };
+            let mut cur = &mut root;
+            for seg in table.split('.') {
+                cur = cur
+                    .as_table_mut()
+                    .ok_or_else(|| Error::new(code::USER_CONTENT_CONFLICT, "TOML 结构冲突"))?
+                    .entry(seg.to_string())
+                    .or_insert_with(|| toml::Value::Table(Default::default()));
+            }
+            let arr = match cur {
+                toml::Value::Array(a) => a,
+                _ => {
+                    // 位置不是数组：以空数组重建（身份字段唯一的受管条目集合）
+                    *cur = toml::Value::Array(Vec::new());
+                    cur.as_array_mut().unwrap()
+                }
+            };
+            let kv = value
+                .get(key_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if let Some(slot) = arr
+                .iter_mut()
+                .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(kv.as_str()))
+            {
+                *slot = value.clone();
+            } else {
+                arr.push(value.clone());
+            }
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::sync_common::atomic_write(&file, toml::to_string_pretty(&root)?.as_bytes())
+        }
         ArtifactBody::TomlTable { table, value } => {
             let mut root: toml::Value = if file.is_file() {
                 std::fs::read_to_string(&file)?.parse().map_err(|e| {
@@ -367,6 +413,16 @@ fn cleanup_empty_parents(ws_root: &Path, file: &Path) {
 }
 
 /// 按托管清单条目键删除：只删除自己的条目/片段/文件。
+/// 沿点分路径下钻 &mut toml::Value（不存在则 None）。
+fn descend_mut<'a>(root: &'a mut toml::Value, segs: &[&str]) -> Option<&'a mut toml::Value> {
+    let (first, rest) = segs.split_first()?;
+    if rest.is_empty() {
+        root.get_mut(first)
+    } else {
+        descend_mut(root.get_mut(first)?, rest)
+    }
+}
+
 pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()> {
     let (path, mode) = split_key(key);
     let file = ws_root.join(&path);
@@ -403,6 +459,25 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
                     &file,
                     serde_json::to_vec_pretty(&root)?.as_slice(),
                 )?;
+            }
+            Ok(())
+        }
+        Some(m) if m.starts_with("tomlarr:") => {
+            // 数组条目删除：按 key_field 定位并移除（保留其它条目）
+            let rest = &m["tomlarr:".len()..];
+            let parts: Vec<&str> = rest.splitn(3, ':').collect();
+            if parts.len() == 3 && file.is_file() {
+                let (table, key_field, kv) = (parts[0], parts[1], parts[2]);
+                let mut root: toml::Value = std::fs::read_to_string(&file)?.parse()?;
+                if let Some(arr) = descend_mut(&mut root, &table.split('.').collect::<Vec<_>>())
+                    .and_then(|v| v.as_array_mut())
+                {
+                    arr.retain(|item| item.get(key_field).and_then(|v| v.as_str()) != Some(kv));
+                    crate::sync_common::atomic_write(
+                        &file,
+                        toml::to_string_pretty(&root)?.as_bytes(),
+                    )?;
+                }
             }
             Ok(())
         }

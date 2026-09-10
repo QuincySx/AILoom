@@ -33,6 +33,8 @@ pub fn render(
     let link_path: PathBuf = match tool {
         Tool::Claude => PathBuf::from(format!(".claude/skills/{}", entry.id.name)),
         Tool::Codex => PathBuf::from(format!("{CODEX_MANAGED_SKILL_PREFIX}{}", entry.id.name)),
+        // alva 通过 co-load 直接读取 .claude/skills（paths.rs 核实），无需单独部署
+        Tool::Alva => return Ok(()),
     };
 
     artifacts.push(Artifact {

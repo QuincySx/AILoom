@@ -20,3 +20,10 @@
 
 - 不写用户级（user scope）配置充数项目级能力。
 - 不把“文件存在”当作“宿主已加载”。真实宿主发现/调用验收需要交互环境，本卡以官方文档路径 + 落盘断言为验收，宿主内行为标记未验证。
+
+## 追加（2026-09-11，alva 接入实测）
+
+| 项 | 说明 |
+|---|---|
+| 实际部署验证 | alva-agent 仓库实测：`ailoom sync` 后 `.claude/skills/` 出现技能，与用户既有技能共存；settings.json hooks 注册保留用户条目 |
+| 已知默认行为 | 内置召回提示片段默认写 AGENTS.md——对 AGENTS.md 为 single source of truth 的项目应 `init --no-builtin`（alva 接入实测发现并已按此配置） |

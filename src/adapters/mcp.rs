@@ -138,6 +138,8 @@ pub fn render(
 ) -> Result<()> {
     let spec = parse_spec(entry)?;
     match tool {
+        // alva co-load .mcp.json：claude 适配器已部署同一文件，无需重复产物
+        Tool::Alva => Ok(()),
         Tool::Claude => {
             let mut server = serde_json::Map::new();
             match spec.kind {

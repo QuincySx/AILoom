@@ -145,6 +145,15 @@ pub fn render(
             });
             Ok(())
         }
+        Tool::Alva => {
+            unsupported.push(UnsupportedItem {
+                resource_id: entry.id.to_string(),
+                tool: tool.as_str().into(),
+                kind: "hook".into(),
+                reason: "alva hook 体系未核实（能力矩阵 unknown），不注册团队 Hook".into(),
+            });
+            Ok(())
+        }
         Tool::Codex => {
             unsupported.push(UnsupportedItem {
                 resource_id: entry.id.to_string(),

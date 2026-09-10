@@ -41,6 +41,15 @@ pub enum ArtifactBody {
         /// 源 identity（写 `.meta/SOURCE.json`）
         source_identity: String,
     },
+    /// TOML 数组 of tables 内按 key 字段管理的条目（如 alva 的 [[agent]]，按 name 叠加）
+    TomlArrayEntry {
+        /// 数组所在表的点分路径（如 "agent" 对应 [[agent]]）
+        table: String,
+        /// 身份字段（如 "name"）
+        key_field: String,
+        /// 本条目内容
+        entry: toml::Value,
+    },
 }
 
 /// 一个渲染产物。path 相对工作区根；禁止绝对路径与 `..`。
@@ -60,6 +69,17 @@ impl Artifact {
             ArtifactBody::JsonPointer { pointer, .. } => format!("#json:{pointer}"),
             ArtifactBody::TomlTable { table, .. } => format!("#toml:{table}"),
             ArtifactBody::Fragment { .. } => format!("#fragment:{}", self.resource_id),
+            ArtifactBody::TomlArrayEntry {
+                table,
+                key_field,
+                entry,
+            } => {
+                let kv = entry
+                    .get(key_field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                format!("#tomlarr:{table}:{key_field}:{kv}")
+            }
             ArtifactBody::Full { .. } => String::new(),
             ArtifactBody::Symlink { .. } => "#symlink".into(),
         };
@@ -72,7 +92,8 @@ impl Artifact {
             ArtifactBody::Full { content } => content.clone().into_bytes(),
             ArtifactBody::JsonPointer { value, .. } => serde_json::to_vec(value)
                 .map_err(|e| Error::new(code::RENDER_FAILED, format!("JSON 序列化失败: {e}")))?,
-            ArtifactBody::TomlTable { value, .. } => serde_json::to_vec(value)
+            ArtifactBody::TomlTable { value, .. }
+            | ArtifactBody::TomlArrayEntry { entry: value, .. } => serde_json::to_vec(value)
                 .map_err(|e| Error::new(code::RENDER_FAILED, format!("TOML 值规范化失败: {e}")))?,
             ArtifactBody::Fragment { content } => content.clone().into_bytes(),
             ArtifactBody::Symlink {

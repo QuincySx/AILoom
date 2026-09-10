@@ -128,6 +128,54 @@ pub fn current_state(ws_root: &Path, artifact: &Artifact) -> Result<Option<Strin
                 crate::ids::sha256_hex(&rendered)
             )))
         }
+        ArtifactBody::TomlArrayEntry {
+            table,
+            key_field,
+            entry: desired_entry,
+        } => {
+            // 数组 of tables：在数组中找 key_field 匹配 desired 的条目，比较其规范化哈希
+            if !file.is_file() {
+                return Ok(None);
+            }
+            let text = std::fs::read_to_string(&file)?;
+            let parsed: toml::Value = text.parse().map_err(|e| {
+                crate::error::Error::new(
+                    crate::error::code::USER_CONTENT_CONFLICT,
+                    format!("TOML 配置解析失败（保留原文件）: {e}"),
+                )
+                .context(serde_json::json!({ "file": file.display().to_string() }))
+            })?;
+            let mut cur = &parsed;
+            for seg in table.split('.') {
+                match cur.get(seg) {
+                    Some(v) => cur = v,
+                    None => return Ok(None),
+                }
+            }
+            let Some(arr) = cur.as_array() else {
+                return Err(crate::error::Error::new(
+                    crate::error::code::USER_CONTENT_CONFLICT,
+                    "TOML 数组表路径不是数组",
+                ));
+            };
+            let key = desired_entry.get(key_field).and_then(|v| v.as_str());
+            let Some(found) = key.and_then(|k| {
+                arr.iter()
+                    .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(k))
+            }) else {
+                return Ok(None);
+            };
+            let rendered = serde_json::to_vec(found).map_err(|e| {
+                crate::error::Error::new(
+                    crate::error::code::RENDER_FAILED,
+                    format!("TOML 值规范化失败: {e}"),
+                )
+            })?;
+            Ok(Some(format!(
+                "sha256:{}",
+                crate::ids::sha256_hex(&rendered)
+            )))
+        }
         ArtifactBody::Fragment { .. } => {
             if !file.is_file() {
                 return Ok(None);
@@ -318,6 +366,56 @@ pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Resu
             }
             let bytes = std::fs::read(&file)?;
             Ok(Some(format!("sha256:{}", crate::ids::sha256_hex(&bytes))))
+        }
+        Some(mode) if mode.starts_with("tomlarr:") => {
+            // tomlarr:{table}:{key_field}:{key_value} —— 在数组中按身份字段找当前条目并哈希
+            let rest = &mode["tomlarr:".len()..];
+            let parts: Vec<&str> = rest.splitn(3, ':').collect();
+            if parts.len() != 3 {
+                return Ok(None);
+            }
+            let (table, key_field, kv) = (parts[0], parts[1], parts[2]);
+            if !file.is_file() {
+                return Ok(None);
+            }
+            let text = std::fs::read_to_string(&file)?;
+            let parsed: toml::Value = text.parse().map_err(|e| {
+                crate::error::Error::new(
+                    crate::error::code::USER_CONTENT_CONFLICT,
+                    format!("TOML 解析失败（保留原文件）: {e}"),
+                )
+            })?;
+            let mut cur = &parsed;
+            for seg in table.split('.') {
+                match cur.get(seg) {
+                    Some(v) => cur = v,
+                    None => return Ok(None),
+                }
+            }
+            let arr = cur.as_array().ok_or_else(|| {
+                crate::error::Error::new(
+                    crate::error::code::USER_CONTENT_CONFLICT,
+                    "TOML 数组表路径不是数组",
+                )
+            })?;
+            let found = arr
+                .iter()
+                .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(kv));
+            match found {
+                Some(item) => {
+                    let rendered = serde_json::to_vec(item).map_err(|e| {
+                        crate::error::Error::new(
+                            crate::error::code::RENDER_FAILED,
+                            format!("TOML 值规范化失败: {e}"),
+                        )
+                    })?;
+                    Ok(Some(format!(
+                        "sha256:{}",
+                        crate::ids::sha256_hex(&rendered)
+                    )))
+                }
+                None => Ok(None),
+            }
         }
         Some(mode) if mode == "symlink" => {
             if !file

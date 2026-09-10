@@ -46,6 +46,14 @@ pub fn render(
                 },
             });
         }
+        Tool::Alva => {
+            unsupported.push(UnsupportedItem {
+                resource_id: entry.id.to_string(),
+                tool: tool.as_str().into(),
+                kind: "rule".into(),
+                reason: "alva 的 AGENTS.md 由项目手工维护（single source of truth），AILoom 不注入（skills-first 决策）".into(),
+            });
+        }
         Tool::Codex => {
             if conditional(entry.raw.as_deref()) {
                 unsupported.push(UnsupportedItem {
@@ -70,6 +78,10 @@ pub fn render(
         }
     }
     let _ = snapshot_root;
+}
+
+pub fn strip_frontmatter_content(text: &str) -> String {
+    strip_frontmatter(text)
 }
 
 fn strip_frontmatter(text: &str) -> String {

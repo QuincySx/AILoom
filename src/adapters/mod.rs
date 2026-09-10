@@ -2,12 +2,14 @@
 //! 能力矩阵见 docs/capabilities/（官方来源与核实日期记录在其中）。
 
 pub mod agents;
+pub mod alva_agents;
 pub mod builtin;
 pub mod common;
 pub mod docs;
 pub mod env;
 pub mod hooks_team;
 pub mod mcp;
+pub mod registry;
 pub mod rules;
 pub mod skills;
 
@@ -22,6 +24,7 @@ use std::path::Path;
 pub enum Tool {
     Claude,
     Codex,
+    Alva,
 }
 
 impl Tool {
@@ -29,6 +32,7 @@ impl Tool {
         match self {
             Tool::Claude => "claude",
             Tool::Codex => "codex",
+            Tool::Alva => "alva",
         }
     }
 }
@@ -38,6 +42,8 @@ impl Tool {
 pub struct ToolTargets {
     pub claude: bool,
     pub codex: bool,
+    /// 声明式 rules 宿主（registry 中的 tool 名）
+    pub extra: Vec<String>,
 }
 
 impl ToolTargets {
@@ -45,6 +51,7 @@ impl ToolTargets {
         match tool {
             Tool::Claude => self.claude,
             Tool::Codex => self.codex,
+            Tool::Alva => self.extra.iter().any(|t| t == "alva"),
         }
     }
     pub fn iter(&self) -> Vec<Tool> {
@@ -123,6 +130,42 @@ pub fn render(
                     });
                 }
                 ResourceKind::Learning => {}
+            }
+        }
+    }
+
+    // alva 宿主：agent 资源 → .alva/agents.toml（[[agent]] 数组条目）
+    if targets.extra.iter().any(|t| t == "alva") {
+        for selected in desired.deployable() {
+            let entry = &selected.entry;
+            if entry.id.kind != ResourceKind::Agent {
+                continue;
+            }
+            let resource_targets = common::resource_targets(entry.raw.as_deref());
+            if let Some(list) = &resource_targets {
+                if !list.iter().any(|t| t == "alva") {
+                    continue;
+                }
+            }
+            alva_agents::render(entry, Tool::Alva, &mut artifacts, &mut unsupported)?;
+        }
+    }
+
+    // 声明式 rules 宿主（registry 驱动）：rule 资源 ∩ extra targets
+    for selected in desired.deployable() {
+        let entry = &selected.entry;
+        if entry.id.kind != ResourceKind::Rule {
+            continue;
+        }
+        let resource_targets = common::resource_targets(entry.raw.as_deref());
+        for tool in &targets.extra {
+            if let Some(list) = &resource_targets {
+                if !list.iter().any(|t| t == tool) {
+                    continue;
+                }
+            }
+            if let Some(spec) = registry::lookup(tool) {
+                registry::render_rules(entry, spec, &mut artifacts)?;
             }
         }
     }

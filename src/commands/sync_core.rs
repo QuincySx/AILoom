@@ -184,6 +184,7 @@ pub fn prepare(
     let targets = ToolTargets {
         claude: declaration.targets.claude,
         codex: declaration.targets.codex,
+        extra: declaration.targets.extra.clone(),
     };
     let (mut artifacts, mut unsupported) = render(
         &desired,
@@ -204,6 +205,7 @@ pub fn prepare(
             &crate::adapters::ToolTargets {
                 claude: declaration.targets.claude,
                 codex: declaration.targets.codex,
+                extra: declaration.targets.extra.clone(),
             },
             true,
         ));

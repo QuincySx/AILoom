@@ -128,6 +128,10 @@ pub fn render(
             });
             Ok(())
         }
+        Tool::Alva => {
+            // alva 宿主由 alva_agents::render 在 mod 层直接分发（[[agent]] 数组条目）
+            Ok(())
+        }
     }
 }
 

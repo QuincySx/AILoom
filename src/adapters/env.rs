@@ -97,6 +97,19 @@ pub fn render(
             }
             Ok(())
         }
+        Tool::Alva => {
+            for (k, _) in spec.vars.iter().chain(spec.secret_refs.iter()) {
+                unsupported.push(UnsupportedItem {
+                    resource_id: format!("{}#{}", entry.id, k),
+                    tool: tool.as_str().into(),
+                    kind: "env".into(),
+                    reason: format!(
+                        "alva 项目级环境注入未核实（能力矩阵 unknown），变量 {k} 不写入"
+                    ),
+                });
+            }
+            Ok(())
+        }
     }
 }
 
