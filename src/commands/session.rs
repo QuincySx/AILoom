@@ -6,8 +6,8 @@ use crate::events::aggregate::{
     aggregate_all, aggregate_session, parse_claude_transcript, HeuristicConfig,
 };
 use crate::events::friction::{
-    build_local_summary, build_share_record, friction_score, mark_prompted, should_prompt,
-    was_prompted, FrictionConfig,
+    build_local_summary, build_share_record, friction_score, should_prompt, was_prompted,
+    FrictionConfig,
 };
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -23,12 +23,13 @@ pub struct SessionArgs {
 pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     let ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
-    let heuristic = HeuristicConfig::default();
+    let heuristic = HeuristicConfig::load(&ctx.layout.ws_dir);
     let cfg = FrictionConfig::load(&ctx.layout.ws_dir);
 
     match args.action.as_str() {
         "metrics" | "summary" => {
-            let (events, bad_lines) = crate::events::store::read_events(&ctx.layout.events_file)?;
+            let (events, bad_lines) =
+                crate::events::store::read_all_events(&ctx.layout.events_dir)?;
             if !json && bad_lines > 0 {
                 crate::logging::warn(format!("事件文件含 {bad_lines} 个坏行（已跳过）"));
             }
@@ -130,25 +131,24 @@ pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) 
     }
 }
 
-/// 摩擦提示决策（供 hook stop 事件调用）：达阈值且未提示过 → 提示一次并标记。
+/// 摩擦提示决策（供 hook stop 事件调用）：只读决策，是否达到阈值且尚未提示。
+/// 实际的“已提示”状态由投递方通过 `claim_prompted` 原子认领，避免
+/// “已标记却无可见提示”或双路径竞争。
 pub fn friction_check_for_session(ctx: &AppContext, session_id: &str) -> Result<Value> {
     let cfg = FrictionConfig::load(&ctx.layout.ws_dir);
-    let heuristic = HeuristicConfig::default();
-    let (events, _) = crate::events::store::read_events(&ctx.layout.events_file)?;
+    let heuristic = HeuristicConfig::load(&ctx.layout.ws_dir);
+    let (events, _) = crate::events::store::read_all_events(&ctx.layout.events_dir)?;
     let m = aggregate_session(&ctx.workspace.workspace_id, session_id, &events, &heuristic);
     match m {
         Err(_) => Ok(json!({ "prompt": false, "note": "无事件数据" })),
         Ok(m) => {
             let already = was_prompted(&ctx.layout.summary_dir, session_id);
-            let trigger = should_prompt(&m, &cfg) && !already;
-            if trigger {
-                mark_prompted(&ctx.layout.summary_dir, session_id)?;
-            }
             Ok(json!({
-                "prompt": trigger,
+                "prompt": should_prompt(&m, &cfg) && !already,
                 "score": friction_score(&m, cfg_clone(&cfg)),
                 "interventions": m.interventions,
                 "tool_errors": m.tool_errors,
+                "corrections": m.corrections_heuristic,
                 "prompt_enabled": cfg.prompt_enabled,
             }))
         }

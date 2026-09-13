@@ -109,6 +109,10 @@ pub fn run(args: &RecallArgs, json: bool, data_root: Option<&std::path::Path>) -
     if let Some(kind) = &args.kind {
         hits.retain(|h| &h.kind == kind);
     }
+    // 归档闭环消费（AIL-028）：归档清单中的经验从召回可见集合排除
+    let archived = crate::knowledge::feedback::archived_ids(&ctx);
+    let archived_count = hits.iter().filter(|h| archived.contains(&h.id)).count();
+    hits.retain(|h| !archived.contains(&h.id));
     // 真实召回才贡献使用指标（AIL-028）
     crate::knowledge::feedback::record_recall_hits(
         &ctx,
@@ -120,6 +124,7 @@ pub fn run(args: &RecallArgs, json: bool, data_root: Option<&std::path::Path>) -
         "fingerprint": crate::knowledge::index::fingerprint(&desired),
         "documents": index.documents.len(),
         "results": hits,
+        "archived_filtered": archived_count,
         "note": "索引过滤是相关性隔离，不构成访问控制",
     });
     if !json {

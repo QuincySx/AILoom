@@ -270,6 +270,32 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
         );
     }
 
+    // 7. 未核实 rules 宿主（仍会 file-placed；ok=true，detail 标明 unverified）
+    if let Some(decl) = &declaration {
+        let unverified: Vec<String> = decl
+            .targets
+            .extra
+            .iter()
+            .filter_map(|t| {
+                crate::adapters::registry::lookup(t)
+                    .filter(|s| !s.verified)
+                    .map(|s| s.tool.to_string())
+            })
+            .collect();
+        if !unverified.is_empty() {
+            push(
+                &mut checks,
+                "rules-host-verified",
+                true,
+                json!({ "unverified": unverified, "level": "file-placed" }),
+                Some(
+                    "这些宿主发现路径尚未官方核实：产物会落盘，但真实加载需自行验收（见 docs/capabilities/cursor-antigravity.md）"
+                        .into(),
+                ),
+            );
+        }
+    }
+
     let ok = checks.iter().all(|c| c["ok"] == true);
     let value = json!({
         "workspace_id": ctx.workspace.workspace_id,
@@ -290,6 +316,8 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
                 if let Some(fix) = c["fix"].as_str() {
                     println!("   修复: {fix}");
                 }
+            } else if let Some(tip) = c["fix"].as_str() {
+                println!("   提示: {tip}");
             }
         }
     }

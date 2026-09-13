@@ -21,7 +21,7 @@ Skill 实体只落在本机 SkillStore，按 SkillSource 分桶；业务 Workspa
 2. As a Team maintainer, I want Skill identity to be the path under the skills root (not a floating short alias alone), so that namespaces like `inking/line-art` stay unambiguous.
 3. As a developer, I want my Workspace to declare which Skills it Requires, so that I do not get every Skill in the SkillSource installed.
 4. As a developer, I want Required Skills to appear under `.claude/skills/<name>` (and Codex equivalents) as symlinks, so that host tools load them without a second copy.
-5. As a developer, I want Skill entities under `~/.ailoom/store/<source_key>/…` (or `AILOOM_STORE_ROOT`), so that multiple Workspaces share one materialized tree.
+5. As a developer, I want Skill entities under a shared store root (`AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store` > `~/.ailoom/store/<source_key>/…`), so that multiple Workspaces share one materialized tree.
 6. As a developer, I want `source_key` to be a reversible encoding of the normalized SkillSource identity, so that I can map a bucket back to its Git/local origin.
 7. As a developer, I want git SSH and HTTPS forms of the same SkillSource to share one SourceKey, so that I do not get duplicate buckets.
 8. As a developer, I want credentials stripped from identity before keying, so that tokens never become directory names.
@@ -52,7 +52,7 @@ Skill 实体只落在本机 SkillStore，按 SkillSource 分桶；业务 Workspa
 
 - **Respect ADR-0001**: Skill entities live only in SkillStore; Workspace host paths for Skills are symlinks to store directories; `sync` owns materialize + link alignment.
 - **Store layout (frozen for this slice)**:
-  - `AILOOM_STORE_ROOT` else `~/.ailoom/store`
+  - `AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store` (only if set) > `~/.ailoom/store`
   - `<store>/<source_key>/.meta/SOURCE.json`
   - `<store>/<source_key>/<rel-under-skills-root>/`
   - No `store/sources/` namespace; no `store/<key>/skills/` wrapper; no copying of `resources/` prefix into store.

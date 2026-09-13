@@ -25,8 +25,8 @@ _Avoid_: 把「短名字」或「逻辑项目」当成源身份。
 **SourceKey（源键）**：由规范化后的源 identity（URL 或本地路径，不含凭据）经可逆编码得到的分桶目录名。
 _Avoid_: 不可逆短哈希当唯一主键、人手起的易撞短名。
 
-**SkillStore（技能库）**：本机用户目录下按 SkillSource 分桶保存的 Skill 实体树（默认 `~/.ailoom/store/<source_key>/…`）；桶内元数据在 `.meta/`，skill 路径相对源仓 skills 根。
-_Avoid_: 每个业务仓各复制一份实体、把业务工程塞进技能库、在 store 下再套 `sources/` 分类层。
+**SkillStore（技能库）**：本机按 SkillSource 分桶保存的 Skill 实体树；根目录优先级为 `AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store`（仅当 XDG 已设）> `~/.ailoom/store/<source_key>/…`。桶内元数据在 `.meta/`，skill 路径相对源仓 skills 根。
+_Avoid_: 每个业务仓各复制一份实体、把业务工程塞进技能库、在 store 下再套 `sources/` 分类层、在未设置 XDG 时假装走 `~/.local/share`。
 
 **Require（选用）**：某个 Workspace（及可选 Agent 人设）声明需要哪些 Skill；部署结果是链接而非再存一份实体。
 _Avoid_: 隐式「全仓所有 skill 都装上」。

@@ -67,11 +67,11 @@ ailoom sync --recover    # 若曾中断，先恢复 journal
 
 ### Skill 实体与软链（ADR-0001）
 
-Skill **实体**只保存在用户 SkillStore（默认 `~/.ailoom/store`，可用 `AILOOM_STORE_ROOT` 覆盖），按**源仓库**分桶：
+Skill **实体**只保存在用户 SkillStore，按**源仓库**分桶。根目录优先级：`AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store`（仅当已设）> `~/.ailoom/store`。机器数据根同理：`--data-root` > `AILOOM_DATA_ROOT` > `$XDG_STATE_HOME/ailoom` > `~/.ailoom`。
 
 ```text
-~/.ailoom/store/<source_key>/.meta/SOURCE.json
-~/.ailoom/store/<source_key>/<相对 skills 根>/
+<store_root>/<source_key>/.meta/SOURCE.json
+<store_root>/<source_key>/<相对 skills 根>/
 ```
 
 `source_key` 为规范化仓库 URL/路径的可逆 base64url。业务 Workspace 里 `.claude/skills/<name>`（及 Codex `.ailoom/skills/<name>`）是指向上述实体目录的 **symlink**，不再每仓复制一份。

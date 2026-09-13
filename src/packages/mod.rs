@@ -119,6 +119,15 @@ fn packages_prefix(ctx: &AppContext) -> PathBuf {
 
 pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>) -> Result<Value> {
     let (ctx, _declaration, pkgs) = collect_packages(data_root, args.root.as_deref())?;
+    // 锁定契约（AIL-033）：版本必须为精确 semver；同包不同版本是可解释冲突，
+    // 不允许静默覆盖
+    for p in &pkgs {
+        if p.ecosystem == "npm" {
+            validate_exact_version(&p.name, &p.version)?;
+        }
+    }
+    check_version_conflicts(&pkgs)?;
+
     let prefix = packages_prefix(&ctx);
     let mut rows: Vec<Value> = Vec::new();
     for p in &pkgs {
@@ -151,60 +160,97 @@ pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>)
                     "安装是显式动作：追加 --yes 确认（普通 sync 不擅自安装）",
                 ));
             }
-            // 生成隔离 package.json + npm install（精确锁定版本）
-            let dir = prefix;
-            std::fs::create_dir_all(&dir)?;
-            let manifest_path = dir.join("package.json");
-            let mut manifest: serde_json::Value = if manifest_path.is_file() {
-                serde_json::from_str(&std::fs::read_to_string(&manifest_path)?).map_err(|e| {
-                    Error::new(
-                        code::USER_CONTENT_CONFLICT,
-                        format!("package.json 损坏: {e}"),
-                    )
-                })?
-            } else {
-                json!({ "name": "ailoom-workspace-packages", "private": true })
-            };
-            let deps = manifest
-                .as_object_mut()
-                .unwrap()
-                .entry("dependencies")
-                .or_insert(json!({}));
-            for p in pkgs.iter().filter(|p| p.ecosystem == "npm") {
-                deps.as_object_mut()
+            // 依赖已满足 → 不执行 npm install（幂等）
+            let npm_pkgs: Vec<&PkgSpec> = pkgs.iter().filter(|p| p.ecosystem == "npm").collect();
+            let missing: Vec<&&PkgSpec> = npm_pkgs
+                .iter()
+                .filter(|p| !check_npm(&prefix, &p.name, &p.version))
+                .collect();
+            let mut npm_ran = false;
+            if !missing.is_empty() {
+                // 生成隔离 package.json + npm install（精确锁定版本）
+                let dir = prefix.clone();
+                std::fs::create_dir_all(&dir)?;
+                let manifest_path = dir.join("package.json");
+                let mut manifest: serde_json::Value = if manifest_path.is_file() {
+                    serde_json::from_str(&std::fs::read_to_string(&manifest_path)?).map_err(
+                        |e| {
+                            Error::new(
+                                code::USER_CONTENT_CONFLICT,
+                                format!("package.json 损坏: {e}"),
+                            )
+                        },
+                    )?
+                } else {
+                    json!({ "name": "ailoom-workspace-packages", "private": true })
+                };
+                let deps = manifest
+                    .as_object_mut()
                     .unwrap()
-                    .insert(p.name.clone(), json!(p.version));
+                    .entry("dependencies")
+                    .or_insert(json!({}));
+                for p in &npm_pkgs {
+                    deps.as_object_mut()
+                        .unwrap()
+                        .insert(p.name.clone(), json!(p.version));
+                }
+                crate::sync_common::atomic_write(
+                    manifest_path.as_path(),
+                    serde_json::to_vec_pretty(&manifest)?.as_slice(),
+                )?;
+                let output = Command::new("npm")
+                    .args(["install", "--no-audit", "--no-fund", "--prefix"])
+                    .arg(&dir)
+                    .output()
+                    .map_err(|e| Error::new(code::PR_CREATE_FAILED, format!("npm 不可用: {e}")))?;
+                if !output.status.success() {
+                    // 安装失败不标资源可用
+                    return Err(Error::new(
+                        code::PR_CREATE_FAILED,
+                        format!(
+                            "npm install 失败：{}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ),
+                    )
+                    .fix("检查网络/registry；失败不标记依赖可用"));
+                }
+                npm_ran = true;
             }
-            crate::sync_common::atomic_write(
-                manifest_path.as_path(),
-                serde_json::to_vec_pretty(&manifest)?.as_slice(),
-            )?;
-            let output = Command::new("npm")
-                .args(["install", "--no-audit", "--no-fund", "--prefix"])
-                .arg(&dir)
-                .output()
-                .map_err(|e| Error::new(code::PR_CREATE_FAILED, format!("npm 不可用: {e}")))?;
-            if !output.status.success() {
-                // 安装失败不标资源可用
-                return Err(Error::new(
-                    code::PR_CREATE_FAILED,
-                    format!(
-                        "npm install 失败：{}",
-                        String::from_utf8_lossy(&output.stderr).trim()
-                    ),
-                )
-                .fix("检查网络/registry；失败不标记依赖可用"));
-            }
-            // 重查状态
+            // 重查状态：返回安装后状态（rows 为安装前快照，重算）
             let mut installed_count = 0;
-            for p in pkgs.iter().filter(|p| p.ecosystem == "npm") {
-                if check_npm(&dir, &p.name, &p.version) {
+            let mut after_rows: Vec<Value> = Vec::new();
+            for p in &pkgs {
+                if p.ecosystem != "npm" {
+                    after_rows.push(json!({ "id": p.id, "ecosystem": p.ecosystem, "state": "unsupported", "reason": "首批仅支持 npm" }));
+                    continue;
+                }
+                let ok = check_npm(&prefix, &p.name, &p.version);
+                if ok {
                     installed_count += 1;
                 }
+                after_rows.push(json!({
+                    "id": p.id,
+                    "ecosystem": "npm",
+                    "package": p.name,
+                    "version": p.version,
+                    "state": if ok { "satisfied" } else { "missing" },
+                }));
             }
-            let value = json!({ "prefix": dir.display().to_string(), "installed_ok": installed_count, "packages": rows });
+            let value = json!({
+                "prefix": prefix.display().to_string(),
+                "installed_ok": installed_count,
+                "npm_ran": npm_ran,
+                "packages": after_rows,
+            });
             if !json {
-                crate::logging::info(format!("依赖安装完成：{installed_count} 项满足"));
+                crate::logging::info(format!(
+                    "依赖安装完成：{installed_count} 项满足{}",
+                    if npm_ran {
+                        ""
+                    } else {
+                        "（此前已满足，未执行 npm install）"
+                    }
+                ));
             }
             Ok(value)
         }
@@ -213,6 +259,57 @@ pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>)
             format!("未知 packages 动作: {other}（check/install）"),
         )),
     }
+}
+
+/// 精确 semver 校验：`[v]主.次[.补][-预发布][+构建]`；拒绝空值/范围
+/// （`^ ~ * x > < |` 与空格）/纯 tag。
+fn validate_exact_version(name: &str, version: &str) -> Result<()> {
+    let v = version.trim();
+    let body = v.strip_prefix('v').unwrap_or(v);
+    let core = body.split(['-', '+']).next().unwrap_or(body);
+    let numeric: Vec<&str> = core.split('.').collect();
+    let ok = !body.is_empty()
+        && !body.contains(['*', '^', '~', '<', '>', '|', ' ', 'x', 'X'])
+        && numeric.len() >= 2
+        && numeric
+            .iter()
+            .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()));
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::new(
+            code::MANIFEST_MISSING_FIELD,
+            format!(
+                "包 {name} 的 version 必须是精确版本（如 1.2.3），拒绝空值/范围/tag: `{version}`"
+            ),
+        ))
+    }
+}
+
+/// 同名包多资源声明：版本一致 → 合并；不一致 → 可解释冲突。
+fn check_version_conflicts(pkgs: &[PkgSpec]) -> Result<()> {
+    let mut seen: std::collections::BTreeMap<&str, (&str, &str)> = Default::default();
+    for p in pkgs {
+        if p.ecosystem != "npm" {
+            continue;
+        }
+        match seen.get(p.name.as_str()) {
+            Some((prev_ver, prev_id)) if *prev_ver != p.version => {
+                return Err(Error::new(
+                    code::USER_CONTENT_CONFLICT,
+                    format!(
+                        "包 {} 版本冲突：{} 声明 {}，{} 声明 {}（同一工作区不能同时锁定两个版本）",
+                        p.name, prev_id, prev_ver, p.id, p.version
+                    ),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                seen.insert(p.name.as_str(), (p.version.as_str(), p.id.as_str()));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 检查隔离前缀内 node_modules/<name> 是否存在且 package.json version 匹配。

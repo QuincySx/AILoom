@@ -83,7 +83,7 @@ pub fn parse_spec(entry: &ResourceEntry) -> Result<TeamHookSpec> {
 /// 执行时无 shell 解释）；注册条目以 exec 前缀作为托管签名，与用户 Hook 分离。
 pub fn render(
     entry: &ResourceEntry,
-    ws_root: &Path,
+    _ws_root: &Path,
     tool: Tool,
     artifacts: &mut Vec<Artifact>,
     unsupported: &mut Vec<UnsupportedItem>,
@@ -111,28 +111,17 @@ pub fn render(
                     content: serde_json::to_string_pretty(&spec_json)?,
                 },
             });
-            // 追加到数组下一个索引（保留既有条目：用户/内置 hook）
-            let settings_path = ws_root.join(".claude/settings.json");
-            let next_index = if settings_path.is_file() {
-                std::fs::read_to_string(&settings_path)
-                    .ok()
-                    .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                    .and_then(|v| {
-                        v.pointer(&format!("/hooks/{}", spec.event))
-                            .and_then(|a| a.as_array())
-                            .map(|a| a.len())
-                    })
-                    .unwrap_or(0)
-            } else {
-                0
-            };
+            // 托管签名 = exec 前缀 + 本资源完整 ID：同一事件多个团队 Hook 各有签名，
+            // 重复同步按签名替换（不按下标），用户/内置 hook 与其他团队 hook 互不影响。
+            let signature = format!("{TEAM_HOOK_EXEC_PREFIX}{}", entry.id);
             artifacts.push(Artifact {
                 resource_id: entry.id.to_string(),
                 target_tool: tool.as_str().into(),
                 kind: "hook".into(),
                 path: ".claude/settings.json".into(),
-                body: ArtifactBody::JsonPointer {
-                    pointer: format!("/hooks/{}/{}", spec.event, next_index),
+                body: ArtifactBody::JsonArrayMerge {
+                    pointer: format!("/hooks/{}", spec.event),
+                    signature,
                     value: serde_json::json!({
                         "matcher": spec.matcher.unwrap_or_default(),
                         "hooks": [{

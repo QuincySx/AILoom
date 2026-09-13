@@ -41,6 +41,8 @@ pub struct Coverage {
     pub prompts: String,
     pub tokens: String,
     pub interventions: String,
+    /// 纠正启发式来源（hook 关键词识别，标注 heuristic）
+    pub corrections: String,
 }
 
 impl Coverage {
@@ -49,13 +51,17 @@ impl Coverage {
             prompts: kind.into(),
             tokens: kind.into(),
             interventions: kind.into(),
+            corrections: "heuristic".into(),
         }
     }
 }
 
-/// 纠正启发式配置（可配置项冻结在 AIL-020 记录；默认窗口 120s）。
+/// 纠正启发式配置：可经 `<ws_dir>/heuristic.toml` 覆盖（enabled/窗口/关键词，
+/// 更改配置确实影响聚合结果）；默认窗口 120s、启用。
 #[derive(Debug, Clone)]
 pub struct HeuristicConfig {
+    /// 总开关：false 时聚合不产生任何纠正计数
+    pub enabled: bool,
     pub correction_window_secs: i64,
     pub correction_keywords: Vec<String>,
 }
@@ -63,12 +69,54 @@ pub struct HeuristicConfig {
 impl Default for HeuristicConfig {
     fn default() -> Self {
         HeuristicConfig {
+            enabled: true,
             correction_window_secs: 120,
             correction_keywords: ["不对", "错了", "not right", "wrong", "revert", "undo"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
         }
+    }
+}
+
+impl HeuristicConfig {
+    /// 从工作区机器目录加载 heuristic.toml（缺省/坏文件回退默认值）。
+    /// 关键词只在 Hook 受控入口（parse_claude_payload）对单条 prompt 文本即时匹配，
+    /// 不落盘原文、不扫描历史。
+    pub fn load(dir: &Path) -> HeuristicConfig {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default)]
+        struct File {
+            enabled: Option<bool>,
+            correction_window_secs: Option<i64>,
+            correction_keywords: Option<Vec<String>>,
+        }
+        let f: File = std::fs::read_to_string(dir.join("heuristic.toml"))
+            .ok()
+            .and_then(|t| toml::from_str(&t).ok())
+            .unwrap_or_default();
+        let d = HeuristicConfig::default();
+        HeuristicConfig {
+            enabled: f.enabled.unwrap_or(d.enabled),
+            correction_window_secs: f.correction_window_secs.unwrap_or(d.correction_window_secs),
+            correction_keywords: f.correction_keywords.unwrap_or(d.correction_keywords),
+        }
+    }
+
+    /// 关键词命中（大小写不敏感）。仅用于 Hook 入口对单条 prompt 的受控识别。
+    pub fn matches_keyword(&self, text: &str) -> bool {
+        Self::matches_keywords(text, &self.correction_keywords)
+    }
+
+    /// 无配置实例的关键词匹配入口（Hook payload 解析使用）。
+    pub fn matches_keywords(text: &str, keywords: &[String]) -> bool {
+        if keywords.is_empty() {
+            return false;
+        }
+        let lower = text.to_lowercase();
+        keywords
+            .iter()
+            .any(|k| !k.is_empty() && lower.contains(&k.to_lowercase()))
     }
 }
 
@@ -89,9 +137,24 @@ pub fn aggregate_session(
     events: &[Event],
     heuristic: &HeuristicConfig,
 ) -> Result<SessionMetrics> {
+    aggregate_session_scoped(workspace_id, session_id, None, events, heuristic)
+}
+
+/// 带 provider 过滤的聚合内部入口：`tool` 限定会话事件的宿主工具。
+fn aggregate_session_scoped(
+    workspace_id: &str,
+    session_id: &str,
+    tool: Option<&str>,
+    events: &[Event],
+    heuristic: &HeuristicConfig,
+) -> Result<SessionMetrics> {
     let relevant: Vec<&Event> = events
         .iter()
-        .filter(|e| e.session_id == session_id && e.workspace_id == workspace_id)
+        .filter(|e| {
+            e.session_id == session_id
+                && e.workspace_id == workspace_id
+                && tool.map(|t| e.tool == t).unwrap_or(true)
+        })
         .collect();
     if relevant.is_empty() {
         return Err(Error::new(
@@ -110,6 +173,7 @@ pub fn aggregate_session(
     let mut saw_token_event = false;
     let mut last_prompt_time: Option<i64> = None;
 
+    let mut last_tool_time: Option<i64> = None;
     for e in &relevant {
         match e.kind.as_str() {
             "session-start" => {
@@ -120,10 +184,16 @@ pub fn aggregate_session(
             "prompt" => {
                 m.prompt_count += 1;
                 last_prompt_time = parse_time(e);
-                // 纠正启发式：prompt 内容哈希不可逆，因此纠正识别需要显式窗口信号：
-                // 若 prompt 事件带 dedup_key=correction（宿主端启发式产生），计数
-                if e.dedup_key.as_deref() == Some("correction") {
-                    m.corrections_heuristic += 1;
+                // 纠正启发式（AIL-019 接通）：识别在 Hook 受控入口完成——关键词命中的
+                // prompt 由 parse_claude_payload 标注 dedup_key=correction（文本不落盘）；
+                // 聚合在此应用可配置时间窗口：仅统计距最近一次 tool 事件
+                // ≤ correction_window_secs 的纠正；enabled=false 完全关闭。
+                if heuristic.enabled && e.dedup_key.as_deref() == Some("correction") {
+                    if let (Some(et), Some(lt)) = (parse_time(e), last_tool_time) {
+                        if et >= lt && et - lt <= heuristic.correction_window_secs {
+                            m.corrections_heuristic += 1;
+                        }
+                    }
                 }
             }
             "tool" => {
@@ -133,6 +203,7 @@ pub fn aggregate_session(
                         m.tool_errors += 1;
                     }
                 }
+                last_tool_time = parse_time(e);
             }
             "stop" => {
                 m.stop_count += 1;
@@ -149,7 +220,6 @@ pub fn aggregate_session(
         m.last_event_at = Some(e.time.clone());
     }
     let _ = last_prompt_time;
-    let _ = heuristic; // 关键词启发式由宿主端事件标注（dedup_key=correction），窗口在宿主端应用
 
     m.interventions = count_interventions(&relevant);
     m.tokens = max_tokens;
@@ -166,6 +236,7 @@ pub fn aggregate_session(
             "unavailable".into()
         },
         interventions: "heuristic".into(),
+        corrections: "heuristic".into(),
     };
     Ok(m)
 }
@@ -178,17 +249,23 @@ fn count_interventions(events: &[&Event]) -> u64 {
         .count() as u64
 }
 
-/// 聚合工作区全部会话。
+/// 聚合工作区全部会话。键为 `<tool>/<session_id>`：不同 provider（tool）的
+/// 同名字符串会话不合并（AIL-019 验收）；workspace 已按事件目录天然隔离。
 pub fn aggregate_all(
     workspace_id: &str,
     events: &[Event],
     heuristic: &HeuristicConfig,
 ) -> Result<BTreeMap<String, SessionMetrics>> {
     let mut out = BTreeMap::new();
-    for sid in crate::events::store::session_ids(events) {
+    let mut groups: BTreeMap<(String, String), ()> = Default::default();
+    for e in events.iter().filter(|e| e.workspace_id == workspace_id) {
+        groups.insert((e.tool.clone(), e.session_id.clone()), ());
+    }
+    for (tool, sid) in groups.into_keys() {
+        let key = format!("{tool}/{sid}");
         out.insert(
-            sid.clone(),
-            aggregate_session(workspace_id, &sid, events, heuristic)?,
+            key,
+            aggregate_session_scoped(workspace_id, &sid, Some(&tool), events, heuristic)?,
         );
     }
     Ok(out)

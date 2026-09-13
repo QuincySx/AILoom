@@ -1,5 +1,7 @@
 //! CLI 基础行为测试（AIL-002）。
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 

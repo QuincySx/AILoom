@@ -176,6 +176,43 @@ pub fn current_state(ws_root: &Path, artifact: &Artifact) -> Result<Option<Strin
                 crate::ids::sha256_hex(&rendered)
             )))
         }
+        ArtifactBody::JsonArrayMerge {
+            pointer, signature, ..
+        } => {
+            // 在目标数组中找嵌套 command 以签名开头的条目，比较其规范化哈希
+            if !file.is_file() {
+                return Ok(None);
+            }
+            let parsed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file)?)
+                .map_err(|e| {
+                    crate::error::Error::new(
+                        crate::error::code::USER_CONTENT_CONFLICT,
+                        format!("结构化配置解析失败（保留原文件）: {e}"),
+                    )
+                })?;
+            let found = parsed
+                .pointer(pointer)
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|e| crate::sync::apply::json_entry_has_signature(e, signature))
+                });
+            match found {
+                None => Ok(None),
+                Some(found) => {
+                    let rendered = serde_json::to_vec(found).map_err(|e| {
+                        crate::error::Error::new(
+                            crate::error::code::RENDER_FAILED,
+                            format!("JSON 序列化失败: {e}"),
+                        )
+                    })?;
+                    Ok(Some(format!(
+                        "sha256:{}",
+                        crate::ids::sha256_hex(&rendered)
+                    )))
+                }
+            }
+        }
         ArtifactBody::Fragment { .. } => {
             if !file.is_file() {
                 return Ok(None);
@@ -428,6 +465,45 @@ pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Resu
             current_symlink_hash(&file)
         }
         Some(mode) if mode.starts_with("json:") => current_json_entry(&file, &mode[5..]),
+        Some(mode) if mode.starts_with("jsonmerge:") => {
+            // 数组托管条目：在数组中找签名匹配条目并取其哈希
+            let rest = &mode["jsonmerge:".len()..];
+            let Some((pointer, signature)) = rest.split_once(':') else {
+                return Ok(None);
+            };
+            if !file.is_file() {
+                return Ok(None);
+            }
+            let parsed: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file)?)
+                .map_err(|e| {
+                    crate::error::Error::new(
+                        crate::error::code::USER_CONTENT_CONFLICT,
+                        format!("结构化配置解析失败（保留原文件）: {e}"),
+                    )
+                })?;
+            let found = parsed
+                .pointer(pointer)
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|e| crate::sync::apply::json_entry_has_signature(e, signature))
+                });
+            match found {
+                None => Ok(None),
+                Some(item) => {
+                    let rendered = serde_json::to_vec(item).map_err(|e| {
+                        crate::error::Error::new(
+                            crate::error::code::RENDER_FAILED,
+                            format!("JSON 序列化失败: {e}"),
+                        )
+                    })?;
+                    Ok(Some(format!(
+                        "sha256:{}",
+                        crate::ids::sha256_hex(&rendered)
+                    )))
+                }
+            }
+        }
         Some(mode) if mode.starts_with("toml:") => {
             if !file.is_file() {
                 return Ok(None);

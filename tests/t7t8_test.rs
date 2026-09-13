@@ -1,3 +1,5 @@
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -44,8 +46,7 @@ fn cursor_antigravity_rules_end_to_end() {
         let mut cmd = Command::new(bin());
         cmd.args(args)
             .current_dir(ws)
-            .env("HOME", tmp.path().join("home"))
-            .env("AILOOM_LOG", "error");
+            .envs(common::isolated_child_env(tmp.path()));
         if let Some((k, v)) = env_key {
             cmd.env(k, v);
         }
@@ -95,5 +96,85 @@ fn cursor_antigravity_rules_end_to_end() {
     assert!(ag.is_file(), "Antigravity 规则未落盘");
     let text = std::fs::read_to_string(&ag).unwrap();
     assert!(text.contains("trigger: always_on"), "{text}");
-    let _ = Path::new(".");
+}
+
+#[test]
+fn alva_agents_toml_create_and_resync() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let bare = tmp.path().join("origin.git");
+    ailoom::gitx::git_init(&bare, true).unwrap();
+    let src = tmp.path().join("team-src");
+    ailoom::gitx::git_init(&src, false).unwrap();
+    std::fs::create_dir_all(src.join("resources/agents")).unwrap();
+    std::fs::write(
+        src.join("ailoom.toml"),
+        "schema_version = 1\nteam_id = \"t\"\n[projects.alva]\nname = \"alva\"\n[namespaces]\nknown = [\"common\"]\nshared = [\"common\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("resources/agents/helper.toml"),
+        "name = \"helper\"\ndescription = \"alva helper\"\ninstructions = \"do helpful things\"\nmodel = \"inherit\"\ntools = [\"Read\"]\nshared = true\nnamespace = \"common\"\ntargets = [\"alva\"]\n",
+    )
+    .unwrap();
+    ailoom::gitx::git_commit_all(&src, "init", &["ailoom.toml", "resources"]).unwrap();
+
+    let ws = tmp.path().join("biz");
+    ailoom::gitx::git_init(&ws, false).unwrap();
+    std::fs::write(ws.join("a.txt"), "x").unwrap();
+    ailoom::gitx::git_commit_all(&ws, "init", &["a.txt"]).unwrap();
+
+    let dr = data.to_str().unwrap().to_string();
+    let run = |ws: &std::path::Path, args: &[&str]| {
+        Command::new(bin())
+            .args(args)
+            .current_dir(ws)
+            .envs(common::isolated_child_env(tmp.path()))
+            .output()
+            .unwrap()
+    };
+    let url = src.to_str().unwrap().to_string();
+    let init_args = [
+        "--data-root",
+        dr.as_str(),
+        "init",
+        "--url",
+        url.as_str(),
+        "--project",
+        "alva",
+        "--target",
+        "alva",
+    ];
+    let out = run(&ws, &init_args);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "init --target alva: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let sync_args = ["--data-root", dr.as_str(), "sync"];
+    let out = run(&ws, &sync_args);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "sync1: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let agents = ws.join(".alva/agents.toml");
+    assert!(agents.is_file(), "alva agents.toml 未创建");
+    let text = std::fs::read_to_string(&agents).unwrap();
+    assert!(text.contains("name = \"helper\""), "{text}");
+    assert!(text.contains("do helpful things"), "{text}");
+
+    // 二次 sync：已有 [[agent]]，必须成功
+    let out = run(&ws, &sync_args);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "sync2: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text2 = std::fs::read_to_string(&agents).unwrap();
+    assert!(text2.contains("helper"), "{text2}");
 }

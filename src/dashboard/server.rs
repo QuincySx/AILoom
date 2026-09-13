@@ -5,10 +5,6 @@ use crate::error::Result;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// 看板状态版本号（SSE 游标）。
-static STATE_VERSION: AtomicU64 = AtomicU64::new(0);
 
 pub struct DashboardArgs {
     pub port: u16,
@@ -43,10 +39,66 @@ pub fn run(args: &DashboardArgs, data_root: Option<&std::path::Path>) -> Result<
     Ok(())
 }
 
-fn handle(mut stream: TcpStream, layout: &crate::paths::WsLayout) -> std::io::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+/// 读取完整 HTTP 请求头：逐行直到空行（有界），返回请求行与 Last-Event-ID。
+fn read_request(reader: &mut BufReader<TcpStream>) -> std::io::Result<(String, Option<String>)> {
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
+    let mut last_event_id = None;
+    for _ in 0..128 {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 || line.trim().is_empty() {
+            break; // 空行 = 头部结束（不再继续读，避免阻塞等待更多输入）
+        }
+        if let Some(v) = line
+            .strip_prefix("Last-Event-ID:")
+            .or_else(|| line.strip_prefix("last-event-id:"))
+        {
+            last_event_id = Some(v.trim().to_string());
+        }
+    }
+    Ok((request_line, last_event_id))
+}
+
+/// 事件目录状态指纹：任何独立进程（hook/CLI）追加或轮转事件都会改变
+/// 文件集合/大小/mtime → 指纹变化。SSE 据此跨进程感知更新（不依赖进程内变量）。
+fn state_fingerprint(layout: &crate::paths::WsLayout) -> u64 {
+    let mut material = String::new();
+    if layout.events_dir.is_dir() {
+        let mut files: Vec<_> = std::fs::read_dir(&layout.events_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.file_name()
+                        .map(|n| {
+                            let n = n.to_string_lossy();
+                            n == "events.jsonl" || n.starts_with("events-archive-")
+                        })
+                        .unwrap_or(false)
+            })
+            .collect();
+        files.sort();
+        for f in files {
+            let meta = std::fs::metadata(&f).ok();
+            let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let mtime = meta
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            material.push_str(&format!("{}:{len}:{mtime};", f.display()));
+        }
+    }
+    let digest = crate::ids::sha256_hex(material.as_bytes());
+    u64::from_str_radix(&digest[..16], 16).unwrap_or(0)
+}
+
+fn handle(mut stream: TcpStream, layout: &crate::paths::WsLayout) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let (request_line, _last_event_id) = read_request(&mut reader)?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("/");
@@ -70,48 +122,40 @@ fn handle(mut stream: TcpStream, layout: &crate::paths::WsLayout) -> std::io::Re
             respond(&mut stream, 200, "OK", "application/json", &body)
         }
         "/api/events" => {
-            // SSE：游标重连——客户端带 Last-Event-ID 或缺省立即推快照
+            // SSE：首次订阅立即推全量快照（无论是否带 Last-Event-ID），
+            // 重连由新快照重建状态；游标为事件目录指纹，可跨进程感知。
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")
                 .unwrap_or_default();
             let _ = stream.flush();
-            let last_event_id = reader
-                .lines()
-                .take(20)
-                .find_map(|l| {
-                    l.ok().and_then(|line| {
-                        line.strip_prefix("Last-Event-ID:")
-                            .map(|v| v.trim().to_string())
-                    })
-                })
-                .and_then(|v| v.parse::<u64>().ok());
-            let last = last_event_id.unwrap_or(0);
-            let mut cursor = STATE_VERSION.load(Ordering::SeqCst);
-            if cursor > last {
-                // 补齐：立即推送当前全量快照
+            let send = |stream: &mut TcpStream, cursor: u64| -> std::io::Result<()> {
                 let state = build_state(layout);
                 let body = serde_json::to_string(&state).unwrap_or_default();
-                let _ = stream.write_all(
+                stream.write_all(
                     format!("id: {cursor}\nevent: snapshot\ndata: {body}\n\n").as_bytes(),
-                );
-                let _ = stream.flush();
+                )?;
+                stream.flush()
+            };
+            let mut cursor = state_fingerprint(layout);
+            if send(&mut stream, cursor).is_err() {
+                return Ok(()); // 客户端已断开：连接线程立即回收
             }
+            let mut polls = 0u32;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
-                let v = STATE_VERSION.load(Ordering::SeqCst);
+                let v = state_fingerprint(layout);
                 if v != cursor {
                     cursor = v;
-                    let state = build_state(layout);
-                    let body = serde_json::to_string(&state).unwrap_or_default();
-                    if stream
-                        .write_all(
-                            format!("id: {cursor}\nevent: snapshot\ndata: {body}\n\n").as_bytes(),
-                        )
-                        .is_err()
-                    {
-                        break; // 客户端断开
+                    if send(&mut stream, cursor).is_err() {
+                        break; // 客户端断开：回收
                     }
-                    let _ = stream.flush();
+                }
+                polls += 1;
+                if polls % 30 == 0 {
+                    // SSE 注释行保活：探测死连接并回收资源
+                    if stream.write_all(b": keepalive\n\n").is_err() || stream.flush().is_err() {
+                        break;
+                    }
                 }
             }
             Ok(())
@@ -124,7 +168,8 @@ fn handle(mut stream: TcpStream, layout: &crate::paths::WsLayout) -> std::io::Re
 fn build_state(layout: &crate::paths::WsLayout) -> serde_json::Value {
     let heuristic = crate::events::aggregate::HeuristicConfig::default();
     let cfg = crate::events::friction::FrictionConfig::load(&layout.ws_dir);
-    let (events, bad) = crate::events::store::read_events(&layout.events_file).unwrap_or_default();
+    let (events, bad) =
+        crate::events::store::read_all_events(&layout.events_dir).unwrap_or_default();
     // workspace_id 由事件携带：按事件自身的工作区分组聚合（互不混淆）
     let mut by_session: std::collections::BTreeMap<
         (String, String),
@@ -227,9 +272,4 @@ fn respond(
     stream.write_all(head.as_bytes())?;
     stream.write_all(body.as_bytes())?;
     stream.flush()
-}
-
-/// 版本推进（事件写入方调用，推进 SSE 游标）。
-pub fn bump_version() {
-    STATE_VERSION.fetch_add(1, Ordering::SeqCst);
 }

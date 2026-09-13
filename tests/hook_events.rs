@@ -35,8 +35,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -49,8 +48,7 @@ impl Ctx {
         let mut child = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -365,4 +363,541 @@ fn events_survive_prompt_privacy_and_forward_compat() {
     assert_eq!(v["result"]["session_id"], "s1");
     assert_eq!(v["result"]["stop_count"], 1);
     assert_eq!(v["result"]["tokens_availability"], "unavailable");
+}
+
+// ---------- AIL-018 返工回归（R02/R03/R04） ----------
+
+/// 执行实际生成的 Hook 注册命令：start/prompt/tool/stop 落标准事件并被聚合计数。
+#[test]
+fn registered_hook_commands_produce_standard_events() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    let args = ["--data-root", &c.dr(), "hooks", "--action", "install"];
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "{stderr}");
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    // 提取每个宿主事件下由 AILoom 注册的命令字符串
+    let mut commands: Vec<(String, String)> = Vec::new();
+    for ev in ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"] {
+        let arr = settings["hooks"][ev].as_array().expect(ev);
+        let cmd = arr
+            .iter()
+            .filter_map(|e| e["hooks"][0]["command"].as_str())
+            .find(|c| c.starts_with("ailoom hook"))
+            .expect("ailoom 注册命令存在")
+            .to_string();
+        commands.push((ev.to_string(), cmd));
+    }
+
+    // 按宿主 payload 逐条执行实际生成的命令（ailoom → 本地构建二进制）
+    let payloads: Vec<(&str, String)> = vec![
+        (
+            "SessionStart",
+            format!(r#"{{"session_id":"sr1","cwd":"{}"}}"#, ws.display()),
+        ),
+        (
+            "UserPromptSubmit",
+            format!(
+                r#"{{"session_id":"sr1","cwd":"{}","prompt":"请帮我构建"}}"#,
+                ws.display()
+            ),
+        ),
+        (
+            "PostToolUse",
+            format!(
+                r#"{{"session_id":"sr1","cwd":"{}","tool_name":"Bash","tool_input":{{"command":"make build"}}}}"#,
+                ws.display()
+            ),
+        ),
+        (
+            "Stop",
+            format!(r#"{{"session_id":"sr1","cwd":"{}"}}"#, ws.display()),
+        ),
+    ];
+    for ((ev, cmd), (want_ev, payload)) in commands.iter().zip(payloads.iter()) {
+        assert_eq!(ev, want_ev);
+        let mut parts = cmd.split_whitespace();
+        assert_eq!(
+            parts.next(),
+            Some("ailoom"),
+            "命令必须以 ailoom 开头: {cmd}"
+        );
+        let rest: Vec<&str> = parts.collect();
+        // 前置全局 --json（仅启用 JSON 输出 envelope，不改变注册命令的 hook 语义）
+        let mut full = vec!["--json".to_string(), "--data-root".to_string(), c.dr()];
+        full.extend(rest.iter().map(|s| s.to_string()));
+        let refs: Vec<&str> = full.iter().map(String::as_str).collect();
+        // 进程 cwd = ws（宿主真实调用形态）
+        let (code, stdout, stderr) = c.run_stdin(&ws, &refs, payload);
+        assert_eq!(code, 0, "{ev}: {stderr}");
+        let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+        assert_eq!(v["result"]["captured"], true, "{ev}: {v}");
+    }
+
+    // 事件落盘为标准类型并被聚合计数
+    let text = std::fs::read_to_string(events_file(&c)).unwrap();
+    for kind in [
+        "\"type\":\"session-start\"",
+        "\"type\":\"prompt\"",
+        "\"type\":\"tool\"",
+        "\"type\":\"stop\"",
+    ] {
+        assert!(text.contains(kind), "缺少 {kind}: {text}");
+    }
+    let args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "session",
+        "--action",
+        "metrics",
+        "--session",
+        "sr1",
+    ];
+    let refs: Vec<&str> = args.to_vec();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["prompt_count"], 1, "{v}");
+    assert_eq!(v["result"]["tool_calls"], 1, "{v}");
+    assert_eq!(v["result"]["stop_count"], 1, "{v}");
+    assert!(v["result"]["started_at"].is_string(), "{v}");
+}
+
+/// 同一宿主事件重复投递只计一次；两个真实独立（payload 不同）事件分别计数；轮转重投不翻倍。
+#[test]
+fn redelivery_dedup_but_similar_events_counted_separately() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    let dr = c.dr();
+    let hook = |payload: String| {
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "PostToolUse".to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        c.run_stdin(&ws, &refs, &payload)
+    };
+    let p1 = format!(
+        r#"{{"session_id":"dd1","cwd":"{}","tool_name":"Bash","tool_input":{{"command":"make build"}},"tool_use_id":"t1"}}"#,
+        ws.display()
+    );
+    let (code, _, stderr) = hook(p1.clone());
+    assert_eq!(code, 0, "{stderr}");
+    // 重投同一 payload
+    let (code, out, _) = hook(p1);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["result"]["captured"], false, "重投应被去重: {v}");
+    // 相似但独立的事件（不同 tool_use_id / 不同命令）
+    let p2 = format!(
+        r#"{{"session_id":"dd1","cwd":"{}","tool_name":"Bash","tool_input":{{"command":"make build"}},"tool_use_id":"t2"}}"#,
+        ws.display()
+    );
+    let (code, _, _) = hook(p2);
+    assert_eq!(code, 0);
+
+    let metrics = |session: &str| {
+        let args = [
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "session".to_string(),
+            "--action".to_string(),
+            "metrics".to_string(),
+            "--session".to_string(),
+            session.to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = c.run(&ws, &refs);
+        assert_eq!(code, 0, "{stderr}");
+        let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+        v["result"]["tool_calls"].as_u64().unwrap()
+    };
+    assert_eq!(metrics("dd1"), 2, "重投去重 + 独立事件分别计数");
+
+    // 轮转后重投旧事件：聚合不翻倍（与 AIL-037 联调）
+    let rotate = c.run(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "data",
+            "--action",
+            "rotate",
+            "--max-size-mb",
+            "0.000001",
+        ],
+    );
+    assert_eq!(rotate.0, 0, "{}", rotate.2);
+    let (code, _, _) = hook(format!(
+        r#"{{"session_id":"dd1","cwd":"{}","tool_name":"Bash","tool_input":{{"command":"make build"}},"tool_use_id":"t2"}}"#,
+        ws.display()
+    ));
+    assert_eq!(code, 0);
+    assert_eq!(metrics("dd1"), 2, "轮转后重投不翻倍");
+}
+
+/// 进程 cwd=A、payload.cwd=B → 写 B；显式 --root A → 写 A（优先级：显式 > payload.cwd）。
+#[test]
+fn payload_cwd_and_explicit_root_priority() {
+    let c = Ctx::new();
+    // 两个业务仓各自绑定同一数据根
+    let bare = c.tmp.path().join("origin.git");
+    ailoom::gitx::git_init(&bare, true).unwrap();
+    let team_src = common::make_team_source(c.tmp.path());
+    ailoom::gitx::git(
+        &team_src,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    )
+    .unwrap();
+    ailoom::gitx::git(&team_src, &["push", "-q", "-u", "origin", "HEAD"]).unwrap();
+    let ws_a = common::make_business_repo(c.tmp.path(), "biz-a");
+    let ws_b = common::make_business_repo(c.tmp.path(), "biz-b");
+    let dr = c.dr();
+    for ws in [&ws_a, &ws_b] {
+        let args = [
+            "--data-root".to_string(),
+            dr.clone(),
+            "init".to_string(),
+            "--url".to_string(),
+            team_src.to_str().unwrap().to_string(),
+            "--project".to_string(),
+            "a".to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run(ws, &refs);
+        assert_eq!(code, 0, "{stderr}");
+    }
+
+    let payload = |cwd: &Path| format!(r#"{{"session_id":"cw1","cwd":"{}"}}"#, cwd.display());
+    let hook_args = |root: Option<&Path>| {
+        let mut args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "SessionStart".to_string(),
+        ];
+        if let Some(r) = root {
+            args.push("--root".to_string());
+            args.push(r.to_str().unwrap().to_string());
+        }
+        args
+    };
+    fn as_refs(args: &[String]) -> Vec<&str> {
+        args.iter().map(String::as_str).collect()
+    }
+
+    let file_of = |ws: &Path| {
+        let wsid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+        c.tmp
+            .path()
+            .join("data")
+            .join("ws")
+            .join(wsid)
+            .join("events")
+            .join("events.jsonl")
+    };
+    let fa = file_of(&ws_a);
+    let fb = file_of(&ws_b);
+
+    // 进程 cwd=A、payload.cwd=B、无显式 root → 落 B
+    let a_args = hook_args(None);
+    let (code, out, stderr) = c.run_stdin(&ws_a, &as_refs(&a_args), &payload(&ws_b));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["result"]["captured"], true, "{v}");
+    assert!(
+        !fa.exists() || !std::fs::read_to_string(&fa).unwrap().contains("cw1"),
+        "A 不应收到该事件"
+    );
+    assert!(
+        fb.exists() && std::fs::read_to_string(&fb).unwrap().contains("cw1"),
+        "事件应写入 payload.cwd=B 的工作区"
+    );
+
+    // 显式 --root A + payload.cwd=B → 显式优先，写 A
+    let b_args = hook_args(Some(&ws_a));
+    let (code, out, stderr) = c.run_stdin(&ws_a, &as_refs(&b_args), &payload(&ws_b));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["result"]["captured"], true, "{v}");
+    assert!(
+        std::fs::read_to_string(&fa).unwrap().contains("cw1"),
+        "显式 root=A 时事件写 A"
+    );
+}
+
+/// 未知宿主事件：诊断并跳过，退出 0（宿主不中断）。
+#[test]
+fn unknown_host_event_diagnosed_exit_zero() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    let payload = format!(r#"{{"session_id":"u1","cwd":"{}"}}"#, ws.display());
+    let dr = c.dr();
+    let args = vec![
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr,
+        "hook".to_string(),
+        "--tool".to_string(),
+        "claude".to_string(),
+        "--event".to_string(),
+        "PreToolUse".to_string(),
+        "--root".to_string(),
+        ws.to_str().unwrap().to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run_stdin(&ws, &refs, &payload);
+    assert_eq!(code, 0, "未知事件不得阻塞宿主: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["captured"], false);
+    assert_eq!(v["result"]["reason"], "unknown-event");
+    assert!(
+        stderr.contains("未知宿主事件") || stderr.contains("PreToolUse"),
+        "{stderr}"
+    );
+}
+
+// ---------- AIL-020 返工回归（R11）：真实 Stop 提示链路 ----------
+
+/// 真实 Stop 命令作用于有足够干预的任意 session：宿主 stdout 含 systemMessage
+/// 提示（含真实 session id）；重复 Stop（新进程）不再提示；其他 session 独立。
+#[test]
+fn stop_prompt_uses_real_session_and_outputs_once() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    // 直接种入 2 次人工干预（宿主显式信号契约：dedup_key=intervention-N）
+    let wsid0 = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let ef = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(&wsid0)
+        .join("events")
+        .join("events.jsonl");
+    for n in 1..=2 {
+        let e = ailoom::events::schema::Event {
+            schema_version: 1,
+            event_id: format!("int-{n}"),
+            session_id: "fr-1".into(),
+            workspace_id: ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap()),
+            device_id: "dev".into(),
+            tool: "claude".into(),
+            time: ailoom::ids::now_iso(),
+            kind: "tool".into(),
+            tool_name: Some("Bash".into()),
+            exit_code: None,
+            duration_ms: None,
+            prompt_len: None,
+            prompt_hash: None,
+            tokens: None,
+            dedup_key: Some(format!("intervention-{n}")),
+        };
+        assert!(ailoom::events::store::append_event(&ef, &e).unwrap());
+    }
+
+    // 无 --json：emit_host_stdout 路径（宿主真实调用形态）
+    let stop = |sid: &str| {
+        let payload = format!(r#"{{"session_id":"{sid}","cwd":"{}"}}"#, ws.display());
+        let args = vec![
+            "--data-root".to_string(),
+            c.dr(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "Stop".to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        c.run_stdin(&ws, &refs, &payload)
+    };
+
+    let (code, stdout, stderr) = stop("fr-1");
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("systemMessage"),
+        "宿主 stdout 应含提示: {stdout}"
+    );
+    assert!(stdout.contains("fr-1"), "提示作用于真实 session: {stdout}");
+    assert!(
+        stdout.contains("session summary"),
+        "提示给出可执行的总结命令: {stdout}"
+    );
+
+    // 进程重启后重复 Stop：不再提示
+    let (code, stdout2, _) = stop("fr-1");
+    assert_eq!(code, 0);
+    assert!(
+        !stdout2.contains("systemMessage"),
+        "每会话最多一次: {stdout2}"
+    );
+
+    // 其他 session 独立：无事件 → 无提示
+    let (code, stdout3, _) = stop("fr-other");
+    assert_eq!(code, 0);
+    assert!(!stdout3.contains("systemMessage"), "{stdout3}");
+}
+
+/// 关闭提示（friction.toml prompt_enabled=false）后不再输出提示，但统计照常。
+#[test]
+fn prompt_disabled_no_notice_but_metrics_persist() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    let wsid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let ws_dir = c.tmp.path().join("data").join("ws").join(&wsid);
+    std::fs::create_dir_all(&ws_dir).unwrap();
+    std::fs::write(ws_dir.join("friction.toml"), "prompt_enabled = false\n").unwrap();
+
+    let ef = ws_dir.join("events").join("events.jsonl");
+    let e = ailoom::events::schema::Event {
+        schema_version: 1,
+        event_id: "int-x".into(),
+        session_id: "dis-1".into(),
+        workspace_id: wsid.clone(),
+        device_id: "dev".into(),
+        tool: "claude".into(),
+        time: ailoom::ids::now_iso(),
+        kind: "tool".into(),
+        tool_name: Some("Bash".into()),
+        exit_code: None,
+        duration_ms: None,
+        prompt_len: None,
+        prompt_hash: None,
+        tokens: None,
+        dedup_key: Some("intervention-1".into()),
+    };
+    assert!(ailoom::events::store::append_event(&ef, &e).unwrap());
+
+    let payload = format!(r#"{{"session_id":"dis-1","cwd":"{}"}}"#, ws.display());
+    let args = vec![
+        "--data-root".to_string(),
+        c.dr(),
+        "hook".to_string(),
+        "--tool".to_string(),
+        "claude".to_string(),
+        "--event".to_string(),
+        "Stop".to_string(),
+        "--root".to_string(),
+        ws.to_str().unwrap().to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run_stdin(&ws, &refs, &payload);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !stdout.contains("systemMessage"),
+        "关闭提示不得输出: {stdout}"
+    );
+
+    // 统计仍在
+    let dr_for_metrics = c.dr();
+    let margs = [
+        "--json",
+        "--data-root",
+        dr_for_metrics.as_str(),
+        "session",
+        "--action",
+        "metrics",
+        "--session",
+        "dis-1",
+    ];
+    let (code, stdout, stderr) = c.run(&ws, &margs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["interventions"], 1, "关闭提示仍统计: {v}");
+}
+
+/// AIL-019 全链路：真实 hook 入口关键词标注 → 窗口内聚合计数 → 配置关闭即失效。
+#[test]
+fn correction_heuristic_end_to_end_via_hook_entry() {
+    let c = Ctx::new();
+    let ws = setup(&c);
+    let wsid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let dr = c.dr();
+    let hook = |event: &str, prompt_json: &str| {
+        let payload = format!(
+            r#"{{"session_id":"he-1","cwd":"{}","prompt":{prompt_json}}}"#,
+            ws.display()
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            event.to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        c.run_stdin(&ws, &refs, &payload)
+    };
+
+    // 工具事件（建立窗口基准）+ 关键词纠正 + 普通提示
+    let (code, _, stderr) = hook("PostToolUse", r#""忽略""#);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, out, stderr) = hook("UserPromptSubmit", r#""不对，改成缓存预热""#);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["result"]["captured"], true, "{v}");
+    let (code, _, stderr) = hook("UserPromptSubmit", r#""请继续""#);
+    assert_eq!(code, 0, "{stderr}");
+
+    let text = std::fs::read_to_string(events_file(&c)).unwrap();
+    assert!(
+        text.contains("\"dedup_key\":\"correction\""),
+        "hook 入口应标注 correction（文本仍不落盘）: {text}"
+    );
+    assert!(
+        !text.contains("不对，改成缓存预热"),
+        "prompt 原文不落盘: {text}"
+    );
+
+    let metrics = || {
+        let args = [
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "session".to_string(),
+            "--action".to_string(),
+            "metrics".to_string(),
+            "--session".to_string(),
+            "he-1".to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = c.run(&ws, &refs);
+        assert_eq!(code, 0, "{stderr}");
+        let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+        v["result"].clone()
+    };
+    let m = metrics();
+    assert_eq!(m["corrections_heuristic"], 1, "窗口内关键词纠正计数: {m}");
+    assert_eq!(m["prompt_count"], 2, "普通提示不计纠正: {m}");
+
+    // 更改配置确实影响结果：关闭启发式
+    let ws_dir = c.tmp.path().join("data").join("ws").join(&wsid);
+    std::fs::write(ws_dir.join("heuristic.toml"), "enabled = false\n").unwrap();
+    let m = metrics();
+    assert_eq!(m["corrections_heuristic"], 0, "关闭后不再计数: {m}");
 }

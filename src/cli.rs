@@ -150,9 +150,12 @@ pub enum Command {
         /// 目标项目
         #[arg(long)]
         project: Option<String>,
-        /// 导入目录（Markdown）
+        /// 导入源（Markdown 目录或本地 Git 仓库）
         #[arg(long)]
         dir: std::path::PathBuf,
+        /// 显式仓库列表文件（每行一个目录/仓库路径；# 注释）
+        #[arg(long)]
+        repo_list: Option<std::path::PathBuf>,
         /// 目标：shared 或 project:<id>
         #[arg(long)]
         target: String,
@@ -258,7 +261,7 @@ pub enum Command {
     },
     /// 团队统计上报与汇总：push | digest | status（AIL-022）
     Report {
-        /// 动作：push | digest | status
+        /// 动作：push | retry | digest | status
         #[arg(long)]
         action: String,
         /// 显式工作区根
@@ -267,7 +270,7 @@ pub enum Command {
     },
     /// 知识反馈与维护：feedback | maintenance | promote（AIL-028）
     Knowledge {
-        /// 动作：feedback | maintenance | promote
+        /// 动作：feedback | maintenance | promote | archive | restore
         #[arg(long)]
         action: String,
         /// 学习 ID
@@ -279,6 +282,9 @@ pub enum Command {
         /// 晋升草稿正文
         #[arg(long)]
         text: Option<String>,
+        /// 稳定反馈事件身份（同 id 重试幂等）
+        #[arg(long)]
+        feedback_id: Option<String>,
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
@@ -321,6 +327,15 @@ pub enum Command {
         /// PR 创建方式：auto 或 manual
         #[arg(long, default_value = "auto")]
         provider: String,
+        /// 显式工作区根
+        #[arg(long)]
+        root: Option<std::path::PathBuf>,
+    },
+    /// 同仓贡献：把当前子树资源改动提交到隔离分支（AIL-036）
+    ContributeSelf {
+        /// 提交信息
+        #[arg(long, default_value = "ailoom: 同仓资源贡献")]
+        message: String,
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,

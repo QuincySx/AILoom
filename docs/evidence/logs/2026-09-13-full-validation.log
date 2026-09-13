@@ -1,0 +1,508 @@
+# 全量验证（2026-09-13，返工轮次）
+$ env -u XDG_DATA_HOME -u XDG_STATE_HOME -u AILOOM_STORE_ROOT -u AILOOM_DATA_ROOT cargo test --locked --offline --all-features --no-fail-fast
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 37.89s
+     Running unittests src/lib.rs (target/debug/deps/ailoom-42f90fc116d290ab)
+
+running 43 tests
+test adapters::common::tests::fragment_markers_contain_resource_id ... ok
+test adapters::common::tests::fragment_roundtrip_preserves_user_text ... ok
+test error::tests::exit_codes_follow_segment_table ... ok
+test events::auto_sync::tests::due_respects_ttl ... ok
+test events::auto_sync::tests::parse_interval_days ... ok
+test error::tests::error_json_has_stable_fields ... ok
+test gitx::tests::redact_hides_password_keeps_utf8 ... ok
+test gitx::tests::normalize_urls_strips_credentials_and_case ... ok
+test events::schema::tests::unknown_fields_are_tolerated ... ok
+test events::schema::tests::bad_version_and_type_rejected ... ok
+test knowledge::search::tests::cjk_bigrams_and_ascii_words ... ok
+test paths::tests::ailoom_data_root_beats_xdg_and_home ... ok
+test learning::tests::target_decision_matrix ... ok
+test learning::tests::stable_id_ignores_whitespace_differences_only_in_body_trim ... ok
+test paths::tests::empty_xdg_does_not_count_as_set ... ok
+test learning::tests::parse_requires_title_and_body ... ok
+test paths::tests::home_dot_ailoom_when_no_ailoom_or_xdg ... ok
+test paths::tests::explicit_root_wins_over_env_and_xdg ... ok
+test paths::tests::layout_partitions_by_anchor_and_workspace ... ok
+test paths::tests::store_priority_ailoom_then_xdg_then_home ... ok
+test paths::tests::xdg_state_home_beats_home_when_ailoom_unset ... ok
+test resolver::tests::different_target_keys_ok ... ok
+test resolver::tests::same_target_key_different_ids_conflict ... ok
+test resource::tests::no_frontmatter_returns_none ... ok
+test learning::tests::identity_prefers_name_and_persist_is_idempotent ... ok
+test resource::tests::frontmatter_parses_and_body_preserved ... ok
+test store::tests::layout_is_key_then_skill_under_skills_root ... ok
+test learning::tests::render_roundtrip_preserves_hostile_strings ... ok
+test store::tests::normalize_git_ssh_and_https_same_key ... ok
+test store::tests::source_key_roundtrip ... ok
+test workspace::tests::no_root_is_error_not_global_default ... ok
+test sync::lock::tests::release_refuses_when_owner_overwritten ... ok
+test source::tests::corrupted_lock_file_is_reported_not_repaired ... ok
+test sync::lock::tests::second_acquire_fails_while_held ... ok
+test source::tests::tree_digest_is_order_stable_and_content_sensitive ... ok
+test workspace::tests::paths_are_not_lowercased ... ok
+test workspace::tests::spaces_and_chinese_paths_work ... ok
+test workspace::tests::explicit_root_takes_priority ... ok
+test workspace::tests::declaration_inside_repo_binds_nearest_directory ... ok
+test workspace::tests::symlinks_resolve_to_same_workspace ... ok
+test workspace::tests::root_and_deep_subdir_same_workspace ... ok
+test gitx::tests::git_command_uses_arg_array_with_spaces ... ok
+test workspace::tests::worktrees_share_anchor_but_have_distinct_ids ... ok
+
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running unittests src/main.rs (target/debug/deps/ailoom-a01ee3cf4799dba4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/adapters.rs (target/debug/deps/adapters-b4a9b641aedac163)
+
+running 12 tests
+test agent_missing_instructions_fails_render ... ok
+test mcp_codex_http_and_stdio_and_secret_ref_rejected ... ok
+test rules_preserve_user_content_and_no_duplicate_fragments ... ok
+test selected_env_kind_deploys_literal_vars_now_supported ... ok
+test conditional_rule_is_unsupported_for_codex_not_silently_global ... ok
+test closed_tool_gets_no_directory ... ok
+test mcp_unmanaged_same_name_conflicts_not_overwritten ... ok
+test mcp_corrupt_config_not_clobbered ... ok
+test skills_deploy_to_both_tools_with_references ... ok
+test user_level_host_configs_never_touched ... ok
+test agents_render_for_claude_and_unsupported_for_codex ... ok
+test mcp_json_and_toml_merge_preserve_user_entries ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.99s
+
+     Running tests/adapters_next.rs (target/debug/deps/adapters_next-d6ee09660ae2cfce)
+
+running 12 tests
+test packages_real_npm_install ... ignored, 需要真实 npm registry 网络；离线环境跳过并在卡面记录边界
+test packages_check_reports_missing_and_install_gated ... ok
+test packages_install_skips_npm_when_satisfied ... ok
+test env_user_variable_not_overwritten_and_uninstall_removes_own ... ok
+test uninstall_removes_managed_env_entries_and_keeps_user_data ... ok
+test culture_and_env_repeated_sync_no_duplicates ... ok
+test team_hook_exec_output_timeout_and_failure_semantics ... ok
+test packages_install_reports_post_install_state ... ok
+test env_literal_vars_deployed_secret_refs_rejected_without_plaintext ... ok
+test team_hook_registered_and_user_hooks_preserved ... ok
+test team_hooks_same_event_stable_across_resync ... ok
+test packages_reject_ranges_and_conflicting_versions ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.60s
+
+     Running tests/auto_sync.rs (target/debug/deps/auto_sync-23d5b6ad54904c9f)
+
+running 3 tests
+test auto_sync_disabled_by_env ... ok
+test auto_sync_ttl_skips_second_hook ... ok
+test sync_refresh_flag_ok ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+     Running tests/builtin_resources.rs (target/debug/deps/builtin_resources-4b571a667e51edfb)
+
+running 4 tests
+test builtins_deployed_with_sync ... ok
+test no_builtin_flag_skips_deployment ... ok
+test uninstall_removes_builtins_too ... ok
+test recall_manual_entry_always_available ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+     Running tests/cli.rs (target/debug/deps/cli-559f9a75f148f32f)
+
+running 6 tests
+test version_returns_zero_and_prints ... ok
+test unknown_schema_of_env_does_not_affect_cli ... ok
+test json_stdout_is_parseable_and_log_free ... ok
+test unknown_arg_is_nonzero_usage_error ... ok
+test no_subcommand_is_usage_error ... ok
+test help_and_long_version_return_zero ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/code_graph.rs (target/debug/deps/code_graph-ede619e682ac3f40)
+
+running 5 tests
+test graph_query_provides_evidence_beyond_text_baseline ... ok
+test extraction_locations_and_dependencies_accurate ... ok
+test same_name_symbols_across_files_stay_distinct ... ok
+test incremental_update_equivalent_to_full_and_no_dangling_edges ... ok
+test code_query_reports_stale_graph_after_revision_change ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+
+     Running tests/contribution.rs (target/debug/deps/contribution-62c4a53b5e942891)
+
+running 4 tests
+test machine_data_never_staged ... ok
+test push_creates_branch_on_remote_without_touching_business_repo ... ok
+test retry_reuses_changeset_and_branch ... ok
+test remote_diverged_surfaces_diverged_error ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+
+     Running tests/dashboard_reporting.rs (target/debug/deps/dashboard_reporting-38970a808323228f)
+
+running 11 tests
+test port_conflict_gives_diagnosis ... ok
+test dashboard_state_matches_cli_metrics ... ok
+test report_push_requires_explicit_enable ... ok
+test report_digest_shows_missing_sources ... ok
+test report_push_idempotent_on_lost_response ... ok
+test report_push_creates_report_branch_and_resource_lock_untouched ... ok
+test report_pending_retry_repushes_and_clears ... ok
+test team_digest_merges_workspaces_without_double_counting ... ok
+test dashboard_empty_workspace_shows_empty_state ... ok
+test sse_initial_snapshot_without_last_event_id ... ok
+test sse_detects_cross_process_append_and_rotation_keeps_history ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.29s
+
+     Running tests/doctor_uninstall.rs (target/debug/deps/doctor_uninstall-5862d550c6cdd02f)
+
+running 6 tests
+test corrupted_managed_manifest_refuses_guess_delete ... ok
+test doctor_reports_issues_without_source_lock ... ok
+test uninstall_keeps_user_modified_targets ... ok
+test doctor_checks_pass_and_modify_nothing ... ok
+test uninstall_preview_then_execute_and_idempotent ... ok
+test uninstall_other_workspace_unaffected ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.62s
+
+     Running tests/e2e.rs (target/debug/deps/e2e-64d61cb530f67060)
+
+running 1 test
+test full_acceptance_chain_two_projects_two_roles ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
+
+     Running tests/hook_events.rs (target/debug/deps/hook_events-3c01dbc85bd72a6d)
+
+running 13 tests
+test correction_heuristic_end_to_end_via_hook_entry ... ok
+test payload_cwd_and_explicit_root_priority ... ok
+test stop_prompt_uses_real_session_and_outputs_once ... ok
+test duplicate_delivery_is_idempotent ... ok
+test two_concurrent_hook_processes_both_persist ... ok
+test hooks_install_idempotent_and_remove_only_managed ... ok
+test hook_captures_event_without_storing_prompt_text ... ok
+test redelivery_dedup_but_similar_events_counted_separately ... ok
+test bad_payload_diagnosed_but_exits_zero ... ok
+test events_survive_prompt_privacy_and_forward_compat ... ok
+test prompt_disabled_no_notice_but_metrics_persist ... ok
+test unknown_host_event_diagnosed_exit_zero ... ok
+test registered_hook_commands_produce_standard_events ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.59s
+
+     Running tests/import_pr.rs (target/debug/deps/import_pr-65bc846968a3c5c9)
+
+running 10 tests
+test import_scan_permission_error_fails_loudly ... ok
+test import_preview_execute_dedupe_and_symlink_rejection ... ok
+test import_hostile_title_renders_valid_resource ... ok
+test import_rejects_unknown_project_before_any_write ... ok
+test import_source_deletion_generates_review_suggestion ... ok
+test pr_same_number_and_head_prefix_across_repos_distinct ... ok
+test pr_draft_with_fake_gh_and_dedupe ... ok
+test import_repo_list_same_name_docs_not_overwritten ... ok
+test pr_state_transitions_stale_merge_and_idempotent_baseline ... ok
+test import_dedup_scope_and_inplace_update ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.55s
+
+     Running tests/init.rs (target/debug/deps/init-5224ca02be4edbd8)
+
+running 9 tests
+test fixture_declarations_validate_with_expected_codes ... ok
+test credential_url_rejected_at_cli ... ok
+test unknown_project_returns_readable_error_and_exit12 ... ok
+test two_checkouts_share_cache_but_have_distinct_bindings ... ok
+test init_creates_declaration_binding_and_lock ... ok
+test status_reports_missing_lock_and_binding_drift ... ok
+test manifest_only_a_user_selects_nothing_stays_empty ... ok
+test repeated_init_is_idempotent ... ok
+test repo_move_rebind_keeps_old_workspace ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.68s
+
+     Running tests/installer.rs (target/debug/deps/installer-743cf15d5f9032bf)
+
+running 6 tests
+test installer_rejects_unsupported_platform ... ok
+test installer_uninstall_keeps_user_files ... ok
+test npm_wrapper_locates_local_artifact_and_passes_through ... ok
+test installer_installs_and_upgrades_verified_artifacts ... ok
+test installer_failed_upgrade_preserves_old_install ... ok
+test installer_sha256_tool_fallback_and_fail_closed ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+
+     Running tests/learnings.rs (target/debug/deps/learnings-ee861ff6d40021d2)
+
+running 8 tests
+test unknown_namespace_rejected ... ok
+test empty_body_rejected_and_draft_preserved ... ok
+test multi_project_binding_requires_explicit_target ... ok
+test colon_title_contributes_without_yaml_error ... ok
+test single_project_binding_defaults_to_it_and_marks_project ... ok
+test retry_same_learning_does_not_duplicate ... ok
+test explicit_shared_required_and_respected ... ok
+test same_learning_id_survives_title_and_body_edits ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.15s
+
+     Running tests/maintenance.rs (target/debug/deps/maintenance-c434a9e17665d459)
+
+running 5 tests
+test maintenance_candidates_require_explicit_negative_signal ... ok
+test promotion_draft_preserves_learning_id ... ok
+test feedback_event_id_retry_is_idempotent ... ok
+test recall_usage_records_and_feedback_accumulates ... ok
+test archive_restore_round_trip_via_recall ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+
+     Running tests/membership.rs (target/debug/deps/membership-0f0e1a3edd1f18ea)
+
+running 3 tests
+test duplicate_register_is_idempotent ... ok
+test register_then_merge_shows_a_plus_b_and_activation_stays_local ... ok
+test two_devices_concurrent_updates_do_not_lose_members ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+     Running tests/multi_source.rs (target/debug/deps/multi_source-e9df1986799e784a)
+
+running 3 tests
+test duplicate_identity_rejected_at_init ... ok
+test extra_source_offline_keeps_locked_version_primary_unaffected ... ok
+test tags_subscription_selects_only_matching_and_conflicts_detected ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+     Running tests/recall.rs (target/debug/deps/recall-cfec7b719246132d)
+
+running 6 tests
+test zero_project_binding_indexes_shared_only ... ok
+test corrupt_or_missing_index_is_rebuilt ... ok
+test chinese_query_matches_via_bigrams ... ok
+test isolated_recall_between_projects_with_same_keywords ... ok
+test zero_matches_returns_empty_no_random_scores ... ok
+test deleted_document_leaves_no_residue_after_refresh ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+
+     Running tests/resolver.rs (target/debug/deps/resolver-449b737c547c2889)
+
+running 9 tests
+test invalid_fixtures_fail_with_expected_codes ... ok
+test duplicate_skill_name_in_source_is_rejected_at_parse ... ok
+test symlink_escape_in_skill_dir_rejected ... ok
+test dev_plus_a_gets_common_dev_a ... ok
+test pm_plus_b_gets_common_pm_b ... ok
+test tags_do_not_change_identity_or_selection ... ok
+test both_projects_union_for_skills_but_learning_ambiguous_excluded_from_selection ... ok
+test roles_never_expand_learning_scope ... ok
+test zero_projects_gets_shared_only ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+     Running tests/retention.rs (target/debug/deps/retention-cfcb4242d883a9ae)
+
+running 8 tests
+test cleanup_only_touches_own_cache_scope ... ok
+test export_is_reimportable_and_excludes_nothing_needed ... ok
+test cleanup_refuses_when_pending_report_and_scoped_by_workspace ... ok
+test rotate_archives_and_aggregation_keeps_cumulative_values ... ok
+test rotate_reinjection_no_double_count_and_unique_archives ... ok
+test export_includes_archives_and_bad_lines_reported ... ok
+test cleanup_skips_cache_shared_by_sibling_worktree ... ok
+test cleanup_scope_and_unreported_protection ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/self_repo.rs (target/debug/deps/self_repo-b039eb2a5095d54c)
+
+running 6 tests
+test migrate_rejects_out_of_scope_subtrees_and_leaves_sentinel_untouched ... ok
+test migrate_refuses_overwrite_and_overlap ... ok
+test migrate_then_sync_in_self_mode_keeps_business_intact ... ok
+test migrate_materialize_failure_is_retryable ... ok
+test self_mode_offline_and_linked_worktree ... ok
+test contribute_self_cli_creates_reviewable_branch ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+
+     Running tests/session_metrics.rs (target/debug/deps/session_metrics-8c98d899a9c0c16b)
+
+running 14 tests
+test cumulative_tokens_take_max_not_sum ... ok
+test correction_counts_only_within_window_and_examples_do_not_count ... ok
+test high_volume_clean_session_never_prompts ... ok
+test heuristic_disabled_produces_no_correction_count ... ok
+test prompt_disabled_still_counts ... ok
+test missing_tokens_reported_unavailable_not_zero ... ok
+test tool_errors_and_human_interventions_counted_separately ... ok
+test same_session_string_with_different_tools_not_merged_in_listing ... ok
+test share_record_contains_counts_only ... ok
+test workspaces_with_same_session_string_do_not_mix ... ok
+test transcript_ingestion_produces_token_snapshots ... ok
+test heuristic_config_file_changes_window_and_keywords ... ok
+test interventions_beyond_threshold_trigger_once_then_state_persists ... ok
+test claim_prompted_is_atomic_and_releasable ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/skill_store_require.rs (target/debug/deps/skill_store_require-1b54ad3479380096)
+
+running 5 tests
+test ticket01_store_symlink_layout_and_idempotent_sync ... ok
+test ticket03_agent_persona_narrows_require ... ok
+test xdg_data_home_store_layout_is_respected ... ok
+test ticket02_require_filters_and_unknown_fails ... ok
+test ticket04_doctor_broken_link_and_uninstall_keeps_store ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running tests/source.rs (target/debug/deps/source-3a57f5ade85d087d)
+
+running 9 tests
+test credential_url_is_rejected_and_never_logged ... ok
+test lock_file_roundtrip_and_save_is_atomic ... ok
+test local_source_digest_tracks_content_and_flags_mutable ... ok
+test first_time_offline_fails_clearly ... ok
+test first_resolve_locks_and_reuses_snapshot ... ok
+test invalid_ref_does_not_damage_old_cache ... ok
+test offline_uses_existing_snapshot_fetch_failure_keeps_old ... ok
+test explicit_refresh_produces_new_revision ... ok
+test concurrent_fetch_is_serialized_and_consistent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running tests/sync_apply.rs (target/debug/deps/sync_apply-0c8ae392f36d64b8)
+
+running 14 tests
+test concurrent_apply_only_one_wins_lock ... ok
+test recovery_protects_later_user_edits ... ok
+test pending_journal_blocks_new_apply ... ok
+test repeated_apply_is_noop ... ok
+test recover_skips_user_modified_and_is_idempotent ... ok
+test happy_path_creates_files_and_advances_manifest ... ok
+test missing_backup_reports_failure ... ok
+test corrupt_backup_reports_failure_and_keeps_journal ... ok
+test multi_fragment_same_file_recovery_restores_original_bytes ... ok
+test json_multi_entry_recovery_keeps_user_entries ... ok
+test user_change_after_plan_rejects_execution ... ok
+test injected_failure_leaves_journal_and_recovery_restores ... ok
+test toml_array_entry_create_resync_update_and_remove ... ok
+test cli_sync_failure_then_recover_restores_agents_md ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests/sync_plan.rs (target/debug/deps/sync_plan-771c95312ee45044)
+
+running 10 tests
+test missing_target_with_manifest_is_restore ... ok
+test create_and_noop ... ok
+test deleted_source_but_user_modified_keeps_and_conflicts ... ok
+test deleted_source_resource_planned_for_cleanup ... ok
+test fragment_deletion_only_removes_managed_part ... ok
+test untracked_same_content_is_not_adopted ... ok
+test user_modified_target_is_conflict_not_overwritten ... ok
+test untouched_target_with_new_source_content_is_update ... ok
+test plan_makes_no_file_changes_and_is_deterministic ... ok
+test json_entry_merge_plan_compares_entry_only ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/t7t8_test.rs (target/debug/deps/t7t8_test-e68c114d866c9d1c)
+
+running 2 tests
+test cursor_antigravity_rules_end_to_end ... ok
+test alva_agents_toml_create_and_resync ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+     Running tests/test_isolation.rs (target/debug/deps/test_isolation-f08dc817f8c68547)
+
+running 2 tests
+test runner_overrides_do_not_leak_into_sentinel_paths ... ok
+test no_override_vars_falls_back_to_home_layout ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running tests/workspace.rs (target/debug/deps/workspace-ed43ee2126304406)
+
+running 5 tests
+test discovery_fails_without_git_or_declaration ... ok
+test cache_key_stable_across_root_path_changes_of_same_remote ... ok
+test declaration_root_resources_write_to_current_checkout ... ok
+test layout_binding_and_cache_partitioning ... ok
+test two_worktrees_different_bindings_do_not_interfere ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+   Doc-tests ailoom
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT: 0
+
+$ cargo fmt --all -- --check
+fmt OK
+
+$ cargo clippy --locked --offline --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.74s
+
+$ [最终复跑] env -u XDG_DATA_HOME -u XDG_STATE_HOME -u AILOOM_STORE_ROOT -u AILOOM_DATA_ROOT cargo test --locked --offline --all-features --no-fail-fast
+test error::tests::exit_codes_follow_segment_table ... ok
+test error::tests::error_json_has_stable_fields ... ok
+test workspace::tests::no_root_is_error_not_global_default ... ok
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.53s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 5.44s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+test unknown_arg_is_nonzero_usage_error ... ok
+test no_subcommand_is_usage_error ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test remote_diverged_surfaces_diverged_error ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.18s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.43s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.03s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
+test import_scan_permission_error_fails_loudly ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.92s
+test unknown_project_returns_readable_error_and_exit12 ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+test colon_title_contributes_without_yaml_error ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.13s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.78s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.76s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+test tool_errors_and_human_interventions_counted_separately ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+FINAL EXIT: 0

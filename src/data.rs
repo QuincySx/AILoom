@@ -27,23 +27,22 @@ pub fn run(args: &DataArgs, _json: bool, data_root: Option<&std::path::Path>) ->
     }
 }
 
-/// 日志轮转：events.jsonl 超过阈值 → 改名归档 events-archive-<ts>.jsonl（不删除，会话累计值保留在归档中，
-/// 聚合读取所有 events*.jsonl 因此不丢累计值）。
+/// 日志轮转：委托 events::store::rotate_events_file（唯一归档名 + 与追加一致锁）；
+/// 聚合经 read_all_events 读取全部活动+归档，累计值不丢。
 fn rotate(events_file: &Path, max_size_mb: f64) -> Result<Value> {
-    if !events_file.is_file() {
-        return Ok(json!({ "rotated": false, "reason": "无事件文件" }));
+    let size = if events_file.is_file() {
+        std::fs::metadata(events_file)?.len()
+    } else {
+        0
+    };
+    match crate::events::store::rotate_events_file(events_file, max_size_mb)? {
+        Some(archive) => Ok(json!({
+            "rotated": true,
+            "archive": archive.display().to_string(),
+            "size_bytes": size,
+        })),
+        None => Ok(json!({ "rotated": false, "size_bytes": size })),
     }
-    let size = std::fs::metadata(events_file)?.len() as f64;
-    let limit = max_size_mb * 1024.0 * 1024.0;
-    if size <= limit {
-        return Ok(json!({ "rotated": false, "size_bytes": size as u64 }));
-    }
-    let ts = crate::ids::now_iso().replace(':', "");
-    let archive = events_file.with_file_name(format!("events-archive-{ts}.jsonl"));
-    std::fs::rename(events_file, &archive)?;
-    Ok(
-        json!({ "rotated": true, "archive": archive.display().to_string(), "size_bytes": size as u64 }),
-    )
 }
 
 /// 导出：工作区数据清单（事件/摘要/指标），默认排除自由文本与秘密（事件本就不含 prompt 全文）。
@@ -54,11 +53,23 @@ fn export(ctx: &AppContext, out: Option<&Path>) -> Result<Value> {
         .unwrap_or_else(|| ctx.layout.ws_dir.join("export"));
     std::fs::create_dir_all(&out_dir)?;
     let mut exported = Vec::new();
-    // 事件（不含 prompt 全文）
-    let events_src = ctx.layout.events_dir.join("events.jsonl");
-    if events_src.is_file() {
-        let dest = out_dir.join("events.jsonl");
-        std::fs::copy(&events_src, &dest)?;
+    // 事件：活动 + 全部归档（审计完整链路；事件不含 prompt 全文/秘密）
+    if ctx.layout.events_dir.is_dir() {
+        for entry in std::fs::read_dir(&ctx.layout.events_dir)?.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_file() && (name == "events.jsonl" || name.starts_with("events-archive-")) {
+                let dest = out_dir.join(&name);
+                std::fs::copy(&p, &dest)?;
+                exported.push(dest.display().to_string());
+            }
+        }
+    }
+    // 上报 checkpoint（聚合基线审计：确认水位线与批次）
+    let cp_path = ctx.layout.ws_dir.join("report-checkpoint.json");
+    if cp_path.is_file() {
+        let dest = out_dir.join("report-checkpoint.json");
+        std::fs::copy(&cp_path, &dest)?;
         exported.push(dest.display().to_string());
     }
     // 摘要
@@ -74,7 +85,7 @@ fn export(ctx: &AppContext, out: Option<&Path>) -> Result<Value> {
     }
     // 聚合指标（重建一份全量快照）
     let heuristic = crate::events::aggregate::HeuristicConfig::default();
-    let (events, bad) = crate::events::store::read_events(&ctx.layout.events_file)?;
+    let (events, bad) = crate::events::store::read_all_events(&ctx.layout.events_dir)?;
     let all =
         crate::events::aggregate::aggregate_all(&ctx.workspace.workspace_id, &events, &heuristic)?;
     let metrics_path = out_dir.join("session-metrics.json");
@@ -91,7 +102,9 @@ fn export(ctx: &AppContext, out: Option<&Path>) -> Result<Value> {
     Ok(json!({ "exported": exported, "dir": out_dir.display().to_string() }))
 }
 
-/// 清理：按工作区拥有者清单删除可重建数据（缓存/归档事件），保护未上报批次与待审草稿。
+/// 清理：按工作区拥有者清单删除可重建数据——
+/// 仅当前工作区自己的源缓存（cache/<本 anchor>）与"已确认上传且无坏行"的归档事件。
+/// 未上报事件（无确认水位线覆盖）一律保留；dry-run 计划与执行完全一致。
 fn cleanup(ctx: &AppContext, dry_run: bool) -> Result<Value> {
     // 待审草稿/未上报批次存在时拒绝清理（防丢）
     let pending_report = ctx.layout.ws_dir.join("report-checkpoint.json");
@@ -109,25 +122,73 @@ fn cleanup(ctx: &AppContext, dry_run: bool) -> Result<Value> {
             ));
         }
     }
+
     let mut planned: Vec<String> = Vec::new();
-    // 缓存目录（可重建）
-    let cache_root = ctx.data_root.join("cache");
-    if cache_root.is_dir() {
-        for entry in std::fs::read_dir(&cache_root)?.flatten() {
-            planned.push(entry.path().display().to_string());
-        }
-    }
-    // 归档事件
-    if ctx.layout.events_dir.is_dir() {
-        for entry in std::fs::read_dir(&ctx.layout.events_dir)?.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with("events-archive-") {
-                planned.push(entry.path().display().to_string());
+    let mut skipped_shared = 0usize;
+    // 1. 只清理本工作区 anchor 拥有的源缓存；且该缓存未被其他工作区共享引用
+    //    （同仓另一 worktree / 其他 checkout 共享 anchor 时保留，保证对方离线可读锁定内容）
+    let mut shared_by_others = false;
+    let ws_root_dir = ctx.data_root.join("ws");
+    if ws_root_dir.is_dir() {
+        for entry in std::fs::read_dir(&ws_root_dir)?.flatten() {
+            if entry.path() == ctx.layout.ws_dir {
+                continue;
+            }
+            let binding = entry.path().join("binding.json");
+            if let Ok(text) = std::fs::read_to_string(&binding) {
+                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                    if let Some(anchor) = v["repository_anchor"].as_str() {
+                        if crate::ids::sha256_prefix(anchor.as_bytes(), 16)
+                            == ctx.workspace.anchor_key
+                        {
+                            shared_by_others = true;
+                        }
+                    }
+                }
             }
         }
     }
+    if ctx.layout.cache_root.is_dir() {
+        if shared_by_others {
+            skipped_shared += 1;
+        } else {
+            planned.push(ctx.layout.cache_root.display().to_string());
+        }
+    }
+    // 2. 归档事件：必须全部事件 id 都在确认水位线内，且无坏行（损坏文件报告并保留）
+    let confirmed = crate::reporting::confirmed_event_watermark(ctx)?;
+    if ctx.layout.events_dir.is_dir() {
+        for entry in std::fs::read_dir(&ctx.layout.events_dir)?.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !(p.is_file() && name.starts_with("events-archive-")) {
+                continue;
+            }
+            let (events, bad) = crate::events::store::read_events(&p)?;
+            if bad > 0 {
+                // 损坏归档：保留并报告，不能全量删
+                continue;
+            }
+            let unconfirmed = events
+                .iter()
+                .filter(|e| !confirmed.contains(&e.event_id))
+                .count();
+            if unconfirmed > 0 {
+                // 从未上报或未确认的历史：保留
+                continue;
+            }
+            planned.push(p.display().to_string());
+        }
+    }
+
     if dry_run {
-        return Ok(json!({ "dry_run": true, "would_remove": planned }));
+        return Ok(json!({
+            "dry_run": true,
+            "would_remove": planned,
+            "confirmed_event_watermark": confirmed.len(),
+            "skipped_shared_cache": skipped_shared,
+            "note": "仅列出本工作区缓存与已确认上传的归档；其他工作区数据不在范围内",
+        }));
     }
     let mut removed = Vec::new();
     for p in &planned {
@@ -139,5 +200,5 @@ fn cleanup(ctx: &AppContext, dry_run: bool) -> Result<Value> {
         }
         removed.push(p.clone());
     }
-    Ok(json!({ "removed": removed }))
+    Ok(json!({ "removed": removed, "dry_run": false }))
 }

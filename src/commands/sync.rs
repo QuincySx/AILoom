@@ -18,14 +18,47 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
     if args.recover {
         let cwd = std::env::current_dir()?;
         let ctx = crate::appctx::AppContext::discover(data_root, &cwd, args.root.as_deref())?;
-        let recovered = recover(&ctx.layout.journal_dir, &ctx.workspace.workspace_root)?;
-        let value = json!({ "recovered": recovered });
+        let report = recover(&ctx.layout.journal_dir, &ctx.workspace.workspace_root)?;
+        let value = json!({
+            "ok": report.ok,
+            "recovered": report.recovered,
+            "skipped_user_modified": report.skipped_user_modified,
+            "broken_backups": report.broken_backups,
+            "pending_runs": report.pending_runs,
+        });
         if !json {
-            if recovered.is_empty() {
+            if report.recovered.is_empty() && report.skipped_user_modified.is_empty() {
                 crate::logging::info("没有待恢复的同步 journal");
             } else {
-                crate::logging::info(format!("已恢复 {} 项: {:?}", recovered.len(), recovered));
+                if !report.recovered.is_empty() {
+                    crate::logging::info(format!(
+                        "已恢复 {} 项: {:?}",
+                        report.recovered.len(),
+                        report.recovered
+                    ));
+                }
+                if !report.skipped_user_modified.is_empty() {
+                    crate::logging::warn(format!(
+                        "跳过 {} 项（目标已被修改，拒绝覆盖）: {:?}",
+                        report.skipped_user_modified.len(),
+                        report.skipped_user_modified
+                    ));
+                }
             }
+            if !report.ok {
+                crate::logging::error(format!(
+                    "备份损坏/缺失，无法安全恢复: {:?}；恢复点保留: {:?}",
+                    report.broken_backups, report.pending_runs
+                ));
+            }
+        }
+        if !report.ok {
+            return Err(Error::new(
+                code::JOURNAL_RESTORE_FAILED,
+                "恢复失败：存在缺失或摘要不匹配的备份，未清理恢复点",
+            )
+            .context(value)
+            .fix("人工检查 journal 运行目录与 backup/ 后重试，或确认后手工移除"));
         }
         return Ok(value);
     }

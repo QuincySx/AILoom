@@ -7,6 +7,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # AIL-002 隔离规则：清空全部机器根覆盖变量（空值=未设置），
+  # 测试内部由 tests/common::isolated_child_env 把子进程根目录注入临时目录
+  XDG_DATA_HOME: ""
+  XDG_STATE_HOME: ""
+  AILOOM_DATA_ROOT: ""
+  AILOOM_STORE_ROOT: ""
 
 jobs:
   test:

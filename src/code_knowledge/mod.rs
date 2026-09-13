@@ -39,10 +39,15 @@ pub fn run(args: &CodeArgs, json: bool, data_root: Option<&std::path::Path>) -> 
 
     match args.action.as_str() {
         "build" => {
-            // 增量：读取旧图，文件哈希基线，重解析变化文件
+            // 增量：读取旧图，文件哈希基线，重解析变化文件；schema 不符 → 全量重建
             let old = graph::load(&graph_path)?;
             let mut g = match old {
-                Some(g) if g.revision == current_revision(&ctx, &declaration)? => g,
+                Some(g)
+                    if g.schema_version == graph::GRAPH_SCHEMA_VERSION
+                        && g.revision == current_revision(&ctx, &declaration)? =>
+                {
+                    g
+                }
                 _ => Graph::default(),
             };
             g.schema_version = graph::GRAPH_SCHEMA_VERSION;
@@ -75,10 +80,21 @@ pub fn run(args: &CodeArgs, json: bool, data_root: Option<&std::path::Path>) -> 
                 Error::new(code::INDEX_CORRUPT, "代码图谱不存在")
                     .fix("先运行 ailoom code --action build")
             })?;
+            // 过期检查（AIL-027）：源码 revision 变化后旧图只做提示性返回，不冒充新事实
+            let current = current_revision(&ctx, &declaration)?;
+            let stale = g.revision != current;
             let results = crate::code_knowledge::recall::query(&g, query, args.hops, 10);
             let value = json!({
                 "project": project,
                 "results": results,
+                "graph_stale": stale,
+                "graph_revision": g.revision,
+                "current_revision": current,
+                "note": if stale {
+                    "图已过期（源码/版本变化），结果可能含旧事实；请运行 ailoom code --action build 重建"
+                } else {
+                    "图与当前 revision 一致"
+                },
                 "dangling_call_edges": graph::dangling_call_edges(&g).len(),
             });
             if !json {
@@ -101,7 +117,17 @@ fn current_revision(ctx: &AppContext, declaration: &ProjectDeclaration) -> Resul
         .join("machine")
         .join("sources.lock.json");
     let lock = crate::source::SourcesLock::load(&lock_path)?;
-    Ok(lock
+    let lock_commit = lock
         .and_then(|l| l.sources.get(&declaration.source.name).cloned())
-        .and_then(|e| e.resolved_commit))
+        .and_then(|e| e.resolved_commit);
+    // 过期基准（AIL-027）= 团队源锁 + 工作区 HEAD：被扫描的业务源码变化同样使图过期
+    let ws_head = crate::gitx::git(&ctx.workspace.workspace_root, &["rev-parse", "HEAD"])
+        .ok()
+        .map(|s| s.trim().to_string());
+    Ok(match (lock_commit, ws_head) {
+        (Some(l), Some(h)) => Some(format!("{l}+{h}")),
+        (Some(l), None) => Some(l),
+        (None, Some(h)) => Some(h),
+        (None, None) => None,
+    })
 }

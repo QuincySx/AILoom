@@ -56,16 +56,68 @@ pub fn run_hook_cmd(
         }
     }
 
-    if args.event == "stop" {
-        if let Ok(ctx) = AppContext::discover(
-            data_root,
-            &std::env::current_dir().unwrap_or_default(),
-            args.root.as_deref(),
-        ) {
-            if let Ok(decision) =
-                crate::commands::session::friction_check_for_session(&ctx, "prompt-summary")
-            {
-                let _ = decision;
+    // stop：摩擦提示接线（AIL-020）——用事件解析出的真实 session_id 做决策；
+    // 认领唯一提示权后经宿主支持通道（Claude hook JSON systemMessage）投递，
+    // 投递失败释放认领；不发起任何 LLM/远端请求。
+    // 事件名按标准 kind 归一化：注册命令传宿主事件名（如 Stop），必须同样命中。
+    if crate::events::hooks::host_event_to_kind(&args.event) == Some("stop") {
+        let session_id = value
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(sid) = session_id {
+            if let Ok(ctx) = AppContext::discover(
+                data_root,
+                &std::env::current_dir().unwrap_or_default(),
+                args.root.as_deref(),
+            ) {
+                match crate::commands::session::friction_check_for_session(&ctx, &sid) {
+                    Ok(decision) => {
+                        let should = decision.get("prompt").and_then(Value::as_bool) == Some(true);
+                        if should {
+                            let msg = format!(
+                                "会话 {} 摩擦较高（打断 {} / 工具错误 {} / 纠正 {}）。可运行 `ailoom session summary --session {}` 沉淀经验（本提示每会话最多一次）",
+                                sid,
+                                decision.get("interventions").and_then(Value::as_u64).unwrap_or(0),
+                                decision.get("tool_errors").and_then(Value::as_u64).unwrap_or(0),
+                                decision.get("corrections").and_then(Value::as_u64).unwrap_or(0),
+                                sid
+                            );
+                            if crate::events::friction::claim_prompted(
+                                &ctx.layout.summary_dir,
+                                &sid,
+                            )
+                            .unwrap_or(false)
+                            {
+                                let delivered = if emit_host_stdout {
+                                    writeln_stdout(
+                                        &json!({ "continue": true, "systemMessage": msg })
+                                            .to_string(),
+                                    )
+                                    .is_ok()
+                                } else {
+                                    // --json 调试路径：不投递宿主通道，仅在结果中呈现
+                                    true
+                                };
+                                if delivered {
+                                    if let Some(obj) = value.as_object_mut() {
+                                        obj.insert("friction_notice".into(), json!(msg));
+                                    }
+                                } else {
+                                    // 不可见提示不允许占用“已提示”状态
+                                    crate::events::friction::release_prompted(
+                                        &ctx.layout.summary_dir,
+                                        &sid,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        crate::logging::warn(format!("摩擦提示决策失败（宿主不受影响）: {e}"));
+                    }
+                }
             }
         }
     }
@@ -77,6 +129,21 @@ fn writeln_stdout(s: &str) -> std::io::Result<()> {
     let mut out = std::io::stdout().lock();
     writeln!(out, "{s}")?;
     out.flush()
+}
+
+/// 回收整个进程组（子进程以 process_group(0) 启动，pgid = pid）；
+/// 组杀失败时兜底杀直接子进程。
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &format!("-{pid}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 pub struct HooksArgs {
@@ -138,7 +205,10 @@ pub fn run_hooks_cmd(
             Ok(value)
         }
         "exec" => {
-            // 团队 hook 执行：从工作区 hook-specs 读取结构化参数（无 shell），超时回收
+            // 团队 hook 执行：从工作区 hook-specs 读取结构化参数（无 shell），超时回收。
+            // 契约（AIL-032）：本命令由宿主 Hook 直接调用——团队 hook 一次失败/超时
+            // 不得破坏宿主任务，因此 exec 自身始终退出 0，失败细节走 stderr 诊断
+            // 与 JSON 结果字段；并发输出用独立线程持续消费，管道满不再误判超时。
             let id = args.id.as_deref().ok_or_else(|| {
                 crate::error::Error::new(crate::error::code::USAGE, "exec 需要 --id <resource-id>")
             })?;
@@ -169,27 +239,51 @@ pub fn run_hooks_cmd(
                 ));
             }
             let timeout_ms = spec["timeout_ms"].as_u64().unwrap_or(5000);
-            let mut child = std::process::Command::new(&command[0])
-                .args(&command[1..])
+            let mut cmd = std::process::Command::new(&command[0]);
+            cmd.args(&command[1..])
                 .current_dir(&ctx.workspace.workspace_root)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|e| {
-                    crate::error::Error::new(
-                        crate::error::code::EVENT_PAYLOAD_INVALID,
-                        format!("hook 启动失败: {e}"),
-                    )
-                })?;
-            // 超时回收：轮询等待
+                .stderr(std::process::Stdio::piped());
+            // 独立进程组：超时回收派生进程树，而不是只 kill 直接子进程
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+            let mut child = cmd.spawn().map_err(|e| {
+                crate::error::Error::new(
+                    crate::error::code::EVENT_PAYLOAD_INVALID,
+                    format!("hook 启动失败: {e}"),
+                )
+            })?;
+            // 输出持续消费（避免管道容量阻塞子进程导致误超时）
+            let out_pipe = child.stdout.take();
+            let err_pipe = child.stderr.take();
+            let out_thread = std::thread::spawn(move || {
+                let mut buf = String::new();
+                if let Some(mut p) = out_pipe {
+                    use std::io::Read;
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            });
+            let err_thread = std::thread::spawn(move || {
+                let mut buf = String::new();
+                if let Some(mut p) = err_pipe {
+                    use std::io::Read;
+                    let _ = p.read_to_string(&mut buf);
+                }
+                buf
+            });
+            // 超时回收：轮询等待；到期 kill 整个进程组
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
             let status = loop {
                 match child.try_wait() {
                     Ok(Some(st)) => break Some(st),
                     Ok(None) => {
                         if std::time::Instant::now() > deadline {
-                            let _ = child.kill();
-                            child.wait().ok();
+                            kill_process_group(child.id());
+                            let _ = child.wait();
                             break None;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -197,16 +291,28 @@ pub fn run_hooks_cmd(
                     Err(_) => break None,
                 }
             };
+            let _stdout = out_thread.join().unwrap_or_default();
+            let stderr = err_thread.join().unwrap_or_default();
+            if !stderr.trim().is_empty() {
+                crate::logging::info(format!("hook {id} stderr: {}", stderr.trim_end()));
+            }
             match status {
-                Some(st) if st.success() => Ok(json!({ "executed": true, "id": id })),
-                Some(st) => Err(crate::error::Error::new(
-                    crate::error::code::EVENT_PAYLOAD_INVALID,
-                    format!("hook 退出码 {}", st.code().unwrap_or(-1)),
-                )),
-                None => Err(crate::error::Error::new(
-                    crate::error::code::EVENT_PAYLOAD_INVALID,
-                    format!("hook 超时（{timeout_ms}ms），已回收子进程"),
-                )),
+                Some(st) if st.success() => {
+                    Ok(json!({ "executed": true, "id": id, "timed_out": false }))
+                }
+                Some(st) => {
+                    let code = st.code().unwrap_or(-1);
+                    crate::logging::error(format!(
+                        "团队 hook {id} 退出码 {code}（宿主任务不受影响）"
+                    ));
+                    Ok(json!({ "executed": false, "id": id, "exit": code, "timed_out": false }))
+                }
+                None => {
+                    crate::logging::error(format!(
+                        "团队 hook {id} 超时（{timeout_ms}ms），已回收进程组（宿主任务不受影响）"
+                    ));
+                    Ok(json!({ "executed": false, "id": id, "timed_out": true }))
+                }
             }
         }
         other => Err(crate::error::Error::new(

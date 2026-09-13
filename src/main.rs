@@ -113,6 +113,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             id,
             useful,
             text,
+            feedback_id,
             root,
         }) => {
             let args = ailoom::knowledge::feedback::KnowledgeArgs {
@@ -120,6 +121,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 id: id.clone(),
                 useful: *useful,
                 text: text.clone(),
+                feedback_id: feedback_id.clone(),
                 root: root.clone(),
             };
             let value =
@@ -218,6 +220,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
         Some(Command::Import {
             project,
             dir,
+            repo_list,
             target,
             kind,
             execute,
@@ -226,6 +229,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             let args = ailoom::import::ImportArgs {
                 project: project.clone(),
                 dir: dir.clone(),
+                repo_list: repo_list.clone(),
                 target: target.clone(),
                 kind: kind.clone(),
                 execute: *execute,
@@ -389,6 +393,24 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 ailoom::commands::contribute::run(&args, cli.json, cli.data_root.as_deref())?;
             if cli.json {
                 output::emit_json(&value);
+            }
+            Ok(())
+        }
+        Some(Command::ContributeSelf { message, root }) => {
+            let cwd = std::env::current_dir()?;
+            let ctx = ailoom::appctx::AppContext::discover(
+                cli.data_root.as_deref(),
+                &cwd,
+                root.as_deref(),
+            )?;
+            let value = ailoom::import::self_repo::contribute_self(&ctx, message)?;
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                crate::logging::info(format!(
+                    "同仓贡献：{}",
+                    serde_json::to_string(&value).unwrap_or_default()
+                ));
             }
             Ok(())
         }

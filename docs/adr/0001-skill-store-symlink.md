@@ -2,10 +2,10 @@
 
 我们要把「每仓复制一份 skills」改成「用户目录按源仓库分桶存一份实体，业务 Workspace 只链过去」。
 
-布局（可用 `AILOOM_STORE_ROOT` 覆盖 store 根）：
+布局（store 根优先级：`AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store` > `~/.ailoom/store`）：
 
 ```text
-~/.ailoom/store/<source_key>/
+<store_root>/<source_key>/
   .meta/SOURCE.json
   <相对 skills 根的路径>/   # 如 inking/line-art，不含 resources/skills 前缀
 ```

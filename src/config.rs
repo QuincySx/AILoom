@@ -55,7 +55,7 @@ pub struct TargetsDeclaration {
     pub claude: bool,
     #[serde(default = "yes")]
     pub codex: bool,
-    /// 声明式 rules 宿主（registry 已注册的 tool 名，如 cursor/antigravity）
+    /// 额外宿主：`alva`，以及 registry 已注册的 rules 宿主（cursor/antigravity…）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra: Vec<String>,
 }

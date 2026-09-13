@@ -26,8 +26,12 @@ pub fn query(graph: &Graph, text: &str, hops: usize, limit: usize) -> Vec<CodeHi
         .map(str::to_string)
         .collect();
     let mut scores: std::collections::BTreeMap<String, f64> = Default::default();
+    // 唯一符号身份索引（AIL-026）：同名定义跨文件不再互相覆盖
     let mut symbol_index: std::collections::BTreeMap<String, (String, String, usize)> =
         Default::default();
+    // 名字层索引：调用边目标（fn:name）按名字解析到全部候选定义，
+    // 歧义保留（每个候选都获得扩展分与证据）
+    let mut name_to_ids: std::collections::BTreeMap<String, Vec<String>> = Default::default();
 
     for facts in graph.files.values() {
         for sym in &facts.symbols {
@@ -35,6 +39,8 @@ pub fn query(graph: &Graph, text: &str, hops: usize, limit: usize) -> Vec<CodeHi
                 sym.id.clone(),
                 (sym.kind.clone(), sym.file.clone(), sym.line),
             );
+            let plain = format!("{}:{}", sym.kind, sym.name);
+            name_to_ids.entry(plain).or_default().push(sym.id.clone());
             let hay = format!(
                 "{} {} {}",
                 sym.name,
@@ -61,25 +67,35 @@ pub fn query(graph: &Graph, text: &str, hops: usize, limit: usize) -> Vec<CodeHi
             let decay = 0.6f64.powi(hop as i32);
             for facts in graph.files.values() {
                 for e in &facts.edges {
-                    if e.from == from {
-                        let w = weight_of(&e.kind, &e.confidence) * decay * base.max(1.0);
-                        if w > 0.05 {
-                            *scores.entry(e.to.clone()).or_insert(0.0) += w;
-                            relation_evidence
-                                .entry(e.to.clone())
-                                .or_default()
-                                .push(format!(
-                                    "{} -{}({})-> {} [{}:{}]",
-                                    e.from, e.kind, e.confidence, e.to, e.file, e.line
-                                ));
-                        }
+                    if e.from != from {
+                        continue;
+                    }
+                    // 解析目标：唯一身份直接命中；名字层目标解析到全部同名候选
+                    let targets: Vec<String> = if symbol_index.contains_key(&e.to) {
+                        vec![e.to.clone()]
+                    } else {
+                        name_to_ids.get(&e.to).cloned().unwrap_or_default()
+                    };
+                    if targets.is_empty() {
+                        continue;
+                    }
+                    let w = weight_of(&e.kind, &e.confidence) * decay * base.max(1.0);
+                    if w <= 0.05 {
+                        continue;
+                    }
+                    for to in targets {
+                        *scores.entry(to.clone()).or_insert(0.0) += w;
+                        relation_evidence
+                            .entry(to.clone())
+                            .or_default()
+                            .push(format!(
+                                "{} -{}({})-> {} [{}:{}]",
+                                e.from, e.kind, e.confidence, e.to, e.file, e.line
+                            ));
                     }
                 }
             }
         }
-    }
-    for (k, v) in &scores {
-        eprintln!("SCORE {k} = {v}");
     }
     let mut hits: Vec<CodeHit> = scores
         .into_iter()

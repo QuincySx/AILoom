@@ -37,8 +37,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -97,14 +96,18 @@ fn skills_deploy_to_both_tools_with_references() {
     assert!(cfg.contains("enabled = true"));
     // shared 技能两工具都有
     assert!(ws.join(".claude/skills/common-greet/SKILL.md").is_file());
-    // ADR-0001：工作区是 symlink，实体在 ~/.ailoom/store/<key>/<相对 skills 根>/
+    // ADR-0001：工作区是 symlink，实体在受控 Store 根（隔离环境的 AILOOM_STORE_ROOT）下
     #[cfg(unix)]
     {
         let link = ws.join(".claude/skills/a-deploy");
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
         let target = std::fs::read_link(&link).unwrap();
         let t = target.to_string_lossy();
-        assert!(t.contains(".ailoom/store/"), "{t}");
+        let store_root = common::isolated_store_root(c.tmp.path());
+        assert!(
+            target.starts_with(&store_root),
+            "{t} 应位于 {store_root:?} 下"
+        );
         assert!(!t.contains("/sources/"), "{t}");
         assert!(t.ends_with("a-deploy") || t.contains("/a-deploy"), "{t}");
         assert!(!t.contains("resources/skills"), "{t}");

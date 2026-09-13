@@ -99,22 +99,22 @@ impl ResourceEntry {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RawMeta {
     #[serde(default)]
-    name: Option<String>,
+    pub name: Option<String>,
     #[serde(default)]
-    description: Option<String>,
+    pub description: Option<String>,
     #[serde(default)]
-    shared: Option<bool>,
+    pub shared: Option<bool>,
     #[serde(default)]
-    projects: Option<Vec<String>>,
+    pub projects: Option<Vec<String>>,
     #[serde(default)]
-    roles: Option<Vec<String>>,
+    pub roles: Option<Vec<String>>,
     #[serde(default)]
-    namespace: Option<String>,
+    pub namespace: Option<String>,
     /// learning 专用：单项目
     #[serde(default)]
-    project: Option<String>,
+    pub project: Option<String>,
     #[serde(default)]
-    tags: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
 }
 
 /// 切分 frontmatter：返回 Some((yaml 原文, 正文))；无 frontmatter → None。
@@ -297,6 +297,27 @@ fn build_entry(
         description: meta.description.unwrap_or_default(),
         raw,
     })
+}
+
+/// 渲染产物提交前按资源契约复验（AIL-015）：Markdown 资源必须能被资源解析器
+/// 重新解析并通过归属/namespace/name 合法性检查，非法输出在进入贡献链路前拒绝。
+pub fn validate_rendered_markdown(
+    manifest: &TeamManifest,
+    kind: ResourceKind,
+    name: &str,
+    content: &str,
+    path: &str,
+) -> Result<ResourceEntry> {
+    let meta = parse_meta_block(content, true, path)?;
+    build_entry(
+        "contribute",
+        kind,
+        manifest,
+        meta,
+        name,
+        path.to_string(),
+        Some(content.to_string()),
+    )
 }
 
 fn check_dup(items: &[String], resource: &str, field: &str) -> Result<()> {

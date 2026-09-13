@@ -41,8 +41,7 @@ mod common_test {
             let out = Command::new(bin)
                 .args(args)
                 .current_dir(cwd)
-                .env("HOME", self.tmp.path().join("home"))
-                .env("AILOOM_LOG", "error")
+                .envs(crate::common::isolated_child_env(self.tmp.path()))
                 .output()
                 .unwrap();
             (

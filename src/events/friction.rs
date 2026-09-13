@@ -91,6 +91,35 @@ pub fn mark_prompted(summary_dir: &Path, session_id: &str) -> crate::error::Resu
     )
 }
 
+/// 原子认领本会话唯一提示权（create_new 语义：并发 Stop / 进程重启都只有
+/// 一个调用者拿到 true）。拿到认领者负责展示提示；展示失败时调用
+/// `release_prompted` 释放，绝不允许“已标记却无可见提示”。
+pub fn claim_prompted(summary_dir: &Path, session_id: &str) -> crate::error::Result<bool> {
+    use std::io::Write;
+    std::fs::create_dir_all(summary_dir)?;
+    let path = prompt_state_file(summary_dir, session_id);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut f) => {
+            f.write_all(crate::ids::now_iso().as_bytes())?;
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(crate::error::Error::new(
+            crate::error::code::INTERNAL,
+            format!("提示状态写入失败: {e}"),
+        )),
+    }
+}
+
+/// 释放提示认领（展示失败时回滚），让后续 Stop 可以再次提示。
+pub fn release_prompted(summary_dir: &Path, session_id: &str) {
+    let _ = std::fs::remove_file(prompt_state_file(summary_dir, session_id));
+}
+
 /// 本地结构化摘要（不包含 prompt 全文；自由文本字段不存在）。
 pub fn build_local_summary(m: &SessionMetrics, cfg: &FrictionConfig) -> Value {
     json!({

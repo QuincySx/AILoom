@@ -15,6 +15,10 @@ pub struct UsageRecord {
     pub usage: BTreeMap<String, u64>,
     /// 显式反馈：id → (useful 次数, not_useful 次数)
     pub feedback: BTreeMap<String, (u64, u64)>,
+    /// 反馈事件身份（AIL-028）：事件 id → "{learning_id}:{direction}"；
+    /// 同一事件重试只计一次（幂等），无显式事件 id 时每次调用生成新 id
+    #[serde(default)]
+    pub feedback_events: BTreeMap<String, String>,
 }
 
 fn usage_path(ctx: &AppContext) -> PathBuf {
@@ -29,6 +33,7 @@ fn load(ctx: &AppContext) -> UsageRecord {
             schema_version: 1,
             usage: Default::default(),
             feedback: Default::default(),
+            feedback_events: Default::default(),
         })
 }
 
@@ -48,9 +53,27 @@ pub fn record_recall_hits(ctx: &AppContext, ids: &[String]) -> Result<()> {
     save(ctx, &r)
 }
 
-/// 记录显式反馈（有用/无用）；同反馈重试幂等（按 id+方向计数不翻倍：重复送达去重由调用方以内容窗口控制）。
-pub fn record_feedback(ctx: &AppContext, id: &str, useful: bool) -> Result<()> {
+/// 记录显式反馈（有用/无用）。幂等语义：调用方提供稳定 `feedback_id`（如
+/// CI 事件 id）时，同一事件重复送达只计一次；未提供时每次调用生成独立事件 id。
+pub fn record_feedback(
+    ctx: &AppContext,
+    id: &str,
+    useful: bool,
+    feedback_id: Option<&str>,
+) -> Result<()> {
     let mut r = load(ctx);
+    let event_id = feedback_id
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("fb-{}", crate::ids::new_id()));
+    let direction = if useful { "useful" } else { "not-useful" };
+    let event_key = format!("{id}:{direction}");
+    if let Some(seen) = r.feedback_events.get(&event_id) {
+        if seen == &event_key {
+            // 同一反馈事件重试：幂等跳过
+            return Ok(());
+        }
+    }
+    r.feedback_events.insert(event_id, event_key);
     let entry = r.feedback.entry(id.to_string()).or_insert((0, 0));
     if useful {
         entry.0 += 1;
@@ -58,6 +81,50 @@ pub fn record_feedback(ctx: &AppContext, id: &str, useful: bool) -> Result<()> {
         entry.1 += 1;
     }
     save(ctx, &r)
+}
+
+/// 归档清单路径：`<ws_dir>/archived-learnings.json`（字符串数组）。
+fn archive_path(ctx: &AppContext) -> PathBuf {
+    ctx.layout.ws_dir.join("archived-learnings.json")
+}
+
+fn load_archive_list(ctx: &AppContext) -> Vec<String> {
+    std::fs::read_to_string(archive_path(ctx))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| {
+            v.as_array().map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn save_archive_list(ctx: &AppContext, ids: &[String]) -> Result<()> {
+    crate::sync_common::atomic_write(
+        archive_path(ctx).as_path(),
+        serde_json::to_vec_pretty(&ids)?.as_slice(),
+    )
+}
+
+/// 归档：把经验加入归档清单（索引消费后从召回可见集合移除）；幂等。
+pub fn archive(ctx: &AppContext, id: &str) -> Result<Vec<String>> {
+    let mut list = load_archive_list(ctx);
+    if !list.iter().any(|x| x == id) {
+        list.push(id.to_string());
+        save_archive_list(ctx, &list)?;
+    }
+    Ok(list)
+}
+
+/// 恢复：从归档清单移除，重新进入召回可见集合；幂等。
+pub fn restore(ctx: &AppContext, id: &str) -> Result<Vec<String>> {
+    let mut list = load_archive_list(ctx);
+    list.retain(|x| x != id);
+    save_archive_list(ctx, &list)?;
+    Ok(list)
 }
 
 /// 归档记录：从索引可见集合移除（标记 archived），可恢复。
@@ -156,6 +223,8 @@ pub struct KnowledgeArgs {
     pub id: Option<String>,
     pub useful: bool,
     pub text: Option<String>,
+    /// 稳定反馈事件身份：同一 id 重试幂等（AIL-028）
+    pub feedback_id: Option<String>,
     pub root: Option<PathBuf>,
 }
 
@@ -176,8 +245,47 @@ pub fn run(args: &KnowledgeArgs, json: bool, data_root: Option<&std::path::Path>
                     format!("`{id}` 未在本工作区召回过，不能反馈"),
                 ));
             }
-            record_feedback(&ctx, id, args.useful)?;
-            Ok(serde_json::json!({ "id": id, "useful": args.useful }))
+            let duplicated = match args.feedback_id.as_deref() {
+                Some(fid) => {
+                    let direction = if args.useful { "useful" } else { "not-useful" };
+                    r.feedback_events
+                        .get(fid)
+                        .map(|seen| seen == &format!("{id}:{direction}"))
+                        .unwrap_or(false)
+                }
+                None => false,
+            };
+            record_feedback(&ctx, id, args.useful, args.feedback_id.as_deref())?;
+            Ok(serde_json::json!({
+                "id": id,
+                "useful": args.useful,
+                "duplicated": duplicated,
+                "feedback_id": args.feedback_id,
+            }))
+        }
+        "archive" => {
+            let id = args
+                .id
+                .as_deref()
+                .ok_or_else(|| Error::new(code::USAGE, "archive 需要 --id <learning id>"))?;
+            let list = archive(&ctx, id)?;
+            Ok(serde_json::json!({
+                "id": id,
+                "archived": list,
+                "note": "归档后索引召回排除该经验；restore 可恢复",
+            }))
+        }
+        "restore" => {
+            let id = args
+                .id
+                .as_deref()
+                .ok_or_else(|| Error::new(code::USAGE, "restore 需要 --id <learning id>"))?;
+            let list = restore(&ctx, id)?;
+            Ok(serde_json::json!({
+                "id": id,
+                "archived": list,
+                "note": "已恢复召回可见性",
+            }))
         }
         "maintenance" => {
             let plan = build_maintenance_plan(&ctx, 3)?;

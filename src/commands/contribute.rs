@@ -4,8 +4,11 @@
 use crate::appctx::AppContext;
 use crate::contribution::{self, ContributionRequest};
 use crate::error::{code, Error, Result};
-use crate::learning::{decide_target, parse, render_source_file, stable_id, LearningTarget};
+use crate::learning::{
+    decide_target, parse, persist_identity, render_source_file, stable_id, LearningTarget,
+};
 use crate::manifest::TeamManifest;
+use crate::resource::ResourceKind;
 use crate::source::SourcesLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,6 +37,9 @@ struct ContributedInfo {
     changeset_id: String,
     status: String,
     at: String,
+    /// 渲染产物 sha256 前缀；同 ID 重试时内容一致则去重，不一致则原位更新
+    #[serde(default)]
+    content_sha: Option<String>,
 }
 
 fn record_path(ctx: &AppContext) -> PathBuf {
@@ -75,29 +81,17 @@ pub fn run(
     })?;
     let doc = parse(&text)?;
     let id = stable_id(&doc);
+    // 稳定身份写回：新铸造的 ID 立即持久化进草稿 frontmatter，
+    // 之后的标题/正文编辑不再隐式产生新经验（幂等；已带 name 的草稿不重写）
+    if doc.name.as_deref().map(str::trim) != Some(id.as_str()) {
+        let updated = persist_identity(&text, &id)?;
+        crate::sync_common::atomic_write(&args.file, updated.as_bytes())?;
+    }
 
     // 2. 归属决策
     let target = decide_target(args.project.as_deref(), args.shared, &declaration.projects)?;
 
-    // 3. 重试去重：同 ID 已推送则直接返回既有信息
-    let mut record = load_record(ctx);
-    if let Some(existing) = record.contributed.get(&id) {
-        if existing.status == "pushed" || existing.status == "pr-created" {
-            let value = serde_json::json!({
-                "learning_id": id,
-                "deduplicated": true,
-                "branch": existing.branch,
-                "changeset_id": existing.changeset_id,
-                "status": existing.status,
-            });
-            if !json {
-                crate::logging::info(format!("经验 {id} 已在变更集中，未重复创建"));
-            }
-            return Ok(value);
-        }
-    }
-
-    // 4. namespace 决策与清单校验
+    // 3. namespace 决策与清单校验
     let lock_path = ctx
         .workspace
         .workspace_root
@@ -153,17 +147,51 @@ pub fn run(
         manifest.require_project(p)?;
     }
 
-    // 5. 组装源内文件并提交
+    // 5. 组装源内文件：规范 YAML 渲染 → 按资源契约复验（非法输出提交前拒绝）
     let content = render_source_file(&doc, &id, &target, &namespace);
     let rel = format!("{}/{}.md", manifest.effective_paths().learnings, id);
+    crate::resource::validate_rendered_markdown(
+        &manifest,
+        ResourceKind::Learning,
+        &id,
+        &content,
+        &rel,
+    )
+    .map_err(|e| e.context(serde_json::json!({ "learning_id": id })))?;
     let input = ContributionInput {
         rel_path: rel.clone(),
         content,
     };
 
-    let value = submit_input(&req, &input, &args.message, &args.provider, &id)?;
+    // 6. 重试去重：同 ID 且渲染产物一致 → 不重复创建；内容有变化 → 同 ID 原位更新
+    let content_sha = crate::ids::sha256_prefix(input.content.as_bytes(), 32);
+    let mut record = load_record(ctx);
+    if let Some(existing) = record.contributed.get(&id) {
+        if existing.status == "pushed" || existing.status == "pr-created" {
+            if existing.content_sha.as_deref() == Some(content_sha.as_str()) {
+                let value = serde_json::json!({
+                    "learning_id": id,
+                    "deduplicated": true,
+                    "branch": existing.branch,
+                    "changeset_id": existing.changeset_id,
+                    "status": existing.status,
+                });
+                if !json {
+                    crate::logging::info(format!("经验 {id} 已在变更集中，未重复创建"));
+                }
+                return Ok(value);
+            }
+            if !json {
+                crate::logging::info(format!("经验 {id} 内容有更新，按同 ID 推送新版本"));
+            }
+        }
+    }
 
-    // 6. 记录
+    let value = submit_input(&req, &input, &args.message, &args.provider, &id)?;
+    let mut value = value;
+    value["deduplicated"] = serde_json::json!(false);
+
+    // 7. 记录
     record.contributed.insert(
         id.clone(),
         ContributedInfo {
@@ -178,6 +206,7 @@ pub fn run(
                 "pr-created".into()
             },
             at: crate::ids::now_iso(),
+            content_sha: Some(content_sha),
         },
     );
     crate::sync_common::atomic_write(

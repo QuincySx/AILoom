@@ -107,12 +107,21 @@ pub fn run(
                 "claude" => t.claude = true,
                 "codex" => t.codex = true,
                 other => {
-                    if crate::adapters::registry::lookup(other).is_some() {
+                    if crate::adapters::is_extra_target(other) {
                         t.extra.push(other.to_string());
+                        if let Some(spec) = crate::adapters::registry::lookup(other) {
+                            if !spec.verified {
+                                eprintln!(
+                                    "[ailoom] 警告：宿主 `{other}` 发现路径尚未官方核实（file-placed）；真实加载需自行验收"
+                                );
+                            }
+                        }
                     } else {
                         return Err(Error::new(
                             code::USAGE,
-                            format!("未知 target: {other}（支持 claude/codex/cursor/antigravity）"),
+                            format!(
+                                "未知 target: {other}（支持 claude/codex/alva/cursor/antigravity）"
+                            ),
                         ));
                     }
                 }

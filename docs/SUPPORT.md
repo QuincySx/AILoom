@@ -7,7 +7,7 @@
 | 工具 | 实测版本 | 项目级支持（初版） | 详细矩阵 |
 |---|---|---|---|
 | Claude Code | 2.1.266 | skills / rules / agents / MCP / hooks / 文档索引 | [claude-code.md](capabilities/claude-code.md) |
-| Codex CLI | 0.153.4 | skills（config 数组）/ rules（AGENTS.md 片段）/ MCP / 文档索引 | [codex.md](capabilities/codex.md) |
+| Codex CLI | 0.153.4 | rules（AGENTS.md 片段）✔ 实测；skills/MCP 项目级配置落盘 ✔ 但宿主**不加载**（实测降级，见矩阵）；文档索引 ✔ | [codex.md](capabilities/codex.md) |
 
 宿主内真实加载/调用验收需要交互环境：文件落盘与官方发现路径一致性已自动化断言，
 宿主内行为在矩阵中逐行标注"未验证"。这些条目不作为 supported 证据。

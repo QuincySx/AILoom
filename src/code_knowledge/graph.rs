@@ -7,11 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 1;
+pub const GRAPH_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Symbol {
-    pub id: String,   // "fn:name" / "struct:Name" / "trait:Name" / "mod:name"
+    /// 唯一符号身份：`fn:name@相对路径`（AIL-026：同名定义跨文件不碰撞）；
+    /// 调用边目标保持名字层（fn:name），查询期按名字解析到候选定义并保留歧义证据。
+    pub id: String,
     pub kind: String, // fn|struct|enum|trait|mod
     pub name: String,
     pub file: String, // 相对项目根
@@ -87,7 +89,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
         fn visit_item_fn(&mut self, item: &syn::ItemFn) {
             let name = item.sig.ident.to_string();
             let line = item.sig.ident.span().start().line;
-            let id = format!("fn:{name}");
+            let id = format!("fn:{name}@{}", self.rel);
             self.symbols.push(Symbol {
                 id: id.clone(),
                 kind: "fn".into(),
@@ -98,8 +100,8 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             });
             self.fn_names.push(name.clone());
             self.edges.push(Edge {
-                from: format!("mod:{}", mod_of(self.rel)),
-                to: id,
+                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
+                to: id.clone(),
                 kind: "contains".into(),
                 confidence: "ast".into(),
                 file: self.rel.into(),
@@ -122,7 +124,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             calls.visit_item_fn(item);
             for (callee, line) in calls.0 {
                 self.edges.push(Edge {
-                    from: format!("fn:{name}"),
+                    from: id.clone(),
                     to: format!("fn:{callee}"),
                     kind: "call".into(),
                     confidence: "name-based".into(),
@@ -136,7 +138,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("struct:{name}"),
+                id: format!("struct:{name}@{}", self.rel),
                 kind: "struct".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -149,7 +151,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("enum:{name}"),
+                id: format!("enum:{name}@{}", self.rel),
                 kind: "enum".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -162,7 +164,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("trait:{name}"),
+                id: format!("trait:{name}@{}", self.rel),
                 kind: "trait".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -175,15 +177,15 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.edges.push(Edge {
-                from: format!("mod:{}", mod_of(self.rel)),
-                to: format!("mod:{name}"),
+                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
+                to: format!("mod:{name}@{}", self.rel),
                 kind: "contains".into(),
                 confidence: "ast".into(),
                 file: self.rel.into(),
                 line,
             });
             self.symbols.push(Symbol {
-                id: format!("mod:{name}"),
+                id: format!("mod:{name}@{}", self.rel),
                 kind: "mod".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -196,7 +198,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let line = item.use_token.span().start().line;
             let path_str = quote_use(&item.tree);
             self.edges.push(Edge {
-                from: format!("mod:{}", mod_of(self.rel)),
+                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
                 to: format!("use:{path_str}"),
                 kind: "use-dep".into(),
                 confidence: "ast".into(),
@@ -366,16 +368,21 @@ pub fn update_incremental(
 
 /// 悬空边检测：call 边的 to 不存在任何定义 → 标记为 gap 信息（保留边但外部引用语义）。
 pub fn dangling_call_edges(graph: &Graph) -> Vec<(String, String)> {
-    let defined: std::collections::BTreeSet<&str> = graph
+    // 调用边目标为名字层（fn:name）；按名字判断项目内是否有定义
+    let defined: std::collections::BTreeSet<String> = graph
         .files
         .values()
-        .flat_map(|f| f.symbols.iter().map(|s| s.id.as_str()))
+        .flat_map(|f| {
+            f.symbols
+                .iter()
+                .filter(|s| s.kind == "fn")
+                .map(|s| format!("fn:{}", s.name))
+        })
         .collect();
     let mut out = Vec::new();
     for facts in graph.files.values() {
         for e in &facts.edges {
-            if e.kind == "call" && e.confidence == "name-based" && !defined.contains(e.to.as_str())
-            {
+            if e.kind == "call" && e.confidence == "name-based" && !defined.contains(&e.to) {
                 out.push((e.from.clone(), e.to.clone()));
             }
         }

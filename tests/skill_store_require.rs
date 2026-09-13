@@ -19,8 +19,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -33,7 +32,7 @@ impl Ctx {
         self.tmp.path().join("data").to_string_lossy().to_string()
     }
     fn store_root(&self) -> PathBuf {
-        self.tmp.path().join("home").join(".ailoom").join("store")
+        common::isolated_store_root(self.tmp.path())
     }
 }
 
@@ -105,7 +104,11 @@ fn ticket01_store_symlink_layout_and_idempotent_sync() {
         );
         let target = std::fs::read_link(&link).unwrap();
         let t = target.to_string_lossy();
-        assert!(t.contains(".ailoom/store/"), "{t}");
+        assert!(
+            target.starts_with(c.store_root()),
+            "{t} 应位于 {:?} 下",
+            c.store_root()
+        );
         assert!(!t.contains("/sources/"), "{t}");
         assert!(!t.contains("resources/skills"), "{t}");
         assert!(target.join("SKILL.md").is_file(), "实体可读");
@@ -263,5 +266,63 @@ fn ticket04_doctor_broken_link_and_uninstall_keeps_store() {
         assert_eq!(code, 0, "uninstall: {stderr}");
         assert!(!link.exists(), "工作区链接应消失");
         assert!(target.join("SKILL.md").is_file(), "SkillStore 实体应保留");
+    }
+}
+
+#[test]
+fn xdg_data_home_store_layout_is_respected() {
+    // AIL-002：合法 XDG 覆盖行为保留——未设 AILOOM_STORE_ROOT 时，
+    // Store 根按契约落 $XDG_DATA_HOME/ailoom/store（受控 fixture 内）。
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let src = common::make_team_source_full(&c.tmp.path().join("src"));
+    let url = common::file_url(&src);
+    let dr = c.dr();
+    let xdg_data = c.tmp.path().join("xdg-data");
+
+    let spawn = |args: &[&str]| {
+        let mut cmd = Command::new(bin());
+        cmd.args(args).current_dir(&ws);
+        for (k, v) in common::isolated_child_env(c.tmp.path()) {
+            if k == "AILOOM_STORE_ROOT" {
+                continue; // 取消最高优先级覆盖，让 XDG_DATA_HOME 生效
+            }
+            cmd.env(k, v);
+        }
+        cmd.output().unwrap()
+    };
+
+    let out = spawn(&[
+        "--data-root",
+        dr.as_str(),
+        "init",
+        "--url",
+        &url,
+        "--project",
+        "a",
+        "--role",
+        "dev",
+        "--no-builtin",
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let out = spawn(&["--data-root", dr.as_str(), "sync"]);
+    assert_eq!(out.status.code(), Some(0));
+
+    let xdg_store = xdg_data.join("ailoom/store");
+    assert!(
+        xdg_store.is_dir(),
+        "Store 应回落 XDG 布局: {}",
+        xdg_store.display()
+    );
+    #[cfg(unix)]
+    {
+        let link = ws.join(".claude/skills/common-greet");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        let target = std::fs::read_link(&link).unwrap();
+        assert!(
+            target.starts_with(&xdg_store),
+            "{target:?} 应位于 {xdg_store:?} 下"
+        );
+        assert!(target.join("SKILL.md").is_file());
     }
 }

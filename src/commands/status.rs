@@ -155,6 +155,23 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
         }
     }
 
+    let mut warnings: Vec<Value> = Vec::new();
+    if let Some(decl) = &declaration {
+        for t in &decl.targets.extra {
+            if let Some(spec) = crate::adapters::registry::lookup(t) {
+                if !spec.verified {
+                    warnings.push(json!({
+                        "code": "rules-host-unverified",
+                        "message": format!(
+                            "宿主 `{t}` 发现路径未官方核实（file-placed）；产物会落盘，真实加载需自行验收"
+                        ),
+                        "fix": "见 docs/capabilities/cursor-antigravity.md",
+                    }));
+                }
+            }
+        }
+    }
+
     let value = json!({
         "workspace": {
             "root": ctx.workspace.workspace_root.display().to_string(),
@@ -171,7 +188,11 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
             },
             "projects": d.projects,
             "roles": d.roles,
-            "targets": { "claude": d.targets.claude, "codex": d.targets.codex },
+            "targets": {
+                "claude": d.targets.claude,
+                "codex": d.targets.codex,
+                "extra": d.targets.extra,
+            },
             "require": {
                 "skills": d.require.skills,
                 "agent": d.require.agent,
@@ -192,6 +213,7 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
         "snapshot": snapshot_info,
         "ok": issues.is_empty(),
         "issues": issues,
+        "warnings": warnings,
     });
 
     if !_json {
@@ -210,6 +232,11 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
                 d["projects"].clone(),
                 d["roles"].clone(),
             );
+            if let Some(extra) = d["targets"]["extra"].as_array() {
+                if !extra.is_empty() {
+                    println!("额外宿主: {:?}", extra);
+                }
+            }
         }
         println!("快照可用: {}", value["snapshot"]["available"]);
         for issue in value["issues"].as_array().unwrap_or(&vec![]) {
@@ -217,6 +244,13 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
                 "! [{}] {}",
                 issue["code"].as_str().unwrap_or("?"),
                 issue["message"].as_str().unwrap_or("?")
+            );
+        }
+        for w in value["warnings"].as_array().unwrap_or(&vec![]) {
+            println!(
+                "~ [{}] {}",
+                w["code"].as_str().unwrap_or("?"),
+                w["message"].as_str().unwrap_or("?")
             );
         }
     }

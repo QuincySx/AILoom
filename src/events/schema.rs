@@ -100,11 +100,16 @@ pub fn parse_payload(raw: &str) -> Result<Event> {
 
 /// Claude Code Hook payload（实施时按官方文档核实的字段：session_id/transcript_path/cwd/
 /// hook_event_name/tool_name/tool_input 等）。只读取必要字段。
+///
+/// `correction_keywords`（AIL-019）：仅在 PromptSubmit 入口对**本条** prompt 文本
+/// 即时做关键词匹配，命中则标注 `dedup_key=correction`（heuristic 来源）；
+/// 文本本身不落盘（仍只存长度与哈希），不扫描任何历史。
 pub fn parse_claude_payload(
     raw: &str,
     workspace_id: &str,
     device_id: &str,
     event_type: &str,
+    correction_keywords: &[String],
 ) -> Result<Event> {
     let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         Error::new(
@@ -121,7 +126,11 @@ pub fn parse_claude_payload(
         .get("tool_name")
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    let prompt = value.pointer("/tool_input/prompt").and_then(|v| v.as_str());
+    // UserPromptSubmit 的 prompt 在顶层；PostToolUse 场景在 tool_input.prompt
+    let prompt = value
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.pointer("/tool_input/prompt").and_then(|v| v.as_str()));
     let (prompt_len, prompt_hash) = prompt
         .map(|p| {
             (
@@ -130,9 +139,32 @@ pub fn parse_claude_payload(
             )
         })
         .unwrap_or((None, None));
+    // 受控纠正识别：仅 prompt 事件 + 关键词命中 → heuristic 标注
+    let is_correction = event_type == "prompt"
+        && prompt
+            .map(|p| {
+                crate::events::aggregate::HeuristicConfig::matches_keywords(p, correction_keywords)
+            })
+            .unwrap_or(false);
+    // 稳定来源事件身份（AIL-018）：对规范化 payload（键排序）+ 标准事件类型取哈希。
+    // 同一宿主事件重复投递 → 同一 event_id（重投去重）；
+    // 真实独立调用（payload 任意字段不同，如 tool_use_id/tool_input）→ 不同 event_id。
+    let event_id = {
+        let mut canonical = canonicalize_json(&value);
+        canonical["__ailoom_kind"] = serde_json::Value::String(event_type.to_string());
+        format!(
+            "claude-{}",
+            crate::ids::sha256_prefix(
+                serde_json::to_vec(&canonical)
+                    .unwrap_or_else(|_| raw.as_bytes().to_vec())
+                    .as_slice(),
+                32
+            )
+        )
+    };
     Ok(Event {
         schema_version: EVENT_SCHEMA_VERSION,
-        event_id: crate::ids::new_id(),
+        event_id,
         session_id,
         workspace_id: workspace_id.to_string(),
         device_id: device_id.to_string(),
@@ -145,8 +177,29 @@ pub fn parse_claude_payload(
         prompt_len,
         prompt_hash,
         tokens: None,
-        dedup_key: None,
+        dedup_key: if is_correction {
+            Some("correction".into())
+        } else {
+            None
+        },
     })
+}
+
+/// 键排序的规范化 JSON（BTreeMap 递归），保证同一 payload 不同键序得到同一哈希。
+fn canonicalize_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonicalize_json(v)))
+                .collect();
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(canonicalize_json).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 #[cfg(test)]

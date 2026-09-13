@@ -13,13 +13,22 @@ pub fn render(
     _tool: Tool,
     artifacts: &mut Vec<Artifact>,
 ) {
-    // 文档对两工具使用同一受管副本；索引片段由 render_index 统一生成
+    // 文档对两工具使用同一受管副本；索引片段由 render_index 统一生成。
+    // 副本每 entry 只生成一次：render 按工具循环调用，重复推送会因
+    // item_key 相同产生两个同路径 Create action，第二个必然前置失败。
+    let copy_path = format!(".ailoom/docs/{}.md", entry.id.name);
+    if artifacts
+        .iter()
+        .any(|a| a.kind == "doc" && a.path == std::path::Path::new(&copy_path))
+    {
+        return;
+    }
     let content = entry.raw.clone().unwrap_or_default();
     artifacts.push(Artifact {
         resource_id: entry.id.to_string(),
         target_tool: "*".into(),
         kind: "doc".into(),
-        path: format!(".ailoom/docs/{}.md", entry.id.name).into(),
+        path: copy_path.into(),
         body: ArtifactBody::Full { content },
     });
 }

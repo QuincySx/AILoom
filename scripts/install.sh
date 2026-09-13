@@ -1,61 +1,118 @@
 #!/bin/sh
-# AILoom 一键安装（T10 设计稿 + 本机路径可用）
-# 优先级：1) 已有 cargo → cargo install --path .（源码构建，最可信）
-#         2) 配置了 AILOOM_DOWNLOAD_BASE → 下载 release 二进制 + sha256 校验
+# AILoom 一键安装（AIL-029 返工：临时制品 → 校验 → 原子替换；所有失败分支保留原安装）
+#
+# 优先级：AILOOM_INSTALL_MODE=auto（缺省，本机行为：有 cargo 用源码构建，否则下载）
+#         AILOOM_INSTALL_MODE=cargo    强制源码构建
+#         AILOOM_INSTALL_MODE=download 强制二进制下载（需 AILOOM_DOWNLOAD_BASE）
+# 卸载：  scripts/install.sh uninstall   （只删除 $AILOOM_BIN_DIR 内 AILoom 自身文件，不碰用户配置）
 set -eu
 
 cd "$(dirname "$0")/.."
 
 say() { printf '[ailoom-install] %s\n' "$*"; }
+die() { printf '[ailoom-install] 错误：%s\n' "$*" >&2; exit 1; }
 
-# 1) 源码构建路径（当前主推：仓库即源）
-if command -v cargo >/dev/null 2>&1; then
+MODE="${AILOOM_INSTALL_MODE:-auto}"
+
+# ---------------------------------------------------------------------------
+# 卸载：仅移除 AILoom 自身安装物（二进制/校验文件/链接），不删除任何用户配置
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "uninstall" ]; then
+  BIN_DIR="${AILOOM_BIN_DIR:-$HOME/.ailoom/bin}"
+  if [ ! -d "$BIN_DIR" ]; then
+    say "未发现安装目录 ${BIN_DIR}，无需卸载"
+    exit 0
+  fi
+  removed=0
+  for f in "$BIN_DIR/ailoom" "$BIN_DIR"/ailoom-* "$BIN_DIR"/ailoom-*.sha256; do
+    if [ -e "$f" ] || [ -L "$f" ]; then
+      rm -f "$f"
+      removed=$((removed + 1))
+    fi
+  done
+  say "已卸载：删除 $BIN_DIR 内 $removed 个 AILoom 安装文件（用户数据与配置未触碰）"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1) 源码构建路径
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "cargo" ] || { [ "$MODE" = "auto" ] && command -v cargo >/dev/null 2>&1; }; then
+  [ "$MODE" = "cargo" ] || command -v cargo >/dev/null 2>&1 || die "cargo 不可用"
   say "使用 cargo 从源码构建并安装（cargo install --path .）…"
   cargo install --path . --locked
-  say "安装完成：$(command -v aloom 2>/dev/null || echo '~/.cargo/bin/ailoom')"
+  say "安装完成：$(command -v ailoom 2>/dev/null || echo '~/.cargo/bin/ailoom')"
   say "验证：ailoom version"
   exit 0
 fi
 
-# 2) 二进制下载路径（release base 由 AILOOM_DOWNLOAD_BASE 提供）
+# ---------------------------------------------------------------------------
+# 2) 二进制下载路径：下载到临时文件 → sha256 校验 → 原子替换 → 软链
+#    任何失败分支都保留既有 binary/软链，且不执行未校验文件
+# ---------------------------------------------------------------------------
 BASE="${AILOOM_DOWNLOAD_BASE:-}"
-if [ -z "$BASE" ]; then
-  say "未找到 cargo，且未设置 AILOOM_DOWNLOAD_BASE（release 下载源）。"
-  say "两条路："
-  say "  a) 安装 Rust 工具链（https://rustup.rs）后重跑本脚本"
-  say "  b) 设置 AILOOM_DOWNLOAD_BASE 指向内网镜像后重跑"
-  exit 1
-fi
+[ -n "$BASE" ] || die "未设置 AILOOM_DOWNLOAD_BASE（release 下载源）；或安装 Rust 工具链后重跑（https://rustup.rs）"
 
-TRIPLE=""
-case "$(uname -s)/$(uname -m)" in
-  Darwin/arm64)  TRIPLE="aarch64-apple-darwin" ;;
-  Darwin/x86_64) TRIPLE="x86_64-apple-darwin" ;;
-  Linux/x86_64)  TRIPLE="x86_64-unknown-linux-gnu" ;;
-  Linux/aarch64) TRIPLE="aarch64-unknown-linux-gnu" ;;
-  *) say "不支持的平台：$(uname -s)/$(uname -m)"; exit 1 ;;
-esac
+SUPPORTED_TRIPLES=" aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu "
+TRIPLE="${AILOOM_TRIPLE:-}"
+if [ -z "$TRIPLE" ]; then
+  case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64)  TRIPLE="aarch64-apple-darwin" ;;
+    Darwin/x86_64) TRIPLE="x86_64-apple-darwin" ;;
+    Linux/x86_64)  TRIPLE="x86_64-unknown-linux-gnu" ;;
+    Linux/aarch64) TRIPLE="aarch64-unknown-linux-gnu" ;;
+    *) die "不支持的平台：$(uname -s)/$(uname -m)（支持矩阵见 packaging/npm/PLATFORMS.md）" ;;
+  esac
+else
+  case "$SUPPORTED_TRIPLES" in
+    *" $TRIPLE "*) ;;
+    *) die "不支持的 AILOOM_TRIPLE：${TRIPLE}（支持矩阵见 packaging/npm/PLATFORMS.md）" ;;
+  esac
+fi
 
 BIN_DIR="${AILOOM_BIN_DIR:-$HOME/.ailoom/bin}"
 mkdir -p "$BIN_DIR"
-ARCHIVE="$BIN_DIR/ailoom-$TRIPLE"
+FINAL="$BIN_DIR/ailoom-$TRIPLE"
+SHA_FILE="$BIN_DIR/ailoom-$TRIPLE.sha256"
+LINK="$BIN_DIR/ailoom"
 URL="$BASE/ailoom-$TRIPLE"
 
+# 临时文件与 FINAL 同目录（保证 rename 原子性）；带 $$ 避免并发冲突
+TMP="$BIN_DIR/.ailoom-$TRIPLE.tmp.$$"
+TMP_SHA="$BIN_DIR/.ailoom-$TRIPLE.sha256.tmp.$$"
+cleanup_tmp() { rm -f "$TMP" "$TMP_SHA"; }
+trap cleanup_tmp EXIT INT TERM
+
+command -v curl >/dev/null 2>&1 || die "需要 curl 下载"
+
 say "下载 $URL …"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$URL" -o "$ARCHIVE" || { say "下载失败：检查网络/代理（HTTPS_PROXY）或 AILOOM_DOWNLOAD_BASE"; exit 1; }
-  curl -fsSL "$URL.sha256" -o "$ARCHIVE.sha256" || say "（无 .sha256，跳过校验——不推荐）"
+curl -fsSL --connect-timeout 10 "$URL" -o "$TMP" \
+  || die "下载失败：检查网络/代理（HTTPS_PROXY）或 AILOOM_DOWNLOAD_BASE"
+curl -fsSL --connect-timeout 10 "$URL.sha256" -o "$TMP_SHA" \
+  || die "缺少 $URL.sha256，拒绝安装（必须校验）"
+
+# 显式探测可用 sha256 工具；不可用/计算失败一律 fail closed
+expected=$(cut -d' ' -f1 "$TMP_SHA")
+[ -n "$expected" ] || die "校验文件为空或格式非法，拒绝安装"
+actual=""
+if command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$TMP" 2>/dev/null | cut -d' ' -f1) \
+    || die "sha256sum 计算失败，拒绝安装"
+elif command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$TMP" 2>/dev/null | cut -d' ' -f1) \
+    || die "shasum 计算失败，拒绝安装"
 else
-  say "需要 curl 下载"; exit 1
+  die "未找到 sha256sum 或 shasum，无法校验制品完整性，拒绝安装"
+fi
+[ -n "$actual" ] || die "sha256 计算结果为空，拒绝安装"
+if [ "$actual" != "$expected" ]; then
+  die "sha256 校验失败：expected=$expected actual=${actual}，拒绝安装"
 fi
 
-if [ -f "$ARCHIVE.sha256" ]; then
-  expected=$(cut -d' ' -f1 "$ARCHIVE.sha256")
-  actual=$(/usr/bin/shasum -a 256 "$ARCHIVE" 2>/dev/null | cut -d' ' -f1 || sha256sum "$ARCHIVE" | cut -d' ' -f1)
-  [ "$actual" = "$expected" ] || { say "sha256 校验失败，拒绝安装"; exit 1; }
-fi
-
-chmod +x "$ARCHIVE"
-ln -sf "$ARCHIVE" "$BIN_DIR/ailoom"
-say "安装完成：$BIN_DIR/ailoom（确保 $BIN_DIR 在 PATH 中）"
+# 校验通过后才原子替换：同目录 rename；失败不触碰旧文件
+chmod +x "$TMP"
+mv -f "$TMP" "$FINAL"
+mv -f "$TMP_SHA" "$SHA_FILE"
+ln -sfn "$FINAL" "$LINK"
+say "安装完成：${LINK} → ${FINAL}（确保 $BIN_DIR 在 PATH 中）"
 say "验证：ailoom version"

@@ -34,8 +34,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -233,4 +232,108 @@ fn unknown_namespace_rejected() {
     let (code, _, stderr) = c.contribute(&ws, &draft, &["--namespace", "ghost", "--project", "a"]);
     assert_eq!(code, 12);
     assert!(stderr.contains("E3004"), "{stderr}");
+}
+
+/// R05 反例回归：含冒号/引号/中文的合法标题经真实贡献路径
+/// 不再生成 E3002 资源，远端产物可被资源 frontmatter 解析器重新解析。
+#[test]
+fn colon_title_contributes_without_yaml_error() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup(&["a"]);
+    let draft = c.tmp.path().join("draft.md");
+    // 草稿按 YAML 规范加引号（R05 原反例输入）
+    std::fs::write(
+        &draft,
+        "---\ntitle: \"Fix: cache '失效' 双引号\\n第二行\"\ndescription: \"缓存: a: b\"\n---\n\n正文：修复缓存失效\n",
+    )
+    .unwrap();
+
+    let (code, stdout, stderr) = c.contribute(&ws, &draft, &[]);
+    assert_eq!(code, 0, "合法标题不得再生成 E3002: {stderr}");
+    assert!(!stderr.contains("E3002"), "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let branch = v["result"]["branch"].as_str().unwrap().to_string();
+    let id = v["result"]["learning_id"].as_str().unwrap().to_string();
+
+    ailoom::gitx::git(&team_src_dir(&c), &["fetch", "-q", "origin"]).unwrap();
+    let content = ailoom::gitx::git(
+        &team_src_dir(&c),
+        &[
+            "show",
+            &format!("origin/{branch}:resources/learnings/{id}.md"),
+        ],
+    )
+    .unwrap();
+    // 渲染产物按资源契约重新解析：frontmatter 合法且标题/描述逐字保留
+    let (meta, _) = ailoom::resource::parse_frontmatter(&content).expect("远端产物必须可解析");
+    let meta = meta.expect("远端产物必须有 frontmatter");
+    assert_eq!(meta.name.as_deref(), Some(id.as_str()));
+    assert_eq!(meta.project.as_deref(), Some("a"));
+    let doc2 = ailoom::learning::parse(&content).expect("远端产物必须能按经验重新解析");
+    assert_eq!(doc2.title, "Fix: cache '失效' 双引号\n第二行");
+    assert_eq!(doc2.description, "缓存: a: b");
+    assert!(
+        !content.contains("title: Fix: cache"),
+        "禁止手拼未转义 YAML: {content}"
+    );
+}
+
+/// 稳定身份：首次贡献把铸造 ID 写回草稿；之后改标题/正文仍同 ID 原位更新，
+/// 另一篇经验不误合并。
+#[test]
+fn same_learning_id_survives_title_and_body_edits() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup(&["a"]);
+    let draft = c.tmp.path().join("draft.md");
+    write_learning(&draft, "演进经验", "第一版内容");
+
+    let (code, stdout, stderr) = c.contribute(&ws, &draft, &[]);
+    assert_eq!(code, 0, "{stderr}");
+    let v1: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let id1 = v1["result"]["learning_id"].as_str().unwrap().to_string();
+
+    // 铸造 ID 已写回草稿 frontmatter（稳定身份的持久化证据）
+    let draft_text = std::fs::read_to_string(&draft).unwrap();
+    assert!(draft_text.contains(&format!("name: {id1}")), "{draft_text}");
+
+    // 改标题 + 改正文后重新贡献：同一 LearningId，内容更新而非去重跳过
+    let edited = draft_text
+        .replace("演进经验", "演进经验（改名）")
+        .replace("第一版内容", "第二版内容");
+    std::fs::write(&draft, edited).unwrap();
+    let (code, stdout, stderr) = c.contribute(&ws, &draft, &[]);
+    assert_eq!(code, 0, "{stderr}");
+    let v2: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        v2["result"]["learning_id"].as_str().unwrap(),
+        id1,
+        "标题/正文修改不产生新经验身份"
+    );
+    assert_eq!(
+        v2["result"]["deduplicated"],
+        serde_json::json!(false),
+        "内容变化必须推送更新"
+    );
+
+    // 同一 ID 的远端文件已更新为新正文
+    let branch = v2["result"]["branch"].as_str().unwrap().to_string();
+    ailoom::gitx::git(&team_src_dir(&c), &["fetch", "-q", "origin"]).unwrap();
+    let content = ailoom::gitx::git(
+        &team_src_dir(&c),
+        &[
+            "show",
+            &format!("origin/{branch}:resources/learnings/{id1}.md"),
+        ],
+    )
+    .unwrap();
+    assert!(content.contains("第二版内容"), "{content}");
+    assert!(content.contains("改名"), "{content}");
+
+    // 另一篇经验（无 name、内容不同）拿到不同 ID，不误合并
+    let draft_b = c.tmp.path().join("draft-b.md");
+    write_learning(&draft_b, "另一篇经验", "完全不同的内容");
+    let (code, stdout, stderr) = c.contribute(&ws, &draft_b, &[]);
+    assert_eq!(code, 0, "{stderr}");
+    let vb: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_ne!(vb["result"]["learning_id"].as_str().unwrap(), id1);
 }

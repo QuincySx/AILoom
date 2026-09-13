@@ -1,48 +1,76 @@
 //! 机器数据根与工作区数据布局（契约 §3）。所有根目录可注入。
+//!
+//! 解析优先级（高 → 低）：
+//! 1. CLI `--data-root`（仅数据根）
+//! 2. 自有环境变量 `AILOOM_DATA_ROOT` / `AILOOM_STORE_ROOT`
+//! 3. 已显式设置的 XDG 变量（`XDG_STATE_HOME` / `XDG_DATA_HOME`）
+//! 4. 用户主目录下的 `~/.ailoom…`
+//!
+//! 未设置的 XDG 变量**不会**自动落到规范默认路径（如 `~/.local/state`）；
+//! 只有变量本身非空时才采用 XDG。
 
 use crate::error::{code, Error, Result};
 use std::path::{Path, PathBuf};
 
-/// 解析机器数据根：显式参数 > AILOOM_DATA_ROOT > 平台默认。
-/// 默认实现不触碰 HOME 之外的目录；测试必须显式注入。
+/// 解析机器数据根：`--data-root` > `AILOOM_DATA_ROOT` > `XDG_STATE_HOME/ailoom` > `~/.ailoom`。
 pub fn resolve_data_root(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
-    if let Ok(env_root) = std::env::var("AILOOM_DATA_ROOT") {
-        if !env_root.is_empty() {
-            return Ok(PathBuf::from(env_root));
-        }
+    if let Some(env_root) = non_empty_env("AILOOM_DATA_ROOT") {
+        return Ok(PathBuf::from(env_root));
     }
-    home_data_root().ok_or_else(|| {
-        Error::new(
-            code::REFUSE_GLOBAL_WRITE,
-            "无法确定机器数据根目录，且未显式指定 --data-root/AILOOM_DATA_ROOT",
-        )
-        .fix("使用 --data-root <DIR> 显式指定")
+    if let Some(xdg) = non_empty_env("XDG_STATE_HOME") {
+        return Ok(PathBuf::from(xdg).join("ailoom"));
+    }
+    user_home()
+        .map(|home| home.join(".ailoom"))
+        .ok_or_else(|| {
+            Error::new(
+                code::REFUSE_GLOBAL_WRITE,
+                "无法确定机器数据根目录：未设置 --data-root / AILOOM_DATA_ROOT / XDG_STATE_HOME，且无法解析 HOME",
+            )
+            .fix("使用 --data-root <DIR>，或设置 AILOOM_DATA_ROOT / XDG_STATE_HOME / HOME")
+        })
+}
+
+/// 解析 SkillStore 根：`AILOOM_STORE_ROOT` > `XDG_DATA_HOME/ailoom/store` > `~/.ailoom/store`。
+pub fn resolve_store_root() -> Result<PathBuf> {
+    if let Some(env_root) = non_empty_env("AILOOM_STORE_ROOT") {
+        return Ok(PathBuf::from(env_root));
+    }
+    if let Some(xdg) = non_empty_env("XDG_DATA_HOME") {
+        return Ok(PathBuf::from(xdg).join("ailoom").join("store"));
+    }
+    user_home()
+        .map(|home| home.join(".ailoom").join("store"))
+        .ok_or_else(|| {
+            Error::new(
+                code::REFUSE_GLOBAL_WRITE,
+                "无法确定 SkillStore 根目录：未设置 AILOOM_STORE_ROOT / XDG_DATA_HOME，且无法解析 HOME",
+            )
+            .fix("设置 AILOOM_STORE_ROOT / XDG_DATA_HOME / HOME")
+        })
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key).ok().and_then(|v| {
+        let t = v.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
     })
 }
 
-fn home_data_root() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    let home = PathBuf::from(home);
-    #[cfg(target_os = "macos")]
-    {
-        Some(
-            home.join("Library")
-                .join("Application Support")
-                .join("ailoom"),
-        )
+fn user_home() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(home));
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Ok(xdg) = std::env::var("XDG_STATE_HOME") {
-            if !xdg.is_empty() {
-                return Some(PathBuf::from(xdg).join("ailoom"));
-            }
-        }
-        Some(home.join(".local").join("state").join("ailoom"))
-    }
+    std::env::var_os("USERPROFILE")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// 工作区级数据布局。root/cache/<anchor_key> 为仓库共享；ws/<id> 为工作区私有。
@@ -107,6 +135,34 @@ pub fn ensure_layout(layout: &WsLayout) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let prev = std::env::var_os(key);
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn layout_partitions_by_anchor_and_workspace() {
@@ -120,10 +176,77 @@ mod tests {
     }
 
     #[test]
-    fn explicit_root_wins_over_env() {
-        std::env::set_var("AILOOM_DATA_ROOT", "/tmp/env-root");
+    fn explicit_root_wins_over_env_and_xdg() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _a = EnvGuard::set("AILOOM_DATA_ROOT", Some("/tmp/env-root"));
+        let _x = EnvGuard::set("XDG_STATE_HOME", Some("/tmp/xdg-state"));
         let p = resolve_data_root(Some(Path::new("/tmp/explicit"))).unwrap();
         assert_eq!(p, Path::new("/tmp/explicit"));
-        std::env::remove_var("AILOOM_DATA_ROOT");
+    }
+
+    #[test]
+    fn ailoom_data_root_beats_xdg_and_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _a = EnvGuard::set("AILOOM_DATA_ROOT", Some("/tmp/ailoom-data"));
+        let _x = EnvGuard::set("XDG_STATE_HOME", Some("/tmp/xdg-state"));
+        let _h = EnvGuard::set("HOME", Some("/tmp/fake-home"));
+        let p = resolve_data_root(None).unwrap();
+        assert_eq!(p, Path::new("/tmp/ailoom-data"));
+    }
+
+    #[test]
+    fn xdg_state_home_beats_home_when_ailoom_unset() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _a = EnvGuard::set("AILOOM_DATA_ROOT", None);
+        let _x = EnvGuard::set("XDG_STATE_HOME", Some("/tmp/xdg-state"));
+        let _h = EnvGuard::set("HOME", Some("/tmp/fake-home"));
+        let p = resolve_data_root(None).unwrap();
+        assert_eq!(p, Path::new("/tmp/xdg-state/ailoom"));
+    }
+
+    #[test]
+    fn home_dot_ailoom_when_no_ailoom_or_xdg() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _a = EnvGuard::set("AILOOM_DATA_ROOT", None);
+        let _x = EnvGuard::set("XDG_STATE_HOME", None);
+        let _h = EnvGuard::set("HOME", Some("/tmp/fake-home"));
+        let p = resolve_data_root(None).unwrap();
+        assert_eq!(p, Path::new("/tmp/fake-home/.ailoom"));
+    }
+
+    #[test]
+    fn empty_xdg_does_not_count_as_set() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _a = EnvGuard::set("AILOOM_DATA_ROOT", None);
+        let _x = EnvGuard::set("XDG_STATE_HOME", Some("   "));
+        let _h = EnvGuard::set("HOME", Some("/tmp/fake-home"));
+        let p = resolve_data_root(None).unwrap();
+        assert_eq!(p, Path::new("/tmp/fake-home/.ailoom"));
+    }
+
+    #[test]
+    fn store_priority_ailoom_then_xdg_then_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _s = EnvGuard::set("AILOOM_STORE_ROOT", Some("/tmp/store-override"));
+        let _x = EnvGuard::set("XDG_DATA_HOME", Some("/tmp/xdg-data"));
+        let _h = EnvGuard::set("HOME", Some("/tmp/fake-home"));
+        assert_eq!(
+            resolve_store_root().unwrap(),
+            Path::new("/tmp/store-override")
+        );
+
+        drop(_s);
+        let _s = EnvGuard::set("AILOOM_STORE_ROOT", None);
+        assert_eq!(
+            resolve_store_root().unwrap(),
+            Path::new("/tmp/xdg-data/ailoom/store")
+        );
+
+        drop(_x);
+        let _x = EnvGuard::set("XDG_DATA_HOME", None);
+        assert_eq!(
+            resolve_store_root().unwrap(),
+            Path::new("/tmp/fake-home/.ailoom/store")
+        );
     }
 }

@@ -13,6 +13,11 @@ pub mod registry;
 pub mod rules;
 pub mod skills;
 
+/// 非 claude/codex 的额外宿主：`alva`，或 rules 注册表中的名（cursor/antigravity…）。
+pub fn is_extra_target(name: &str) -> bool {
+    name == "alva" || registry::lookup(name).is_some()
+}
+
 use crate::error::Result;
 use crate::resolver::DesiredSet;
 use crate::resource::ResourceKind;

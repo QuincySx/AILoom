@@ -36,8 +36,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -50,8 +49,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .env(k, v)
             .output()
             .unwrap();
@@ -120,8 +118,7 @@ impl Ctx {
         let mut child = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -161,8 +158,7 @@ fn dashboard_state_matches_cli_metrics() {
             &port.to_string(),
         ])
         .current_dir(&ws)
-        .env("HOME", c.tmp.path().join("home"))
-        .env("AILOOM_LOG", "error")
+        .envs(common::isolated_child_env(c.tmp.path()))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -328,6 +324,19 @@ fn report_push_creates_report_branch_and_resource_lock_untouched() {
 fn report_digest_shows_missing_sources() {
     let c = Ctx::new();
     let (ws, _bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+    // 团队汇总读取远端报告分支：先推送本工作区数据
+    let push = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr.clone(),
+        "report".to_string(),
+        "--action".to_string(),
+        "push".to_string(),
+    ];
+    let refs: Vec<&str> = push.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run_env(&ws, &refs, "AILOOM_REPORTING", "1");
+    assert_eq!(code, 0, "{stderr}");
     let args = [
         "--json",
         "--data-root",
@@ -339,7 +348,12 @@ fn report_digest_shows_missing_sources() {
     let (code, stdout, stderr) = c.run(&ws, &args);
     assert_eq!(code, 0, "{stderr}");
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["scope"], "team");
     assert_eq!(v["result"]["session_count"], 1);
+    assert!(
+        v["result"]["report_branches_merged"].as_u64().unwrap() >= 1,
+        "应合并远端报告分支"
+    );
     assert!(
         v["result"]["missing_sources"]["unavailable_token_sessions"]
             .as_u64()
@@ -348,4 +362,468 @@ fn report_digest_shows_missing_sources() {
         "缺失来源可见"
     );
     assert!(v["result"]["totals"]["prompt_count"].as_u64().is_some());
+}
+
+// ---------- AIL-022 返工回归（R09：批次幂等/补传/团队汇总） ----------
+
+fn push_report(c: &Ctx, ws: &Path) -> (i32, String, String) {
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "report".to_string(),
+        "--action".to_string(),
+        "push".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    c.run_env(ws, &refs, "AILOOM_REPORTING", "1")
+}
+
+fn report_status(c: &Ctx, ws: &Path) -> serde_json::Value {
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "report".to_string(),
+        "--action".to_string(),
+        "status".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run(ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    serde_json::from_str(stdout.trim()).unwrap()
+}
+
+/// 推送成功但响应丢失（checkpoint 未更新）后重试：同 batch_id、远端无重复批次、计数不翻倍。
+#[test]
+fn report_push_idempotent_on_lost_response() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let src = c.tmp.path().join("team-src");
+
+    let (code, stdout, stderr) = push_report(&c, &ws);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let batch1 = v["result"]["batch_id"].as_str().unwrap().to_string();
+
+    // 模拟"响应丢失"：推送已成功但本地确认丢失
+    let cp = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws.canonicalize().unwrap(),
+        ))
+        .join("report-checkpoint.json");
+    std::fs::remove_file(&cp).unwrap();
+
+    // 重试：同内容 → 同 batch_id，推送同内容到同分支
+    let (code, stdout, stderr) = push_report(&c, &ws);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        v["result"]["batch_id"].as_str().unwrap(),
+        batch1,
+        "内容派生批次身份稳定"
+    );
+
+    // 远端该分支上每个批次文件只出现一次（路径确定性 → 无重复批次）
+    ailoom::gitx::git(&src, &["fetch", "-q", "origin"]).unwrap();
+    let branch = format!("ailoom/reports-{}", &batch1[1..9]);
+    let listing = ailoom::gitx::git(
+        &src,
+        &["ls-tree", "-r", "--name-only", &format!("origin/{branch}")],
+    )
+    .unwrap();
+    let batch_files: Vec<&str> = listing.lines().filter(|l| l.contains("batches/")).collect();
+    assert_eq!(batch_files.len(), 1, "批次文件唯一: {listing:?}");
+
+    // 确认已写入 checkpoint 后再 push：幂等跳过，不再推送
+    let (code, stdout, _) = push_report(&c, &ws);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["already_pushed"], true, "{v}");
+}
+
+/// 离线失败冻结批次 → 恢复后 retry 实际补发并清除 pending；重启仍可恢复。
+#[test]
+fn report_pending_retry_repushes_and_clears() {
+    let c = Ctx::new();
+    let (ws, bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+
+    // 远端不可达
+    let hidden = bare.with_extension("hidden");
+    std::fs::rename(&bare, &hidden).unwrap();
+    let (code, _, stderr) = push_report(&c, &ws);
+    assert_ne!(code, 0, "推送失败必须报告: {stderr}");
+    let status = report_status(&c, &ws);
+    assert_eq!(
+        status["result"]["pending"].as_object().map(|o| o.len()),
+        Some(1),
+        "失败批次冻结进 pending: {status}"
+    );
+    let batch_id = status["result"]["pending"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+
+    // 恢复远端后补传
+    std::fs::rename(&hidden, &bare).unwrap();
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr.clone(),
+        "report".to_string(),
+        "--action".to_string(),
+        "retry".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["retried"], 1);
+    assert_eq!(v["result"]["batches"][0].as_str().unwrap(), batch_id);
+
+    // pending 清除、pushed 与确认水位线更新；重启（新进程）后依然如此
+    let status = report_status(&c, &ws);
+    assert_eq!(
+        status["result"]["pending"].as_object().map(|o| o.len()),
+        Some(0)
+    );
+    assert!(
+        status["result"]["pushed_batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b.as_str() == Some(batch_id.as_str())),
+        "{status}"
+    );
+    assert!(
+        status["result"]["confirmed_event_count"].as_u64().unwrap() > 0,
+        "确认水位线更新: {status}"
+    );
+    let (code, stdout, _) = c.run(&ws, &refs);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["retried"], 0, "重复 retry 无事可做");
+}
+
+/// 两工作区/设备的报告合并正确；同 session 更新不反复累计（累计快照取最大值语义）。
+#[test]
+fn team_digest_merges_workspaces_without_double_counting() {
+    let c = Ctx::new();
+    let bare = c.tmp.path().join("origin.git");
+    ailoom::gitx::git_init(&bare, true).unwrap();
+    let team_src = common::make_team_source(c.tmp.path());
+    ailoom::gitx::git(
+        &team_src,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    )
+    .unwrap();
+    ailoom::gitx::git(&team_src, &["push", "-q", "-u", "origin", "HEAD"]).unwrap();
+
+    let hook_prompt = |c: &Ctx, ws: &Path, sid: &str, text: &str| {
+        // payload 必须有差异（AIL-018 稳定事件身份：完全相同的 payload 视为重投被去重）
+        let payload = format!(
+            r#"{{"session_id":"{sid}","cwd":"{}","prompt":"{text}"}}"#,
+            ws.display()
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            c.dr(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "UserPromptSubmit".to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run_stdin(ws, &refs, &payload);
+        assert_eq!(code, 0, "{stderr}");
+    };
+    let bind = |c: &Ctx, ws: &Path| {
+        let args = [
+            "--json".to_string(),
+            "--data-root".to_string(),
+            c.dr(),
+            "init".to_string(),
+            "--url".to_string(),
+            bare.to_str().unwrap().to_string(),
+            "--project".to_string(),
+            "a".to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run(ws, &refs);
+        assert_eq!(code, 0, "{stderr}");
+    };
+
+    let ws_a = common::make_business_repo(c.tmp.path(), "biz-a");
+    let ws_b = common::make_business_repo(c.tmp.path(), "biz-b");
+    bind(&c, &ws_a);
+    bind(&c, &ws_b);
+    hook_prompt(&c, &ws_a, "s-a", "第一条提示");
+    hook_prompt(&c, &ws_b, "s-b", "B 的一条提示");
+
+    // A、B 各自推送（同一团队源远端）
+    let (code, _, stderr) = push_report(&c, &ws_a);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = push_report(&c, &ws_b);
+    assert_eq!(code, 0, "{stderr}");
+
+    // A 的同 session 再补一次 prompt 后再推送：累计快照从 1 → 2
+    hook_prompt(&c, &ws_a, "s-a", "第二条提示");
+    let (code, _, stderr) = push_report(&c, &ws_a);
+    assert_eq!(code, 0, "{stderr}");
+
+    // 团队 digest：合并两个工作区，session 独立计数；s-a 取最大快照 2 而不是 1+2
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "report".to_string(),
+        "--action".to_string(),
+        "digest".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run(&ws_a, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["scope"], "team", "{v}");
+    assert_eq!(v["result"]["session_count"], 2, "两工作区独立会话: {v}");
+    assert_eq!(
+        v["result"]["totals"]["prompt_count"].as_u64().unwrap(),
+        3,
+        "s-a 取累计快照最大值 2 + s-b 的 1，不反复累计"
+    );
+    let sessions = v["result"]["sessions"].as_array().unwrap();
+    let sa = sessions
+        .iter()
+        .find(|s| s["session_id_hash"].is_string() && s["prompt_count"].as_u64() == Some(2))
+        .expect("s-a 快照为 2");
+    assert!(
+        sa["devices"]
+            .as_array()
+            .map(|d| !d.is_empty())
+            .unwrap_or(false),
+        "设备维度可见: {sa}"
+    );
+}
+
+// ---------- AIL-021 返工回归（R08：SSE 头解析/跨进程更新） ----------
+
+fn http_get(port: u16, path: &str) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .unwrap();
+    let mut body = String::new();
+    stream.read_to_string(&mut body).unwrap();
+    body
+}
+
+fn spawn_dashboard(c: &Ctx, ws: &Path, port: u16) -> std::process::Child {
+    let dr = c.dr();
+    Command::new(bin())
+        .args([
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "dashboard",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(ws)
+        .envs(common::isolated_child_env(c.tmp.path()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+fn wait_port(port: u16) {
+    for _ in 0..60 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("看板端口 {port} 未就绪");
+}
+
+/// 读 SSE：返回在 bounded 时间内收到的全部文本（含首个 snapshot）。
+fn sse_read(port: u16, path: &str, with_last_event_id: Option<&str>, secs: u64) -> String {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(secs)))
+        .unwrap();
+    let last = with_last_event_id
+        .map(|id| format!("Last-Event-ID: {id}\r\n"))
+        .unwrap_or_default();
+    stream
+        .write_all(
+            format!(
+                "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n{last}\r\n"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    let mut buf = String::new();
+    let _ = stream.read_to_string(&mut buf);
+    buf
+}
+
+fn snapshot_count(text: &str) -> usize {
+    text.matches("event: snapshot").count()
+}
+
+/// 普通 EventSource（无 Last-Event-ID）也在有界时间内收到初始快照。
+#[test]
+fn sse_initial_snapshot_without_last_event_id() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = spawn_dashboard(&c, &ws, port);
+    wait_port(port);
+
+    let text = sse_read(port, "/api/events", None, 5);
+    assert!(text.starts_with("HTTP/1.1 200 OK"), "{text}");
+    assert_eq!(snapshot_count(&text), 1, "必须立即收到一个快照: {text}");
+    assert!(text.contains("s-board"), "{text}");
+
+    server.kill().unwrap();
+    let _ = server.wait();
+}
+
+/// 另一进程追加事件后，SSE 客户端在约定延迟内看到新数据；轮转后历史不消失。
+#[test]
+fn sse_detects_cross_process_append_and_rotation_keeps_history() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = spawn_dashboard(&c, &ws, port);
+    wait_port(port);
+
+    // 后台 SSE 客户端持续读取
+    let reader = std::thread::spawn(move || sse_read(port, "/api/events", None, 8));
+
+    // 等待首快照送达后再触发独立进程追加事件
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let dr = c.dr();
+    let payload = format!(r#"{{"session_id":"s-late","cwd":"{}"}}"#, ws.display());
+    let args = vec![
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr.clone(),
+        "hook".to_string(),
+        "--tool".to_string(),
+        "claude".to_string(),
+        "--event".to_string(),
+        "session-start".to_string(),
+        "--root".to_string(),
+        ws.to_str().unwrap().to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run_stdin(&ws, &refs, &payload);
+    assert_eq!(code, 0, "{stderr}");
+
+    // 轮转（独立进程）：历史进归档，统一读取不丢
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "data",
+            "--action",
+            "rotate",
+            "--max-size-mb",
+            "0.000001",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+
+    let text = reader.join().unwrap();
+    assert!(snapshot_count(&text) >= 2, "跨进程更新应推送新快照: {text}");
+    assert!(text.contains("s-late"), "新会话可见: {text}");
+    assert!(text.contains("s-board"), "轮转后历史仍在: {text}");
+
+    // 重连（带旧 Last-Event-ID 或不带）后状态与 /api/state 一致
+    let state_body = http_get(port, "/api/state");
+    let json = &state_body[state_body.find('{').unwrap()..];
+    let state: serde_json::Value = serde_json::from_str(json).unwrap();
+    let ids: Vec<&str> = state["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["session_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&"s-late") && ids.contains(&"s-board"),
+        "{state}"
+    );
+    let reconnect = sse_read(port, "/api/events", Some("0"), 5);
+    assert_eq!(snapshot_count(&reconnect), 1, "重连立即收到重建快照");
+    for id in ["s-late", "s-board"] {
+        assert!(reconnect.contains(id), "重连快照含 {id}: {reconnect}");
+    }
+
+    server.kill().unwrap();
+    let _ = server.wait();
+}
+
+/// 空数据工作区：/api/state 返回空会话列表；SSE 首快照也是空列表。
+#[test]
+fn dashboard_empty_workspace_shows_empty_state() {
+    let c = Ctx::new();
+    // 无事件的工作区（本地路径源）
+    let team_src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz-empty");
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        team_src.to_str().unwrap().to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = spawn_dashboard(&c, &ws, port);
+    wait_port(port);
+
+    let state_body = http_get(port, "/api/state");
+    let json = &state_body[state_body.find('{').unwrap()..];
+    let state: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(state["sessions"].as_array().unwrap().len(), 0, "{state}");
+    let snap = sse_read(port, "/api/events", None, 5);
+    assert_eq!(snapshot_count(&snap), 1);
+    assert!(snap.contains("\"sessions\":[]"), "{snap}");
+
+    server.kill().unwrap();
+    let _ = server.wait();
 }

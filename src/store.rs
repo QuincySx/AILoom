@@ -1,29 +1,14 @@
 //! SkillStore：按源仓库分桶存放 Skill 实体；Workspace 只挂链接。
 //! 布局：`<store>/<source_key>/.meta/SOURCE.json` + `<store>/<source_key>/<相对 skills 根>/`
 //! `source_key` = base64url(规范化 identity)，可逆。
+//! Store 根解析见 [`crate::paths::resolve_store_root`]。
 
 use crate::error::{code, Error, Result};
 use crate::ids::sha256_hex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// 解析 SkillStore 根：`AILOOM_STORE_ROOT` > 默认 `~/.ailoom/store`。
-pub fn resolve_store_root() -> Result<PathBuf> {
-    if let Ok(v) = std::env::var("AILOOM_STORE_ROOT") {
-        let t = v.trim();
-        if !t.is_empty() {
-            return Ok(PathBuf::from(t));
-        }
-    }
-    let home = std::env::var_os("HOME").ok_or_else(|| {
-        Error::new(
-            code::REFUSE_GLOBAL_WRITE,
-            "无法确定 HOME，且未设置 AILOOM_STORE_ROOT",
-        )
-        .fix("设置 AILOOM_STORE_ROOT 或 HOME")
-    })?;
-    Ok(PathBuf::from(home).join(".ailoom").join("store"))
-}
+pub use crate::paths::resolve_store_root;
 
 /// 规范化源 identity：去凭据、统一 git/https、去 `.git`、整体小写（稳定同仓同 key）。
 pub fn normalize_identity(raw: &str) -> String {

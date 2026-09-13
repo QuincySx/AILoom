@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,8 +35,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -174,6 +174,104 @@ fn env_user_variable_not_overwritten_and_uninstall_removes_own() {
         settings["env"]["API_BASE"], "https://mine",
         "个人同名变量不静默覆盖"
     );
+
+    // AIL-031 验收：真实执行卸载，验证 AILoom 托管条目被清理、用户条目保留。
+    // 本场景因同名冲突未部署托管变量 → settings 中不应出现团队默认值；
+    // 再用无冲突环境完整走一遍“部署 → 卸载”闭环。
+    let (code, _, stderr) = c.run(
+        ws.as_path(),
+        &["--data-root", c.dr().as_str(), "uninstall", "--execute"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        settings["env"]["API_BASE"], "https://mine",
+        "卸载后用户自己的变量仍保留"
+    );
+    assert!(
+        settings["env"].get("TIMEOUT").is_none(),
+        "托管条目应被清理: {settings}"
+    );
+}
+
+/// AIL-031：无冲突部署后真实卸载——托管 env 变量与受管片段被移除，
+/// 用户无关变量与用户文件原样保留；重复卸载幂等。
+#[test]
+fn uninstall_removes_managed_env_entries_and_keeps_user_data() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    // 用户在 settings 里有自己的无关变量与文件
+    std::fs::create_dir_all(ws.join(".claude")).unwrap();
+    std::fs::write(
+        ws.join(".claude/settings.json"),
+        r#"{"env":{"MY_OWN":"keep-me"}}"#,
+    )
+    .unwrap();
+    let marker = ws.join("user-notes.md");
+    std::fs::write(&marker, "用户笔记").unwrap();
+
+    let src = c.tmp.path().join("team-src");
+    std::fs::create_dir_all(src.join("resources/env")).unwrap();
+    // 两个字面量变量（TIMEOUT + API_BASE 无冲突变体）
+    std::fs::write(
+        src.join("resources/env/team-env.toml"),
+        "name = \"clean-env\"\nshared = true\nnamespace = \"common\"\ntargets = [\"claude\"]\n\n[vars]\nTIMEOUT = \"30\"\n",
+    )
+    .unwrap();
+    common::commit_only(&src, "add env");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = c.sync(&ws);
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(settings["env"]["TIMEOUT"], "30", "部署成功");
+    assert_eq!(settings["env"]["MY_OWN"], "keep-me");
+
+    // 真实执行卸载
+    let (code, _, stderr) = c.run(
+        ws.as_path(),
+        &["--data-root", c.dr().as_str(), "uninstall", "--execute"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(
+        settings["env"].get("TIMEOUT").is_none(),
+        "托管变量被清理: {settings}"
+    );
+    assert_eq!(
+        settings["env"]["MY_OWN"], "keep-me",
+        "用户变量保留: {settings}"
+    );
+    assert!(
+        marker.is_file(),
+        "用户文件保留: {}",
+        std::fs::read_to_string(&marker).unwrap()
+    );
+
+    // 重复卸载幂等
+    let (code, _, stderr) = c.run(
+        ws.as_path(),
+        &["--data-root", c.dr().as_str(), "uninstall", "--execute"],
+    );
+    assert_eq!(code, 0, "重复卸载幂等: {stderr}");
 }
 
 #[test]
@@ -316,5 +414,529 @@ fn team_hook_registered_and_user_hooks_preserved() {
             .unwrap_or("")
             .starts_with("ailoom hooks exec --id")),
         "团队 hook 以 exec 包装注册"
+    );
+}
+
+// ---------- AIL-032 返工回归（R15） ----------
+
+fn add_team_hook(src: &Path, name: &str, timeout_ms: u64) {
+    std::fs::create_dir_all(src.join("resources/hooks")).unwrap();
+    std::fs::write(
+        src.join("resources/hooks").join(format!("{name}.toml")),
+        format!(
+            "name = \"{name}\"\nevent = \"Stop\"\nmatcher = \"\"\ncommand = [\"echo\", \"{name}\"]\ntimeout_ms = {timeout_ms}\nshared = true\nnamespace = \"common\"\ntargets = [\"claude\"]\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn managed_stop_entries(settings: &serde_json::Value) -> Vec<String> {
+    settings["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["hooks"][0]["command"].as_str())
+        .filter(|c| c.starts_with("ailoom hooks exec --id"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// 同一事件多个团队 Hook：各有独立签名不冲突；重复 sync 幂等不漂移；用户 hook 保留。
+#[test]
+fn team_hooks_same_event_stable_across_resync() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_team_hook(&src, "hook-alpha", 3000);
+    add_team_hook(&src, "hook-beta", 3000);
+    common::commit_only(&src, "add hooks");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+
+    std::fs::create_dir_all(ws.join(".claude")).unwrap();
+    std::fs::write(
+        ws.join(".claude/settings.json"),
+        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"user-own"}]}]}}"#,
+    )
+    .unwrap();
+
+    // sync --refresh：拉取含新 hook 的源快照
+    let (code, _, stderr) = c.run(
+        ws.as_path(),
+        &["--data-root", c.dr().as_str(), "sync", "--refresh"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let entries = managed_stop_entries(&settings);
+    assert_eq!(entries.len(), 2, "两个团队 hook 都注册: {settings}");
+    assert!(entries.iter().any(|e| e.contains("hook-alpha")));
+    assert!(entries.iter().any(|e| e.contains("hook-beta")));
+    assert!(
+        settings["hooks"]["Stop"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["hooks"][0]["command"] == "user-own"),
+        "用户 hook 保留"
+    );
+
+    // 重复 sync：不产生新条目/不漂移（幂等）
+    let (code, _, _) = c.sync(&ws);
+    assert_eq!(code, 0);
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    let entries2 = managed_stop_entries(&settings);
+    assert_eq!(entries2.len(), 2, "重复 sync 幂等: {settings}");
+    assert_eq!(
+        std::collections::BTreeSet::from_iter(entries.iter()),
+        std::collections::BTreeSet::from_iter(entries2.iter()),
+        "签名身份稳定"
+    );
+
+    // remove：两个团队 hook 移除，用户 hook 保留
+    let (code, _, stderr) = c.run(
+        ws.as_path(),
+        &["--data-root", c.dr().as_str(), "uninstall", "--execute"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(
+        managed_stop_entries(&settings).is_empty(),
+        "团队 hook 全部移除: {settings}"
+    );
+    assert!(
+        settings["hooks"]["Stop"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["hooks"][0]["command"] == "user-own"),
+        "用户 hook 仍保留"
+    );
+}
+
+/// exec：大输出不误超时；超时回收进程组；失败退出不破坏宿主（exit 0 + 结果字段）。
+#[test]
+fn team_hook_exec_output_timeout_and_failure_semantics() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup();
+    let specs = ws.join(".ailoom-hook-specs");
+    std::fs::create_dir_all(&specs).unwrap();
+
+    let exec = |id: &str| {
+        c.run(
+            ws.as_path(),
+            &[
+                "--json",
+                "--data-root",
+                c.dr().as_str(),
+                "hooks",
+                "--action",
+                "exec",
+                "--id",
+                id,
+            ],
+        )
+    };
+    let write_spec = |id: &str, command: &[&str], timeout_ms: u64| {
+        let spec = serde_json::json!({
+            "resource_id": id,
+            "command": command,
+            "timeout_ms": timeout_ms,
+        });
+        std::fs::write(
+            specs.join(format!("{}.json", id.replace('/', "__"))),
+            serde_json::to_string_pretty(&spec).unwrap(),
+        )
+        .unwrap();
+    };
+
+    // 1) 大输出（>64KB 管道容量）正常退出：不误判超时
+    write_spec(
+        "team/hook/big-output",
+        &["/bin/sh", "-c", "yes big-output-line | head -c 200000"],
+        8000,
+    );
+    let (code, stdout, stderr) = exec("team/hook/big-output");
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(
+        v["result"]["executed"], true,
+        "大输出命令不应误超时: {stdout}"
+    );
+    assert_eq!(v["result"]["timed_out"], false, "{stdout}");
+
+    // 2) 超时：进程组被回收；exec 自身退出 0（不破坏宿主任务）
+    write_spec(
+        "team/hook/slow",
+        &["/bin/sh", "-c", "sleep 30; echo done"],
+        300,
+    );
+    let (code, stdout, _) = exec("team/hook/slow");
+    assert_eq!(code, 0, "超时也不得使宿主 hook 非零退出");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(v["result"]["executed"], false, "{stdout}");
+    assert_eq!(v["result"]["timed_out"], true, "{stdout}");
+
+    // 3) 失败退出：结果字段带退出码，exec 退出 0
+    write_spec(
+        "team/hook/fail",
+        &["/bin/sh", "-c", "echo boom >&2; exit 3"],
+        5000,
+    );
+    let (code, stdout, stderr) = exec("team/hook/fail");
+    assert_eq!(code, 0, "失败退出不得破坏宿主任务: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(v["result"]["executed"], false, "{stdout}");
+    assert_eq!(v["result"]["exit"], 3, "{stdout}");
+}
+
+// ---------- AIL-033 返工回归（R16） ----------
+
+fn add_package(src: &Path, file_name: &str, name: &str, version: &str) {
+    std::fs::create_dir_all(src.join("resources/packages")).unwrap();
+    std::fs::write(
+        src.join("resources/packages").join(file_name),
+        format!(
+            "name = \"{name}\"\necosystem = \"npm\"\nversion = \"{version}\"\nshared = true\nnamespace = \"common\"\n"
+        ),
+    )
+    .unwrap();
+}
+
+fn packages_json(
+    c: &Ctx,
+    ws: &Path,
+    action: &str,
+    extra: &[&str],
+) -> (i32, serde_json::Value, String) {
+    let mut args = vec![
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "packages".to_string(),
+        "--action".to_string(),
+        action.to_string(),
+    ];
+    args.extend(extra.iter().map(|s| s.to_string()));
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run(ws, &refs);
+    let v = serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap_or_default();
+    (code, v, stderr)
+}
+
+/// 范围/空版本被拒绝；同包不同版本是可解释冲突；同版本合并。
+#[test]
+fn packages_reject_ranges_and_conflicting_versions() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "rangever.toml", "somepkg", "^1.2.3");
+    common::commit_only(&src, "add range ver");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    let (code, _, stderr) = packages_json(&c, ws.as_path(), "check", &[]);
+    assert_ne!(code, 0, "范围版本必须被拒绝");
+    assert!(stderr.contains("精确版本"), "{stderr}");
+    assert!(stderr.contains("^1.2.3"), "{stderr}");
+
+    // 同包两个资源、不同版本 → 可解释冲突
+    let c2 = Ctx::new();
+    let (bare2, ws2) = c2.setup();
+    let src2 = c2.tmp.path().join("team-src");
+    add_package(&src2, "pkg-a.toml", "dup-pkg", "1.0.0");
+    add_package(&src2, "pkg-b.toml", "dup-pkg", "2.0.0");
+    common::commit_only(&src2, "add dup pkgs");
+    ailoom::gitx::git(&src2, &["push", "-q", "origin", "main"]).unwrap();
+    let args2 = [
+        "--data-root".to_string(),
+        c2.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare2.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs2: Vec<&str> = args2.iter().map(String::as_str).collect();
+    let (code, _, _) = c2.run(&ws2, &refs2);
+    assert_eq!(code, 0);
+    let (code, _, stderr) = packages_json(&c2, ws2.as_path(), "check", &[]);
+    // package TOML 的 name 同时是资源名与 npm 包名：同包不同版本在 resolver 层
+    // 即以 E3006 目标冲突大声失败，不允许静默覆盖（自定义版本冲突检查是纵深防御）
+    assert_ne!(code, 0, "同包不同版本必须冲突");
+    assert!(
+        stderr.contains("E3006") || stderr.contains("冲突"),
+        "{stderr}"
+    );
+
+    // 同包同版本重复声明（两个文件）：package TOML 的 name 同时是资源身份，
+    // resolver 以 E3006 大声拒绝重复声明（作者错误，不做隐式合并）
+    let c3 = Ctx::new();
+    let (bare3, ws3) = c3.setup();
+    let src3 = c3.tmp.path().join("team-src");
+    add_package(&src3, "pkg-a.toml", "same-pkg", "1.0.0");
+    add_package(&src3, "pkg-b.toml", "same-pkg", "1.0.0");
+    common::commit_only(&src3, "add same pkgs");
+    ailoom::gitx::git(&src3, &["push", "-q", "origin", "main"]).unwrap();
+    let args3 = [
+        "--data-root".to_string(),
+        c3.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare3.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs3: Vec<&str> = args3.iter().map(String::as_str).collect();
+    let (code, _, _) = c3.run(&ws3, &refs3);
+    assert_eq!(code, 0);
+    let (code, _, stderr) = packages_json(&c3, ws3.as_path(), "check", &[]);
+    assert_ne!(code, 0, "重复声明必须大声失败");
+    assert!(
+        stderr.contains("E3006") || stderr.contains("冲突"),
+        "{stderr}"
+    );
+}
+
+/// 全部已满足 → 不执行 npm（受控 npm 假体若被调用即失败）。
+#[test]
+fn packages_install_skips_npm_when_satisfied() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "okpkg.toml", "ok-pkg", "2.1.0");
+    common::commit_only(&src, "add pkg");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    // 预置满足态的 node_modules
+    let prefix = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws.canonicalize().unwrap(),
+        ))
+        .join("packages");
+    let mod_dir = prefix.join("node_modules").join("ok-pkg");
+    std::fs::create_dir_all(&mod_dir).unwrap();
+    std::fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"ok-pkg","version":"2.1.0"}"#,
+    )
+    .unwrap();
+
+    // PATH 前置假 npm：被调用即写标记（断言不得发生）
+    let fake_bin = c.tmp.path().join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let fake = fake_bin.join("npm");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\ntouch \"${NPM_CALLED_MARKER:?}\"\nexit 1\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let marker = c.tmp.path().join("npm-was-called");
+    let mut cmd = Command::new(bin());
+    cmd.args([
+        "--json",
+        "--data-root",
+        c.dr().as_str(),
+        "packages",
+        "--action",
+        "install",
+        "--yes",
+    ])
+    .current_dir(ws.as_path())
+    .env("NPM_CALLED_MARKER", marker.display().to_string())
+    .env(
+        "PATH",
+        format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+    );
+    let out = cmd.output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).unwrap();
+    assert_eq!(v["result"]["npm_ran"], false, "已满足不得执行 npm: {v}");
+    assert!(
+        !marker.exists(),
+        "npm 假体被调用——已满足仍执行安装是 R16 反例"
+    );
+    let rows = v["result"]["packages"].as_array().unwrap();
+    assert!(rows.iter().all(|r| r["state"] == "satisfied"), "{v}");
+}
+
+/// 受控 npm 假体执行"安装"（写 node_modules）：install 后返回安装后状态。
+#[test]
+fn packages_install_reports_post_install_state() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "fresh.toml", "fresh-pkg", "0.9.1");
+    common::commit_only(&src, "add pkg");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    let prefix = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws.canonicalize().unwrap(),
+        ))
+        .join("packages");
+    let fake_bin = c.tmp.path().join("fake-bin2");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let fake = fake_bin.join("npm");
+    // 受控假体：按调用方写入的 package.json 锁定版本物化 node_modules（占位符替换，避免转义）
+    let script = "#!/bin/sh\nmkdir -p PREFIX/node_modules/fresh-pkg\nprintf '%s' '{\"name\":\"fresh-pkg\",\"version\":\"0.9.1\"}' > PREFIX/node_modules/fresh-pkg/package.json\nexit 0\n"
+        .replace("PREFIX", &prefix.display().to_string());
+    std::fs::write(&fake, script).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut cmd = Command::new(bin());
+    cmd.args([
+        "--json",
+        "--data-root",
+        c.dr().as_str(),
+        "packages",
+        "--action",
+        "install",
+        "--yes",
+    ])
+    .current_dir(ws.as_path())
+    .env(
+        "PATH",
+        format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+    );
+    let out = cmd.output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).unwrap();
+    assert_eq!(v["result"]["npm_ran"], true, "{v}");
+    let rows = v["result"]["packages"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r["package"] == "fresh-pkg" && r["state"] == "satisfied"),
+        "返回安装后状态而非安装前: {v}"
+    );
+
+    // 再次 install：已满足 → npm 不再执行（幂等）
+    let marker = c.tmp.path().join("npm2-called");
+    let fake2 = fake_bin.join("npm");
+    std::fs::write(
+        &fake2,
+        "#!/bin/sh\ntouch \"${NPM_CALLED_MARKER:?}\"\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake2, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut cmd = Command::new(bin());
+    cmd.args([
+        "--json",
+        "--data-root",
+        c.dr().as_str(),
+        "packages",
+        "--action",
+        "install",
+        "--yes",
+    ])
+    .current_dir(ws.as_path())
+    .env("NPM_CALLED_MARKER", marker.display().to_string())
+    .env(
+        "PATH",
+        format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+    );
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).unwrap();
+    assert_eq!(v["result"]["npm_ran"], false, "重复安装幂等: {v}");
+}
+
+/// 真实 npm 安装（联网，需 registry 访问）；默认忽略，验收时显式运行：
+/// `cargo test --test adapters_next packages_real_npm_install -- --ignored --nocapture`
+#[test]
+#[ignore = "需要真实 npm registry 网络；离线环境跳过并在卡面记录边界"]
+fn packages_real_npm_install() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "tiny.toml", "isarray", "2.0.5");
+    common::commit_only(&src, "add pkg");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, v, stderr) = packages_json(&c, ws.as_path(), "install", &["--yes"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(v["result"]["npm_ran"], true, "{v}");
+    let rows = v["result"]["packages"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r["package"] == "isarray" && r["state"] == "satisfied"),
+        "真实 npm 安装后 satisfied: {v}"
     );
 }

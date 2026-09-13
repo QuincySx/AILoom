@@ -94,7 +94,7 @@
   {
     "id": "AIL-009",
     "title": "Skills 适配：Claude Code 与 Codex",
-    "status": "Done",
+    "status": "Blocked",
     "milestone": "M1",
     "size": "M",
     "depends_on": [
@@ -102,7 +102,8 @@
       "AIL-007",
       "AIL-008"
     ],
-    "file": "cards/AIL-009.md"
+    "file": "cards/AIL-009.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-010",
@@ -115,7 +116,8 @@
       "AIL-008",
       "AIL-009"
     ],
-    "file": "cards/AIL-010.md"
+    "file": "cards/AIL-010.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-011",
@@ -128,12 +130,13 @@
       "AIL-007",
       "AIL-008"
     ],
-    "file": "cards/AIL-011.md"
+    "file": "cards/AIL-011.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-012",
     "title": "MCP 定义、适配与托管更新",
-    "status": "Done",
+    "status": "Blocked",
     "milestone": "M1",
     "size": "L",
     "depends_on": [
@@ -141,7 +144,8 @@
       "AIL-007",
       "AIL-008"
     ],
-    "file": "cards/AIL-012.md"
+    "file": "cards/AIL-012.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-013",
@@ -160,7 +164,7 @@
   {
     "id": "AIL-014",
     "title": "资源贡献与审核发布",
-    "status": "Done",
+    "status": "Blocked",
     "milestone": "M2",
     "size": "L",
     "depends_on": [
@@ -169,7 +173,8 @@
       "AIL-007",
       "AIL-008"
     ],
-    "file": "cards/AIL-014.md"
+    "file": "cards/AIL-014.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-015",
@@ -183,7 +188,8 @@
       "AIL-006",
       "AIL-014"
     ],
-    "file": "cards/AIL-015.md"
+    "file": "cards/AIL-015.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-016",
@@ -209,7 +215,8 @@
       "AIL-015",
       "AIL-016"
     ],
-    "file": "cards/AIL-017.md"
+    "file": "cards/AIL-017.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-018",
@@ -233,7 +240,8 @@
     "depends_on": [
       "AIL-018"
     ],
-    "file": "cards/AIL-019.md"
+    "file": "cards/AIL-019.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-020",
@@ -246,7 +254,8 @@
       "AIL-017",
       "AIL-019"
     ],
-    "file": "cards/AIL-020.md"
+    "file": "cards/AIL-020.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-021",
@@ -286,7 +295,8 @@
       "AIL-021",
       "AIL-022"
     ],
-    "file": "cards/AIL-023.md"
+    "file": "cards/AIL-023.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-024",
@@ -298,7 +308,8 @@
       "AIL-005",
       "AIL-014"
     ],
-    "file": "cards/AIL-024.md"
+    "file": "cards/AIL-024.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-025",
@@ -323,7 +334,8 @@
     "depends_on": [
       "AIL-016"
     ],
-    "file": "cards/AIL-026.md"
+    "file": "cards/AIL-026.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-027",
@@ -335,7 +347,8 @@
       "AIL-016",
       "AIL-026"
     ],
-    "file": "cards/AIL-027.md"
+    "file": "cards/AIL-027.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-028",
@@ -348,7 +361,8 @@
       "AIL-017",
       "AIL-022"
     ],
-    "file": "cards/AIL-028.md"
+    "file": "cards/AIL-028.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-029",
@@ -360,7 +374,8 @@
       "AIL-002",
       "AIL-023"
     ],
-    "file": "cards/AIL-029.md"
+    "file": "cards/AIL-029.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-030",
@@ -374,7 +389,8 @@
       "AIL-022",
       "AIL-024"
     ],
-    "file": "cards/AIL-030.md"
+    "file": "cards/AIL-030.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-031",
@@ -387,7 +403,8 @@
       "AIL-010",
       "AIL-012"
     ],
-    "file": "cards/AIL-031.md"
+    "file": "cards/AIL-031.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-032",
@@ -400,7 +417,8 @@
       "AIL-008",
       "AIL-018"
     ],
-    "file": "cards/AIL-032.md"
+    "file": "cards/AIL-032.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-033",
@@ -414,7 +432,8 @@
       "AIL-009",
       "AIL-029"
     ],
-    "file": "cards/AIL-033.md"
+    "file": "cards/AIL-033.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-034",
@@ -427,7 +446,8 @@
       "AIL-016",
       "AIL-026"
     ],
-    "file": "cards/AIL-034.md"
+    "file": "cards/AIL-034.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-035",
@@ -441,7 +461,8 @@
       "AIL-026",
       "AIL-034"
     ],
-    "file": "cards/AIL-035.md"
+    "file": "cards/AIL-035.md",
+    "owner": "ZCode（2026-09 返工轮次）"
   },
   {
     "id": "AIL-036",

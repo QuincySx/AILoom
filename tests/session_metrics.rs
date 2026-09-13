@@ -223,3 +223,103 @@ fn share_record_contains_counts_only() {
     assert!(share["prompt_count"].as_u64().is_some(), "有计数");
     assert!(share.get("summary_body").is_none() && share.get("transcript").is_none());
 }
+
+// ---------- AIL-019 纠正启发式（窗口 / 开关 / 配置） ----------
+
+fn timed(kind: &str, dedup: Option<&str>, time: &str) -> Event {
+    let mut e = ev(kind, "sH", None, None, dedup, None);
+    e.time = time.into();
+    e
+}
+
+#[test]
+fn correction_counts_only_within_window_and_examples_do_not_count() {
+    let h = cfg();
+    let events = vec![
+        timed("tool", None, "2026-09-09T00:00:00Z"),
+        // 窗口内（+30s）：关键词命中的 prompt（hook 入口标注 correction）→ 计数
+        timed("prompt", Some("correction"), "2026-09-09T00:00:30Z"),
+        // 无关键词（无 dedup 标注）→ 不计
+        timed("prompt", None, "2026-09-09T00:01:00Z"),
+        // 窗口外（+10min 相对上一次 tool）→ 不计
+        timed("tool", None, "2026-09-09T00:02:00Z"),
+        timed("prompt", Some("correction"), "2026-09-09T00:20:00Z"),
+    ];
+    let m = aggregate_session("wsA", "sH", &events, &h).unwrap();
+    assert_eq!(m.prompt_count, 3);
+    assert_eq!(m.corrections_heuristic, 1, "仅窗口内纠正计数: {m:?}");
+    // 普通工具失败不误算人工干预
+    assert_eq!(m.interventions, 0);
+}
+
+#[test]
+fn heuristic_disabled_produces_no_correction_count() {
+    let events = vec![
+        timed("tool", None, "2026-09-09T00:00:00Z"),
+        timed("prompt", Some("correction"), "2026-09-09T00:00:30Z"),
+    ];
+    let off = HeuristicConfig {
+        enabled: false,
+        ..cfg()
+    };
+    let m = aggregate_session("wsA", "sH", &events, &off).unwrap();
+    assert_eq!(m.corrections_heuristic, 0, "关闭启发式后不产生纠正计数");
+    assert_eq!(m.prompt_count, 1, "关闭启发式仍统计基本量");
+}
+
+#[test]
+fn heuristic_config_file_changes_window_and_keywords() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("heuristic.toml"),
+        "enabled = true\ncorrection_window_secs = 10\ncorrection_keywords = [\"重试\"]\n",
+    )
+    .unwrap();
+    let h = HeuristicConfig::load(tmp.path());
+    assert_eq!(h.correction_window_secs, 10);
+    assert!(h.matches_keyword("请重试一遍"));
+    assert!(!h.matches_keyword("不对"), "配置替换默认关键词");
+    // 窗口 10s：+5s 计数，+30s 不计
+    let events = vec![
+        timed("tool", None, "2026-09-09T00:00:00Z"),
+        timed("prompt", Some("correction"), "2026-09-09T00:00:05Z"),
+        timed("tool", None, "2026-09-09T00:01:00Z"),
+        timed("prompt", Some("correction"), "2026-09-09T00:01:30Z"),
+    ];
+    let m = aggregate_session("wsA", "sH", &events, &h).unwrap();
+    assert_eq!(m.corrections_heuristic, 1);
+}
+
+#[test]
+fn same_session_string_with_different_tools_not_merged_in_listing() {
+    use ailoom::events::aggregate::aggregate_all;
+    let mut b = ev("stop", "dual", None, None, None, None);
+    b.tool = "codex".into();
+    let events = vec![ev("stop", "dual", None, None, None, None), b];
+    let all = aggregate_all("wsA", &events, &cfg()).unwrap();
+    assert_eq!(all.len(), 2, "provider 同名 session 不合并: {all:?}");
+    assert!(all.contains_key("claude/dual") && all.contains_key("codex/dual"));
+}
+
+// ---------- AIL-020 提示认领（并发安全） ----------
+
+#[test]
+fn claim_prompted_is_atomic_and_releasable() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(
+        ailoom::events::friction::claim_prompted(tmp.path(), "s1").unwrap(),
+        "首次认领成功"
+    );
+    assert!(
+        !ailoom::events::friction::claim_prompted(tmp.path(), "s1").unwrap(),
+        "并发/重复认领失败（最多一次提示）"
+    );
+    ailoom::events::friction::release_prompted(tmp.path(), "s1");
+    assert!(
+        ailoom::events::friction::claim_prompted(tmp.path(), "s1").unwrap(),
+        "展示失败释放后可再次提示"
+    );
+    assert!(ailoom::events::friction::was_prompted(tmp.path(), "s1"));
+    // 其他会话独立
+    assert!(ailoom::events::friction::claim_prompted(tmp.path(), "s2").unwrap());
+}

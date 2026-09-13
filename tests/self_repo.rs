@@ -34,8 +34,7 @@ impl Ctx {
         let out = Command::new(bin())
             .args(args)
             .current_dir(cwd)
-            .env("HOME", self.tmp.path().join("home"))
-            .env("AILOOM_LOG", "error")
+            .envs(common::isolated_child_env(self.tmp.path()))
             .output()
             .unwrap();
         (
@@ -207,4 +206,304 @@ fn self_mode_offline_and_linked_worktree() {
         }
     }
     assert!(has_backup, "迁移保留声明备份（可恢复）");
+}
+
+// ---------- AIL-036 返工回归（R10：越界覆盖 / 贡献链路） ----------
+
+fn snapshot_dir(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, base, out);
+            } else {
+                out.push((
+                    p.strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                    std::fs::read(&p).unwrap(),
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if dir.exists() {
+        walk(dir, dir, &mut out);
+    }
+    out.sort();
+    out
+}
+
+fn init_ws(c: &Ctx, ws: &Path, src: &Path) {
+    let args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        src.to_str().unwrap().to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(ws, &refs);
+    assert_eq!(code, 0, "init: {stderr}");
+}
+
+/// ../、绝对路径、指向工作区外的符号链接在任何写入前拒绝；外部哨兵逐字节不变。
+#[test]
+fn migrate_rejects_out_of_scope_subtrees_and_leaves_sentinel_untouched() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+
+    // 外部哨兵目录
+    let sentinel = c.tmp.path().join("sentinel");
+    std::fs::create_dir_all(sentinel.join("victim")).unwrap();
+    std::fs::write(
+        sentinel.join("victim/README.md"),
+        b"existing business content",
+    )
+    .unwrap();
+    let before = snapshot_dir(&sentinel);
+
+    // 哨兵内容的工作区外符号链接
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&sentinel, ws.join("team-escape")).unwrap();
+
+    let dr = c.dr();
+    let cases: Vec<&str> = vec![
+        "../victim-relative",
+        "/tmp/ailoom-absolute-escape",
+        #[cfg(unix)]
+        "team-escape",
+    ];
+    for sub in cases {
+        let args = [
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "migrate",
+            "--from",
+            src.to_str().unwrap(),
+            "--subtree",
+            sub,
+        ];
+        let (code, _, stderr) = c.run(&ws, &args);
+        assert_ne!(code, 0, "子树 {sub} 必须被拒绝");
+        assert!(
+            stderr.contains("E8002") || stderr.contains("相对路径") || stderr.contains("工作区外"),
+            "应报越界错误: {stderr}"
+        );
+        assert!(!ws.join(".ailoom-team").exists(), "{sub}: 写入前必须拒绝");
+    }
+
+    assert_eq!(before, snapshot_dir(&sentinel), "外部哨兵逐字节不变");
+    let decl = std::fs::read_to_string(ws.join(".ailoom/project.toml")).unwrap();
+    assert!(decl.contains("type = \"git\""), "声明未被改动: {decl}");
+}
+
+/// 已有业务文件不被覆盖；源与目标重叠/嵌套不自复制。
+#[test]
+fn migrate_refuses_overwrite_and_overlap() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+
+    // 预置与源同路径但内容不同的业务文件
+    let existing = ws.join(".ailoom-team/resources/skills/common-greet/SKILL.md");
+    std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
+    std::fs::write(&existing, "# 业务自有内容\n").unwrap();
+
+    let dr = c.dr();
+    let args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        src.to_str().unwrap(),
+    ];
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_ne!(code, 0, "隐式覆盖必须被拒绝");
+    assert!(
+        stderr.contains("拒绝隐式覆盖") || stderr.contains("E8002"),
+        "{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&existing).unwrap(),
+        "# 业务自有内容\n",
+        "已有业务文件逐字节保留"
+    );
+
+    // 源与目标重叠：from 在目标子树内 → 拒绝自复制
+    // 先清理冲突文件并完成一次正常迁移
+    std::fs::remove_dir_all(ws.join(".ailoom-team")).unwrap();
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "{stderr}");
+    let from_self = ws.join(".ailoom-team");
+    let from_self_str = from_self.to_str().unwrap().to_string();
+    let overlap_args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        from_self_str.as_str(),
+    ];
+    let (code, _, stderr) = c.run(&ws, &overlap_args);
+    assert_ne!(code, 0, "源与目标重叠必须被拒绝");
+    assert!(
+        stderr.contains("重叠") || stderr.contains("E8002"),
+        "{stderr}"
+    );
+}
+
+/// 迁移中断（物化第 N 文件失败）可重试：旧声明与业务文件逐字节保留。
+#[test]
+fn migrate_materialize_failure_is_retryable() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+    let dr = c.dr();
+    let decl_path = ws.join(".ailoom/project.toml");
+    let decl_before = std::fs::read_to_string(&decl_path).unwrap();
+
+    // 注入：子树中的 resources 目录只读 → 物化复制失败
+    let blocked = ws.join(".ailoom-team/resources");
+    std::fs::create_dir_all(&blocked).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    }
+    let args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        src.to_str().unwrap(),
+    ];
+    let (code, _, _stderr) = c.run(&ws, &args);
+    assert_ne!(code, 0, "物化失败必须报告");
+    assert_eq!(
+        std::fs::read_to_string(&decl_path).unwrap(),
+        decl_before,
+        "物化失败时旧声明逐字节保留"
+    );
+
+    // 解除注入后重试成功
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let (code, _, _stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "重试应成功: {_stderr}");
+    let decl = std::fs::read_to_string(&decl_path).unwrap();
+    assert!(decl.contains("type = \"self\""), "{decl}");
+    // 可恢复记录存在
+    let mut has_record = false;
+    for e in std::fs::read_dir(c.tmp.path().join("data/ws"))
+        .unwrap()
+        .flatten()
+    {
+        if e.path().join("migrate-record.json").is_file() {
+            has_record = true;
+        }
+    }
+    assert!(has_record, "应有 migrate-record.json 可恢复记录");
+}
+
+/// 真实同仓贡献命令：包含资源改动、分支确实存在、可重试；业务脏文件/HEAD/分支不变。
+#[test]
+fn contribute_self_cli_creates_reviewable_branch() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "migrate",
+            "--from",
+            src.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0, "migrate: {stderr}");
+
+    // 业务脏文件与基线
+    std::fs::write(ws.join("dirty.txt"), "local").unwrap();
+    let branch_before = ailoom::gitx::git(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+    let head_before = ailoom::gitx::git(&ws, &["rev-parse", "HEAD"]).unwrap();
+
+    // 子树未提交（迁移产生的新文件）→ 贡献应包含全部资源文件
+    let (code, stdout, stderr) = c.run(&ws, &["--json", "contribute-self"]);
+    assert_eq!(code, 0, "contribute-self: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let branch1 = v["result"]["branch"]
+        .as_str()
+        .expect("应返回分支名")
+        .to_string();
+    assert!(
+        v["result"]["files"].as_u64().unwrap() > 0,
+        "应包含资源改动: {v}"
+    );
+    assert_eq!(v["result"]["pushed"], false);
+    // 分支确实存在（worktree 清理后仍可验证）
+    let exists = ailoom::gitx::git(&ws, &["rev-parse", "--verify", &branch1]).unwrap();
+    assert!(
+        exists.trim().len() == 40,
+        "分支 {branch1} 必须存在: {exists}"
+    );
+    // 提交内容只含子树
+    let names = ailoom::gitx::git(&ws, &["show", "--name-only", "--format=", &branch1]).unwrap();
+    assert!(
+        names.trim().lines().all(|l| l.starts_with(".ailoom-team/")),
+        "{names}"
+    );
+
+    // 业务脏文件/HEAD/分支全程不变
+    assert_eq!(
+        std::fs::read_to_string(ws.join("dirty.txt")).unwrap(),
+        "local"
+    );
+    assert_eq!(
+        ailoom::gitx::git(&ws, &["rev-parse", "HEAD"]).unwrap(),
+        head_before
+    );
+    assert_eq!(
+        ailoom::gitx::git(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap(),
+        branch_before
+    );
+
+    // 子树整体提交到业务分支后：无改动 → no_changes
+    ailoom::gitx::git(&ws, &["add", "-A", "--", ".ailoom-team"]).unwrap();
+    ailoom::gitx::git(
+        &ws,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "commit whole team subtree",
+        ],
+    )
+    .unwrap();
+    let (code, stdout, stderr) = c.run(&ws, &["--json", "contribute-self"]);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["no_changes"], true, "{v}");
 }

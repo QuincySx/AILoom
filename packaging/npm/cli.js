@@ -13,10 +13,25 @@ import { spawnSync } from "node:child_process";
 const BASE_URL = process.env.AILOOM_DOWNLOAD_BASE ?? "https://example.invalid/ailoom/releases";
 const VERSION = "0.0.0-draft";
 
+const SUPPORTED_TRIPLES = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-pc-windows-msvc",
+];
+
 function triple() {
+  // 显式覆写（受控测试/镜像环境用）；不在支持矩阵内即拒绝
+  const override = process.env.AILOOM_TRIPLE;
+  if (override) {
+    if (SUPPORTED_TRIPLES.includes(override)) return override;
+    fail(`不支持的 AILOOM_TRIPLE ${override}；矩阵见 packaging/npm/PLATFORMS.md`);
+  }
   const p = platform();
   const a = arch();
-  if (p === "darwin") return "aarch64-apple-darwin";
+  if (p === "darwin" && a === "arm64") return "aarch64-apple-darwin";
+  if (p === "darwin" && a === "x64") return "x86_64-apple-darwin";
   if (p === "linux" && a === "x64") return "x86_64-unknown-linux-gnu";
   if (p === "linux" && a === "arm64") return "aarch64-unknown-linux-gnu";
   if (p === "win32" && a === "x64") return "x86_64-pc-windows-msvc";

@@ -2,7 +2,46 @@
 #![allow(dead_code)]
 
 use ailoom::gitx::{git_commit_all, git_init};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// AIL-002：子进程测试环境的统一路径隔离。
+///
+/// 覆盖全部机器根来源：HOME/USERPROFILE、XDG_DATA_HOME、XDG_STATE_HOME、
+/// AILOOM_DATA_ROOT、AILOOM_STORE_ROOT，全部指向本次测试临时目录内部。
+/// 运行环境即使预置了真实 XDG/AILOOM 覆盖变量（或被测代码忽略 CLI
+/// `--data-root`），写入也会落在临时目录，外部路径逐字节不变。
+pub fn isolated_child_env(root: &Path) -> Vec<(String, String)> {
+    let home = root.join("home");
+    vec![
+        ("HOME".into(), path_str(&home)),
+        ("USERPROFILE".into(), path_str(&home)),
+        ("XDG_DATA_HOME".into(), path_str(&root.join("xdg-data"))),
+        ("XDG_STATE_HOME".into(), path_str(&root.join("xdg-state"))),
+        (
+            "AILOOM_DATA_ROOT".into(),
+            path_str(&root.join("ailoom-data")),
+        ),
+        (
+            "AILOOM_STORE_ROOT".into(),
+            path_str(&root.join("ailoom-store")),
+        ),
+        ("AILOOM_LOG".into(), "error".into()),
+    ]
+}
+
+/// 隔离环境下子进程使用的 SkillStore 根（`AILOOM_STORE_ROOT`，最高优先级）。
+pub fn isolated_store_root(root: &Path) -> PathBuf {
+    root.join("ailoom-store")
+}
+
+/// 隔离环境下子进程使用的机器数据根（`AILOOM_DATA_ROOT`）。
+pub fn isolated_data_root(root: &Path) -> PathBuf {
+    root.join("ailoom-data")
+}
+
+fn path_str(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
 
 pub const MANIFEST_TOML: &str = r#"
 schema_version = 1

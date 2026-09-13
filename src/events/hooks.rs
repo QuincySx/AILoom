@@ -10,6 +10,22 @@ use std::path::{Path, PathBuf};
 pub const CLAUDE_HOOK_EVENTS: [&str; 4] =
     ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"];
 
+/// 宿主事件 → 标准事件（session-start/prompt/tool/stop）的显式映射。
+/// 同时兼容历史错误注册（全小写连接形式）；标准名原样通过；未知返回 None。
+pub fn host_event_to_kind(host_event: &str) -> Option<&'static str> {
+    let norm = host_event
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', '-'], "");
+    match norm.as_str() {
+        "sessionstart" | "session-start" => Some("session-start"),
+        "userpromptsubmit" | "prompt" => Some("prompt"),
+        "posttooluse" | "tool" => Some("tool"),
+        "stop" => Some("stop"),
+        _ => None,
+    }
+}
+
 pub struct HookArgs {
     pub tool: String,
     pub event: String,
@@ -31,23 +47,58 @@ pub fn run_hook(
         Error::new(code::EVENT_PAYLOAD_INVALID, "stdin 不可读")
     })?;
 
-    let cwd = std::env::current_dir().unwrap_or_default();
-    // 工作区发现优先用 payload.cwd（后台执行不继承错误 cwd 的语义：显式根优先）
-    let root_dir: PathBuf = explicit_root.map(|p: &Path| p.to_path_buf()).unwrap_or(cwd);
-    let ctx = match AppContext::discover(data_root, &root_dir, explicit_root) {
+    // 工作区根优先级（AIL-018 冻结）：显式 --root > 宿主 payload.cwd > 进程 cwd。
+    let payload_cwd: Option<PathBuf> = serde_json::from_str::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| {
+            v.get("cwd")
+                .and_then(|c| c.as_str())
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        });
+    let start_dir: PathBuf = match (explicit_root, &payload_cwd) {
+        (Some(r), _) => r.to_path_buf(),
+        (None, Some(c)) => c.clone(),
+        (None, None) => std::env::current_dir().unwrap_or_default(),
+    };
+    if payload_cwd.is_none() && explicit_root.is_none() {
+        crate::logging::error(
+            "hook：payload 无 cwd 且未显式指定 --root，使用进程 cwd（有串工作区风险）",
+        );
+    }
+    let ctx = match AppContext::discover(data_root, &start_dir, explicit_root) {
         Ok(c) => c,
         Err(e) => {
-            // 无绑定的工作区不采集（也不阻塞宿主）
-            crate::logging::warn(format!("hook 跳过：{}（宿主不受影响）", e.message));
+            // 无绑定/不可发现根：诊断后跳过（不阻塞宿主）
+            crate::logging::error(format!(
+                "hook 跳过：{}（root={}，宿主不受影响）",
+                e.message,
+                start_dir.display()
+            ));
             return Ok(json!({ "captured": false, "reason": e.code }));
         }
     };
+    // 宿主事件名 → 标准事件；未知事件诊断后跳过
+    let kind = match host_event_to_kind(&args.event) {
+        Some(k) => k.to_string(),
+        None => {
+            crate::logging::error(format!(
+                "hook：未知宿主事件 {}（E7001，宿主不受影响）",
+                args.event
+            ));
+            return Ok(json!({ "captured": false, "reason": "unknown-event" }));
+        }
+    };
+    // AIL-019：纠正关键词在 Hook 受控入口即时匹配（文本不落盘），配置可经
+    // heuristic.toml 覆盖
+    let heuristic = crate::events::aggregate::HeuristicConfig::load(&ctx.layout.ws_dir);
     let event = match args.tool.as_str() {
         "claude" => crate::events::schema::parse_claude_payload(
             &payload,
             &ctx.workspace.workspace_id,
             &ctx.device,
-            &args.event,
+            &kind,
+            &heuristic.correction_keywords,
         )?,
         other => {
             crate::logging::warn(format!("hook：未知工具 {other}，跳过"));
@@ -59,7 +110,12 @@ pub fn run_hook(
             crate::logging::error(format!("hook 事件写入失败：{}（宿主不受影响）", e.message));
             e
         })?;
-    Ok(json!({ "captured": captured, "event_id": event.event_id }))
+    Ok(json!({
+        "captured": captured,
+        "event_id": event.event_id,
+        "session_id": event.session_id,
+        "kind": event.kind,
+    }))
 }
 
 /// hooks 注册（专用托管操作）：读取现有 settings.json，按签名替换 AILoom 条目
@@ -120,7 +176,7 @@ pub fn install_registration(
             "matcher": "",
             "hooks": [{
                 "type": "command",
-                "command": format!("ailoom hook --tool claude --event {}", event.to_lowercase()),
+                "command": format!("ailoom hook --tool claude --event {event}"),
                 "timeout": 5
             }]
         }));

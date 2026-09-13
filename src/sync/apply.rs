@@ -193,7 +193,8 @@ fn apply_action(
         .fix("重新运行 ailoom plan 查看差异"));
     }
 
-    // 2. 整文件备份（旧内容哈希用于恢复校验语义）
+    // 2. 每步独立备份：名字带 seq，同一文件的多个片段各自保存恢复点，
+    //    后一步绝不覆盖前一步保存的原始内容（R01）
     let seq = run.next_seq();
     let rel_path = action.path.clone();
     let prior_bytes = whole_file(ws_root, &rel_path)?;
@@ -201,7 +202,11 @@ fn apply_action(
         .as_ref()
         .map(|b| format!("sha256:{}", crate::ids::sha256_hex(b)));
     let backup_file = if let Some(bytes) = &prior_bytes {
-        let name = format!("{}.bak", crate::ids::sha256_prefix(rel_path.as_bytes(), 16));
+        let name = format!(
+            "{:06}-{}.bak",
+            seq,
+            crate::ids::sha256_prefix(rel_path.as_bytes(), 16)
+        );
         std::fs::write(run.backup_dir().join(&name), bytes)?;
         Some(name)
     } else {
@@ -265,6 +270,26 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             }
             crate::sync_common::atomic_write(&file, serde_json::to_vec_pretty(&root)?.as_slice())
         }
+        ArtifactBody::JsonArrayMerge {
+            pointer,
+            signature,
+            value,
+        } => {
+            let mut root: serde_json::Value = if file.is_file() {
+                serde_json::from_str(&std::fs::read_to_string(&file)?).map_err(|e| {
+                    Error::new(code::USER_CONTENT_CONFLICT, format!("配置解析失败: {e}"))
+                })?
+            } else {
+                serde_json::json!({})
+            };
+            let arr = ensure_json_array_at(&mut root, pointer)?;
+            arr.retain(|e| !json_entry_has_signature(e, signature));
+            arr.push(value.clone());
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            crate::sync_common::atomic_write(&file, serde_json::to_vec_pretty(&root)?.as_slice())
+        }
         ArtifactBody::TomlArrayEntry {
             table,
             key_field,
@@ -277,22 +302,7 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             } else {
                 toml::Value::Table(Default::default())
             };
-            let mut cur = &mut root;
-            for seg in table.split('.') {
-                cur = cur
-                    .as_table_mut()
-                    .ok_or_else(|| Error::new(code::USER_CONTENT_CONFLICT, "TOML 结构冲突"))?
-                    .entry(seg.to_string())
-                    .or_insert_with(|| toml::Value::Table(Default::default()));
-            }
-            let arr = match cur {
-                toml::Value::Array(a) => a,
-                _ => {
-                    // 位置不是数组：以空数组重建（身份字段唯一的受管条目集合）
-                    *cur = toml::Value::Array(Vec::new());
-                    cur.as_array_mut().unwrap()
-                }
-            };
+            let arr = ensure_toml_array_at(&mut root, table)?;
             let kv = value
                 .get(key_field)
                 .and_then(|v| v.as_str())
@@ -412,6 +422,45 @@ fn cleanup_empty_parents(ws_root: &Path, file: &Path) {
     }
 }
 
+/// 确保点分路径末端是数组（`[[agent]]` 场景）；已存在非数组则报冲突。
+fn ensure_toml_array_at<'a>(
+    root: &'a mut toml::Value,
+    table: &str,
+) -> Result<&'a mut Vec<toml::Value>> {
+    let segs: Vec<&str> = table.split('.').filter(|s| !s.is_empty()).collect();
+    if segs.is_empty() {
+        return Err(Error::new(code::INTERNAL, "TOML 数组表路径为空"));
+    }
+    if !root.is_table() {
+        *root = toml::Value::Table(Default::default());
+    }
+    let (leaf, parents) = segs.split_last().unwrap();
+    let mut cur = root;
+    for seg in parents {
+        cur = cur
+            .as_table_mut()
+            .ok_or_else(|| Error::new(code::USER_CONTENT_CONFLICT, "TOML 结构冲突"))?
+            .entry(seg.to_string())
+            .or_insert_with(|| toml::Value::Table(Default::default()));
+    }
+    let parent = cur
+        .as_table_mut()
+        .ok_or_else(|| Error::new(code::USER_CONTENT_CONFLICT, "TOML 结构冲突"))?;
+    match parent.get(*leaf) {
+        Some(toml::Value::Array(_)) => {}
+        Some(_) => {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!("TOML 路径 `{table}` 已存在且不是数组表，拒绝覆盖"),
+            ));
+        }
+        None => {
+            parent.insert(leaf.to_string(), toml::Value::Array(Vec::new()));
+        }
+    }
+    Ok(parent.get_mut(*leaf).unwrap().as_array_mut().unwrap())
+}
+
 /// 按托管清单条目键删除：只删除自己的条目/片段/文件。
 /// 沿点分路径下钻 &mut toml::Value（不存在则 None）。
 fn descend_mut<'a>(root: &'a mut toml::Value, segs: &[&str]) -> Option<&'a mut toml::Value> {
@@ -459,6 +508,24 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
                     &file,
                     serde_json::to_vec_pretty(&root)?.as_slice(),
                 )?;
+            }
+            Ok(())
+        }
+        Some(m) if m.starts_with("jsonmerge:") => {
+            // 数组托管条目删除：按签名移除嵌套 hooks[].command 匹配项（保留其余内容）
+            let rest = &m["jsonmerge:".len()..];
+            if let Some((pointer, signature)) = rest.split_once(':') {
+                if file.is_file() {
+                    let mut root: serde_json::Value =
+                        serde_json::from_str(&std::fs::read_to_string(&file)?)?;
+                    if let Some(arr) = root.pointer_mut(pointer).and_then(|v| v.as_array_mut()) {
+                        arr.retain(|e| !json_entry_has_signature(e, signature));
+                        crate::sync_common::atomic_write(
+                            &file,
+                            serde_json::to_vec_pretty(&root)?.as_slice(),
+                        )?;
+                    }
+                }
             }
             Ok(())
         }
@@ -511,6 +578,57 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
             format!("未知托管清单条目模式: {other}"),
         )),
     }
+}
+
+/// 定位（必要时创建）JSON pointer 指向的数组；已存在但不是数组 → 冲突。
+fn ensure_json_array_at<'a>(
+    root: &'a mut serde_json::Value,
+    pointer: &str,
+) -> Result<&'a mut Vec<serde_json::Value>> {
+    if root.is_null() {
+        *root = serde_json::json!({});
+    }
+    let segments: Vec<&str> = pointer.split('/').filter(|s| !s.is_empty()).collect();
+    let mut cur = root;
+    for seg in &segments {
+        if cur.is_null() {
+            *cur = serde_json::json!({});
+        }
+        if !cur.is_object() {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!("JSON pointer 父节点不是对象: /{seg}"),
+            ));
+        }
+        let obj = cur.as_object_mut().unwrap();
+        let entry = obj
+            .entry(seg.to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        cur = entry;
+    }
+    if !cur.is_array() {
+        return Err(Error::new(
+            code::USER_CONTENT_CONFLICT,
+            format!("JSON pointer 目标不是数组: {pointer}"),
+        ));
+    }
+    Ok(cur.as_array_mut().unwrap())
+}
+
+/// 嵌套 hooks[].command 是否以托管签名开头（Claude settings hook 条目形态）。
+pub fn json_entry_has_signature(entry: &serde_json::Value, signature: &str) -> bool {
+    entry
+        .pointer("/hooks")
+        .and_then(|h| h.as_array())
+        .map(|hs| {
+            hs.iter().any(|h| {
+                h.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|c| c.starts_with(signature))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn set_json_pointer(
@@ -596,12 +714,31 @@ fn remove_json_pointer(root: &mut serde_json::Value, pointer: &str) {
     }
 }
 
+/// 恢复结果报告：ok=false 表示存在损坏/缺失备份，恢复点保留待人工检查。
+#[derive(Debug, Default, serde::Serialize)]
+pub struct RecoverReport {
+    pub ok: bool,
+    /// 已逐字节还原的目标（同一文件多个步骤各自独立还原）
+    pub recovered: Vec<String>,
+    /// 当前内容不属于本次写入（用户已修改/已恢复），明确拒绝覆盖
+    pub skipped_user_modified: Vec<String>,
+    /// 备份文件缺失或摘要不匹配，无法安全还原
+    pub broken_backups: Vec<String>,
+    /// 因备份损坏而保留的 journal 运行目录（恢复证据）
+    pub pending_runs: Vec<String>,
+}
+
 /// 崩溃/失败后的恢复：逆序回滚仍属于本次写入的文件（当前整文件哈希 == written_hash）。
-pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<Vec<String>> {
-    let mut recovered = Vec::new();
+/// 每步使用独立备份并校验备份摘要；目标被用户编辑时拒绝覆盖；备份损坏时报失败并保留证据。
+pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
+    let mut report = RecoverReport {
+        ok: true,
+        ..Default::default()
+    };
     for run_dir in JournalRun::find_pending(journal_root)? {
         let mut entries = crate::sync::journal::read_entries(&run_dir)?;
         entries.sort_by_key(|e| e.seq);
+        let mut run_broken = false;
         for entry in entries.into_iter().rev() {
             let file = ws_root.join(&entry.path);
             let current_hash = match std::fs::read(&file) {
@@ -611,29 +748,52 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<Vec<String>> {
             };
             if current_hash != entry.written_hash {
                 // 被人改过或已不在：跳过，保留后来的人为修改
+                report.skipped_user_modified.push(entry.path.clone());
                 continue;
             }
             match (&entry.backup_file, &entry.backup_hash) {
-                (Some(backup), Some(_)) => {
+                (Some(backup), Some(expected_hash)) => {
                     let backup_path = run_dir.join("backup").join(backup);
-                    if backup_path.is_file() {
-                        crate::sync_common::atomic_write(
-                            &file,
-                            std::fs::read(&backup_path)?.as_slice(),
-                        )?;
-                        recovered.push(entry.path.clone());
+                    let verified = backup_path
+                        .is_file()
+                        .then(|| std::fs::read(&backup_path))
+                        .transpose()?
+                        .map(|bytes| {
+                            format!("sha256:{}", crate::ids::sha256_hex(&bytes)) == *expected_hash
+                        });
+                    match verified {
+                        Some(true) => {
+                            let bytes = std::fs::read(&backup_path)?;
+                            crate::sync_common::atomic_write(&file, bytes.as_slice())?;
+                            report.recovered.push(entry.path.clone());
+                        }
+                        _ => {
+                            // 备份缺失或摘要不匹配：不得以恢复成功掩盖损坏
+                            report.broken_backups.push(entry.path.clone());
+                            run_broken = true;
+                        }
+                    }
+                }
+                (None, None) => {
+                    // create：回滚=删除本次创建的文件
+                    if file.is_file() || file.symlink_metadata().is_ok() {
+                        std::fs::remove_file(&file)?;
+                        report.recovered.push(entry.path.clone());
                     }
                 }
                 _ => {
-                    // create：回滚=删除本次创建的文件
-                    if file.is_file() {
-                        std::fs::remove_file(&file)?;
-                        recovered.push(entry.path.clone());
-                    }
+                    report.broken_backups.push(entry.path.clone());
+                    run_broken = true;
                 }
             }
         }
-        crate::sync_common::remove_dir_all_guarded(&run_dir)?;
+        if run_broken {
+            // 保留运行目录作为恢复证据，等待人工处置
+            report.pending_runs.push(run_dir.display().to_string());
+        } else {
+            crate::sync_common::remove_dir_all_guarded(&run_dir)?;
+        }
     }
-    Ok(recovered)
+    report.ok = report.broken_backups.is_empty();
+    Ok(report)
 }

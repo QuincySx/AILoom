@@ -50,6 +50,17 @@ pub enum ArtifactBody {
         /// 本条目内容
         entry: toml::Value,
     },
+    /// JSON 数组按托管签名合并（如 Claude settings 的 hooks.<Event>）：
+    /// 先移除嵌套 hooks[].command 以 signature 开头的条目，再追加 value。
+    /// 身份 = (路径, 签名)，与数组下标无关——同事件多 Hook 不冲突、重复同步不漂移。
+    JsonArrayMerge {
+        /// 数组所在 JSON pointer（如 /hooks/Stop）
+        pointer: String,
+        /// 托管签名（嵌套 hooks[].command 前缀）
+        signature: String,
+        /// 本条目内容
+        value: serde_json::Value,
+    },
 }
 
 /// 一个渲染产物。path 相对工作区根；禁止绝对路径与 `..`。
@@ -80,6 +91,11 @@ impl Artifact {
                     .unwrap_or_default();
                 format!("#tomlarr:{table}:{key_field}:{kv}")
             }
+            ArtifactBody::JsonArrayMerge {
+                pointer, signature, ..
+            } => {
+                format!("#jsonmerge:{pointer}:{signature}")
+            }
             ArtifactBody::Full { .. } => String::new(),
             ArtifactBody::Symlink { .. } => "#symlink".into(),
         };
@@ -95,6 +111,8 @@ impl Artifact {
             ArtifactBody::TomlTable { value, .. }
             | ArtifactBody::TomlArrayEntry { entry: value, .. } => serde_json::to_vec(value)
                 .map_err(|e| Error::new(code::RENDER_FAILED, format!("TOML 值规范化失败: {e}")))?,
+            ArtifactBody::JsonArrayMerge { value, .. } => serde_json::to_vec(value)
+                .map_err(|e| Error::new(code::RENDER_FAILED, format!("JSON 序列化失败: {e}")))?,
             ArtifactBody::Fragment { content } => content.clone().into_bytes(),
             ArtifactBody::Symlink {
                 target,
@@ -113,12 +131,26 @@ impl Artifact {
             )
             .context(serde_json::json!({ "resource": self.resource_id })));
         }
-        if let ArtifactBody::JsonPointer { pointer, .. } = &self.body {
+        if let Some((pointer, signature)) = match &self.body {
+            ArtifactBody::JsonPointer { pointer, .. } => Some((pointer, None)),
+            ArtifactBody::JsonArrayMerge {
+                pointer, signature, ..
+            } => Some((pointer, Some(signature))),
+            _ => None,
+        } {
             if !pointer.starts_with('/') {
                 return Err(Error::new(
                     code::RENDER_FAILED,
                     format!("JSON pointer 必须以 / 开头: {pointer}"),
                 ));
+            }
+            if let Some(sig) = signature {
+                if sig.is_empty() {
+                    return Err(Error::new(
+                        code::RENDER_FAILED,
+                        "JsonArrayMerge 托管签名不能为空",
+                    ));
+                }
             }
         }
         Ok(())

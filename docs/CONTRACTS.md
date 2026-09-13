@@ -51,7 +51,14 @@
 
 三者是**独立字段**：同一 anchor 可对应多个 workspace（worktree）；同一路径在不同机器上 workspace 一致但 device 不同。
 
-机器数据根（全部可注入，默认平台适当目录）：
+机器数据根与 SkillStore 根（全部可注入）解析优先级（高 → 低）：
+
+| 根 | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| `<data_root>` | `--data-root` | `AILOOM_DATA_ROOT` | `$XDG_STATE_HOME/ailoom`（仅当变量已设且非空） | `$HOME/.ailoom` |
+| SkillStore | — | `AILOOM_STORE_ROOT` | `$XDG_DATA_HOME/ailoom/store`（仅当变量已设且非空） | `$HOME/.ailoom/store` |
+
+未设置的 XDG 变量**不会**隐式落到 `~/.local/state` / `~/.local/share`；只有变量本身存在时才走 XDG。自有 `AILOOM_*` 始终高于 XDG。
 
 ```
 <data_root>/cache/<source_identity_hash>/      # 源缓存，按源身份隔离
