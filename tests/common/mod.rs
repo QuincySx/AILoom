@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 /// AILOOM_DATA_ROOT、AILOOM_STORE_ROOT，全部指向本次测试临时目录内部。
 /// 运行环境即使预置了真实 XDG/AILOOM 覆盖变量（或被测代码忽略 CLI
 /// `--data-root`），写入也会落在临时目录，外部路径逐字节不变。
+/// 隔离环境只注入 XDG 变量（契约 v1.1：已设 XDG 优先于自有 AILOOM_*），
+/// 不再设置 AILOOM_DATA_ROOT / AILOOM_STORE_ROOT，避免双来源误导断言。
 pub fn isolated_child_env(root: &Path) -> Vec<(String, String)> {
     let home = root.join("home");
     vec![
@@ -17,26 +19,18 @@ pub fn isolated_child_env(root: &Path) -> Vec<(String, String)> {
         ("USERPROFILE".into(), path_str(&home)),
         ("XDG_DATA_HOME".into(), path_str(&root.join("xdg-data"))),
         ("XDG_STATE_HOME".into(), path_str(&root.join("xdg-state"))),
-        (
-            "AILOOM_DATA_ROOT".into(),
-            path_str(&root.join("ailoom-data")),
-        ),
-        (
-            "AILOOM_STORE_ROOT".into(),
-            path_str(&root.join("ailoom-store")),
-        ),
         ("AILOOM_LOG".into(), "error".into()),
     ]
 }
 
-/// 隔离环境下子进程使用的 SkillStore 根（`AILOOM_STORE_ROOT`，最高优先级）。
+/// 隔离环境下子进程使用的 SkillStore 根（= `$XDG_DATA_HOME/ailoom/store`）。
 pub fn isolated_store_root(root: &Path) -> PathBuf {
-    root.join("ailoom-store")
+    root.join("xdg-data").join("ailoom").join("store")
 }
 
-/// 隔离环境下子进程使用的机器数据根（`AILOOM_DATA_ROOT`）。
+/// 隔离环境下子进程使用的机器数据根（= `$XDG_STATE_HOME/ailoom`）。
 pub fn isolated_data_root(root: &Path) -> PathBuf {
-    root.join("ailoom-data")
+    root.join("xdg-state").join("ailoom")
 }
 
 fn path_str(p: &Path) -> String {

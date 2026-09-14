@@ -4,7 +4,7 @@
 //! AILOOM_STORE_ROOT 等覆盖变量后，sync 把 Skill 实体写入真实 Store。
 //! 本文件验证 tests/common::isolated_child_env 的两条边界：
 //! 1. 运行环境预置外部覆盖变量时，哨兵目录逐字节不变，写入落在受控根；
-//! 2. 无任何覆盖变量时，回落到 HOME 布局（~/.ailoom/store），同样不外溢。
+//! 2. 无任何覆盖变量时，按 XDG 规范默认落盘（$HOME/.local/share/ailoom/store），同样不外溢。
 
 mod common;
 
@@ -172,8 +172,8 @@ fn no_override_vars_falls_back_to_home_layout() {
     let out = cmd.output().unwrap();
     assert_eq!(out.status.code(), Some(0), "sync 失败");
 
-    // 契约：无 XDG/AILOOM 覆盖时 Store 根回落 $HOME/.ailoom/store
-    let home_store = tmp.path().join("home/.ailoom/store");
+    // 契约 v1.1：无 XDG/AILOOM 覆盖时 Store 根按 XDG 规范默认落盘
+    let home_store = tmp.path().join("home/.local/share/ailoom/store");
     assert!(
         home_store.is_dir(),
         "应回落 HOME 布局: {}",

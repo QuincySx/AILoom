@@ -51,14 +51,14 @@
 
 三者是**独立字段**：同一 anchor 可对应多个 workspace（worktree）；同一路径在不同机器上 workspace 一致但 device 不同。
 
-机器数据根与 SkillStore 根（全部可注入）解析优先级（高 → 低）：
+机器数据根与 SkillStore 根（全部可注入）解析优先级（高 → 低，v1.1）：
 
 | 根 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|
-| `<data_root>` | `--data-root` | `AILOOM_DATA_ROOT` | `$XDG_STATE_HOME/ailoom`（仅当变量已设且非空） | `$HOME/.ailoom` |
-| SkillStore | — | `AILOOM_STORE_ROOT` | `$XDG_DATA_HOME/ailoom/store`（仅当变量已设且非空） | `$HOME/.ailoom/store` |
+| `<data_root>` | `--data-root` | `$XDG_STATE_HOME/ailoom`（仅当变量已设且非空） | `AILOOM_DATA_ROOT` | `$HOME/.local/state/ailoom` |
+| SkillStore | — | `$XDG_DATA_HOME/ailoom/store`（仅当变量已设且非空） | `AILOOM_STORE_ROOT` | `$HOME/.local/share/ailoom/store` |
 
-未设置的 XDG 变量**不会**隐式落到 `~/.local/state` / `~/.local/share`；只有变量本身存在时才走 XDG。自有 `AILOOM_*` 始终高于 XDG。
+空 XDG 变量不算已设。无任何覆盖时按 XDG 规范默认落盘；兼容迁移：旧默认 `~/.ailoom` 存在时，首次解析一次性把 `store` → `~/.local/share/ailoom/store`、`ws`/`cache` → `~/.local/state/ailoom`（其余内容如安装器的 `bin/` 原地保留）；任一步失败整体回滚并继续使用旧目录（数据保持可达，告警提示）。
 
 ```
 <data_root>/cache/<source_identity_hash>/      # 源缓存，按源身份隔离
@@ -304,3 +304,4 @@ JSON envelope：`{"schema_version":1,"result":…}` 成功；失败输出 `{"sch
 ## 10. 变更记录
 
 - v1（2026-09-09，AIL-001）：由 v0 草案冻结；新增 ResourceId/文件格式/错误码/退出码/数据分区/最小验收集合的具体定义；MCP/Agent 项目选择标记为 AILoom 设计。
+- v1.1（2026-09-14，用户决定）：§3 路径解析优先级由「自有 `AILOOM_*` 高于 XDG」改为「已设 XDG 变量高于 `AILOOM_*`」；无任何覆盖时的默认根由 `~/.ailoom` 改为 XDG 规范默认（`~/.local/state/ailoom`、`~/.local/share/ailoom/store`），并提供旧默认 `~/.ailoom` 的一次性自动迁移（失败回退旧目录并告警）。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 8 项 + `test_isolation` 集成。

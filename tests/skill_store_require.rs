@@ -271,8 +271,8 @@ fn ticket04_doctor_broken_link_and_uninstall_keeps_store() {
 
 #[test]
 fn xdg_data_home_store_layout_is_respected() {
-    // AIL-002：合法 XDG 覆盖行为保留——未设 AILOOM_STORE_ROOT 时，
-    // Store 根按契约落 $XDG_DATA_HOME/ailoom/store（受控 fixture 内）。
+    // AIL-002：合法 XDG 覆盖行为保留——契约 v1.1 下 XDG 优先于 AILOOM_*，
+    // Store 根落 $XDG_DATA_HOME/ailoom/store（受控 fixture 内）。
     let c = Ctx::new();
     let ws = common::make_business_repo(c.tmp.path(), "biz");
     let src = common::make_team_source_full(&c.tmp.path().join("src"));

@@ -67,7 +67,7 @@ ailoom sync --recover    # 若曾中断，先恢复 journal
 
 ### Skill 实体与软链（ADR-0001）
 
-Skill **实体**只保存在用户 SkillStore，按**源仓库**分桶。根目录优先级：`AILOOM_STORE_ROOT` > `$XDG_DATA_HOME/ailoom/store`（仅当已设）> `~/.ailoom/store`。机器数据根同理：`--data-root` > `AILOOM_DATA_ROOT` > `$XDG_STATE_HOME/ailoom` > `~/.ailoom`。
+Skill **实体**只保存在用户 SkillStore，按**源仓库**分桶。根目录优先级（契约 v1.1）：`$XDG_DATA_HOME/ailoom/store`（已设时）> `AILOOM_STORE_ROOT` > `~/.local/share/ailoom/store`。机器数据根同理：`--data-root` > `$XDG_STATE_HOME/ailoom`（已设时）> `AILOOM_DATA_ROOT` > `~/.local/state/ailoom`；旧默认 `~/.ailoom` 首次运行自动迁移到规范位置。
 
 ```text
 <store_root>/<source_key>/.meta/SOURCE.json
