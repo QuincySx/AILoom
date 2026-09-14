@@ -492,5 +492,19 @@
       "AIL-022"
     ],
     "file": "cards/AIL-037.md"
+  },
+  {
+    "id": "AIL-038",
+    "title": "团队源脚手架与发布链路本地准备",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-005",
+      "AIL-029"
+    ],
+    "file": "cards/AIL-038.md",
+    "owner": "ZCode（2026-09-14）"
   }
 ]

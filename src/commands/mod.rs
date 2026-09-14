@@ -7,6 +7,7 @@ pub mod init;
 pub mod plan;
 pub mod recall;
 pub mod session;
+pub mod source_init;
 pub mod source_refresh;
 pub mod status;
 pub mod sync;

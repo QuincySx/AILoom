@@ -28,6 +28,30 @@ pub struct Cli {
 pub enum Command {
     /// 输出版本与构建信息（AIL-002）
     Version,
+    /// 团队资源源脚手架：生成 ailoom.toml + resources 骨架（AIL-038）
+    Source {
+        /// 生成目录
+        #[arg(long)]
+        dir: std::path::PathBuf,
+        /// team_id（[a-z0-9-]{1,64}）
+        #[arg(long, default_value = "my-team")]
+        team_id: String,
+        /// 声明的逻辑项目（可重复，默认 a）
+        #[arg(long = "project")]
+        projects: Vec<String>,
+        /// 声明的职能角色（可重复，默认 dev）
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// 只生成最小骨架（不带示例资源）
+        #[arg(long)]
+        minimal: bool,
+        /// 允许合并进已有团队源目录
+        #[arg(long)]
+        force: bool,
+        /// 目录还不是 Git 仓库时执行 git init + 初始提交
+        #[arg(long)]
+        git: bool,
+    },
     /// 绑定团队源与项目/角色，生成本机锁（AIL-005）
     Init {
         /// 团队资源源 Git URL（禁止内嵌凭据）

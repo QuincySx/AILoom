@@ -44,6 +44,31 @@ fn run(cli: &cli::Cli) -> Result<()> {
             }
             Ok(())
         }
+        Some(Command::Source {
+            dir,
+            team_id,
+            projects,
+            roles,
+            minimal,
+            force,
+            git,
+        }) => {
+            let args = ailoom::commands::source_init::SourceInitArgs {
+                dir: dir.clone(),
+                team_id: team_id.clone(),
+                projects: projects.clone(),
+                roles: roles.clone(),
+                minimal: *minimal,
+                force: *force,
+                git: *git,
+            };
+            let value =
+                ailoom::commands::source_init::run(&args, cli.json, cli.data_root.as_deref())?;
+            if cli.json {
+                output::emit_json(&value);
+            }
+            Ok(())
+        }
         Some(Command::Init {
             url,
             ref_,

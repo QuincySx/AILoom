@@ -2,7 +2,9 @@
 
 > 账本基准：2026-09-13 返工轮次完成。以 [cards.json](cards.json) 为状态唯一真相；卡头与 JSON 必须一致。
 
-**当前：34 张 Done（含 9 张保留核心结论 + 25 张本轮返工/补验收通过），3 张 Blocked（AIL-009/012/014，均为外部授权或宿主能力阻塞，本地证据完整），0 张 Backlog。**
+**当前：35 张 Done（含 9 张保留核心结论 + 返工/补验收通过 + AIL-038 新增），3 张 Blocked（AIL-009/012/014，均为外部授权或宿主能力阻塞，本地证据完整），0 张 Backlog。**
+
+2026-09-14 追加：契约 v1.1（路径解析改 XDG 优先 + 规范默认 + 旧目录自动迁移）；AIL-038 团队源脚手架（`ailoom source`）与 release workflow 本地准备。
 
 本轮返工执行记录：逐卡「重新关卡记录」见各卡；真机与全量验证证据见 [evidence/](evidence/) 与 [evidence/logs/](evidence/logs/2026-09-13-full-validation.log)。
 
@@ -71,3 +73,4 @@
 | [AIL-035](cards/AIL-035.md) | PR/MR 经验与 CI 知识更新 | NEXT | L | Done | AIL-014, AIL-015, AIL-026, AIL-034 |
 | [AIL-036](cards/AIL-036.md) | 业务仓库同仓资源模式与迁移 | NEXT | XL | Done | AIL-003, AIL-004, AIL-008, AIL-014, AIL-022 |
 | [AIL-037](cards/AIL-037.md) | 事件留存、数据导出与清理 | NEXT | M | Done | AIL-003, AIL-018, AIL-019, AIL-022 |
+| [AIL-038](cards/AIL-038.md) | 团队源脚手架与发布链路本地准备 | NEXT | M | Done | AIL-001, AIL-005, AIL-029 |
