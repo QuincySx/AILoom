@@ -383,7 +383,8 @@ fn ail039_worktree_states_and_registry_lifecycle() {
 
     std::fs::rename(&moved, &wtd).unwrap();
     let mut reg3 = RepoRegistry::load_or_create(data.path(), &d2).unwrap();
-    reg3.relink_worktree(&miss.id, &wtd, "t3").unwrap();
+    reg3.relink_worktree(data.path(), &miss.id, &wtd, "t3")
+        .unwrap();
     assert_eq!(reg3.worktrees[&miss.id].status, WorktreeStatus::Active);
     assert_eq!(
         reg3.worktrees[&miss.id].first_seen, "t1",

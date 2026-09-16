@@ -4,6 +4,7 @@
 use crate::appctx::AppContext;
 use crate::error::{code, Error, Result};
 use crate::ids::new_id;
+use crate::personal_instructions as pi;
 use crate::sync::apply::{remove_by_key, ApplyReport};
 use crate::sync::lock::SyncLock;
 use crate::sync::manifest::ManagedManifest;
@@ -32,6 +33,22 @@ pub fn run(args: &UninstallArgs, json: bool, data_root: Option<&std::path::Path>
         let item = &managed.items[key];
         let (path, _) = split_key(key);
         let current = current_hash_by_key(&ctx.workspace.workspace_root, key, &item.resource_id)?;
+        // AIL-052：公司文件保护对卸载同样生效——被跟踪路径一律不改写
+        if pi::path_is_git_tracked(&ctx.workspace.workspace_root, &path) {
+            actions.push(PlanAction {
+                action: ActionKind::Conflict,
+                item_key: key.clone(),
+                path,
+                resource_id: item.resource_id.clone(),
+                target_tool: item.target_tool.clone(),
+                kind: item.kind.clone(),
+                reason: "目标已被 Git 跟踪（公司文件），卸载拒绝改写".into(),
+                precondition_hash: current,
+                desired_hash: String::new(),
+                manifest_hash: Some(item.content_hash.clone()),
+            });
+            continue;
+        }
         let (action, reason, precondition) = match &current {
             None => (ActionKind::Noop, "目标已不存在", None),
             Some(c) if *c == item.content_hash => (

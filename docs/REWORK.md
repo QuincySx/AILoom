@@ -1,6 +1,6 @@
 # 2026-09-15 返工派工单
 
-> 新增产品需求（非本轮缺陷返工）：[本地控制台与 Onboarding 13 张卡](initiatives/local-console.md)——2026-09-16 完成（12 Done / 051 Blocked 等人工试用者验收）。下方 18 张 RW 和 38 张旧主卡统计仅描述原返工批次；全局状态见 BACKLOG/cards.json。
+> 当前执行入口已切换到[2026-09-17需求实现对齐](initiatives/implementation-alignment-2026-09-17.md)与[Web详细蓝图](initiatives/web-console-blueprint-2026-09-17.md)。本文件下方18张RW及38张旧主卡统计仅描述历史批次，不代表当前全局完成；本地控制台039/040/042～050已重新打开。全局状态见BACKLOG/cards.json。
 
 **本轮 18 张子卡已全部完成（18 Done / 0 Backlog）；主卡 35 Done / 3 Blocked / 0 Backlog（AIL-009/012/014 保持 Blocked）。**
 

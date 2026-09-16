@@ -212,13 +212,27 @@ pub fn record_input(
     Ok(run)
 }
 
+/// 按资源身份记录输入版本（L06：给页面一个真实入口；摘要取自个人库实际内容，
+/// 资源不存在 → 显式报错，不凭名字记录）。
+pub fn record_resource_input(data_root: &Path, id: &str, resource_id: &str) -> Result<WorkflowRun> {
+    let digest = library_resource_digest(data_root, resource_id).ok_or_else(|| {
+        Error::new(
+            code::UNKNOWN_REFERENCE,
+            format!("资源不存在或不可读: {resource_id}（绑定校验基于真实资源身份）"),
+        )
+    })?;
+    record_input(data_root, id, resource_id, &digest)
+}
+
 /// 新增/更新阶段产物（返回产物引用；更新时版本 +1）。
+/// L04：`base_version` 提供时必须与当前版本一致（乐观并发），否则拒绝覆盖。
 pub fn put_artifact(
     data_root: &Path,
     id: &str,
     stage: &str,
     title: &str,
     content: &str,
+    base_version: Option<u32>,
 ) -> Result<ArtifactRef> {
     if !STAGES.contains(&stage) {
         return Err(Error::new(
@@ -231,9 +245,37 @@ pub fn put_artifact(
         "art-{}",
         crate::ids::sha256_prefix(format!("{id}/{stage}/{title}").as_bytes(), 8)
     );
+    if let (Some(base), Some(existing)) = (
+        base_version,
+        run.artifacts.iter().find(|a| a.id == artifact_id),
+    ) {
+        if existing.version != base {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!(
+                    "产物版本已变化（期望 v{base}，当前 v{}）——拒绝覆盖，请基于最新版本重试",
+                    existing.version
+                ),
+            )
+            .context(serde_json::json!({ "artifact_id": artifact_id, "current_version": existing.version })));
+        }
+    }
     let file = format!("artifacts/{artifact_id}.md");
     let full = run_dir(data_root, id).join(&file);
     std::fs::create_dir_all(full.parent().unwrap_or_else(|| Path::new(".")))?;
+    // AIL-070：更新前把当前正文存为历史版本（可恢复，不随覆盖丢失）
+    if full.is_file() {
+        let prev_version = run
+            .artifacts
+            .iter()
+            .find(|a| a.id == artifact_id)
+            .map(|a| a.version)
+            .unwrap_or(1);
+        let history = run_dir(data_root, id)
+            .join("artifacts")
+            .join(format!("{artifact_id}.v{prev_version}.md"));
+        std::fs::copy(&full, &history)?;
+    }
     crate::sync_common::atomic_write(&full, content.as_bytes())?;
     let now = now_iso();
     let existing = run.artifacts.iter_mut().find(|a| a.id == artifact_id);
@@ -273,6 +315,36 @@ pub fn put_artifact(
         .find(|a| a.title == title && a.stage == stage)
         .cloned()
         .ok_or_else(|| Error::new(code::INTERNAL, "产物引用缺失"))
+}
+
+/// 读取产物历史版本正文（AIL-070：可恢复旧版）。
+pub fn read_artifact_version(
+    data_root: &Path,
+    id: &str,
+    artifact_id: &str,
+    version: u32,
+) -> Result<String> {
+    let run = load_run(data_root, id)?;
+    let a = run
+        .artifacts
+        .iter()
+        .find(|a| a.id == artifact_id)
+        .ok_or_else(|| {
+            Error::new(
+                code::UNKNOWN_REFERENCE,
+                format!("产物不存在: {artifact_id}"),
+            )
+        })?;
+    let p = run_dir(data_root, id)
+        .join("artifacts")
+        .join(format!("{}.v{version}.md", a.id));
+    if !p.is_file() {
+        return Err(Error::new(
+            code::UNKNOWN_REFERENCE,
+            format!("历史版本不存在: v{version}"),
+        ));
+    }
+    Ok(std::fs::read_to_string(&p)?)
 }
 
 /// 读取产物正文。
@@ -328,7 +400,8 @@ pub fn mark_reviewed(data_root: &Path, id: &str) -> Result<WorkflowRun> {
     Ok(run)
 }
 
-/// 导出预览：目标路径 + 与现有内容的差异（不写盘）。
+/// 导出预览：目标路径 + 与现有内容的差异 + 目标当前指纹（S03：execute 必须携带
+/// 该指纹，确认页面看到的状态就是要覆盖的状态；不绑定预览的写入一律拒绝）。
 pub fn export_preview(
     data_root: &Path,
     id: &str,
@@ -341,44 +414,124 @@ pub fn export_preview(
     } else {
         None
     };
+    let fingerprint = match &existing {
+        Some(text) => format!("sha256:{}", sha256_of(text.as_bytes())),
+        None => "absent".to_string(),
+    };
+    // AIL-054：覆盖已有文件必须先展示具体差异
+    let diff = existing
+        .as_deref()
+        .map(|old| simple_line_diff(old, &content))
+        .unwrap_or_default();
     Ok(serde_json::json!({
         "target": target,
         "exists": existing.is_some(),
         "same_content": existing.as_deref() == Some(content.as_str()),
         "content_chars": content.chars().count(),
-        "note": "确认后才写入；写入前经公司文件守卫（已跟踪路径拒绝）",
+        "target_fingerprint": fingerprint,
+        "diff": diff,
+        "note": "确认后才写入；execute 必须回传 target_fingerprint；覆盖时旧版本自动备份；已跟踪路径拒绝（公司文件保护）",
     }))
 }
 
-/// 导出执行：写入目标文件；已跟踪路径拒绝（公司文件保护）。
+/// 简单行级差异（ unified 风格前缀 +/−；AIL-054 预览用，截断到 400 行）。
+fn simple_line_diff(old: &str, new: &str) -> String {
+    let mut out = String::new();
+    for line in old.lines() {
+        if !new.lines().any(|l| l == line) {
+            out.push_str(&format!(
+                "- {line}
+"
+            ));
+        }
+    }
+    for line in new.lines() {
+        if !old.lines().any(|l| l == line) {
+            out.push_str(&format!(
+                "+ {line}
+"
+            ));
+        }
+    }
+    if out.lines().count() > 400 {
+        let head: Vec<&str> = out.lines().take(400).collect();
+        out = format!("{}\n…（差异截断）\n", head.join("\n"));
+    }
+    out
+}
+
+/// 导出执行：写入目标文件。
+/// S03/L03：调用方必须先校验目标在授权根内（控制台路由负责）；已跟踪路径拒绝；
+/// `expected_fingerprint` 与目标当前状态不一致 → 拒绝覆盖（外部编辑不丢失）。
 pub fn export_execute(
     data_root: &Path,
     id: &str,
     artifact_id: &str,
     ws_root: &Path,
     target: &Path,
+    expected_fingerprint: Option<&str>,
 ) -> Result<crate::adapters::common::SkippedLike> {
     let content = read_artifact(data_root, id, artifact_id)?;
     let _ = ws_root;
     // 公司文件守卫：目标在 git 已跟踪列表 → 拒绝
-    if crate::gitx::git_optional(
+    if crate::personal_instructions::path_is_git_tracked(
         target.parent().unwrap_or(target),
-        &["ls-files", "--", &target.display().to_string()],
-    )
-    .map(|o| !o.trim().is_empty())
-    .unwrap_or(false)
-    {
+        &target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    ) {
         return Err(Error::new(
             code::USER_CONTENT_CONFLICT,
             "目标已被 Git 跟踪（公司文件），导出拒绝覆盖",
         ));
+    }
+    // 指纹前置：目标当前状态必须与预览确认时一致
+    let current = if target.is_file() {
+        format!("sha256:{}", sha256_of(std::fs::read(target)?.as_slice()))
+    } else {
+        "absent".to_string()
+    };
+    match expected_fingerprint {
+        None => {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                "缺少导出确认指纹（必须先预览并回传 target_fingerprint）",
+            ));
+        }
+        Some(expected) if expected != current => {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!("导出目标已变化（预览时 {expected}，当前 {current}），拒绝覆盖"),
+            ));
+        }
+        _ => {}
+    }
+    // AIL-054：覆盖已有用户文档前，把旧版本备份到数据区（可恢复）
+    let mut backup_note = String::new();
+    if target.is_file() {
+        let backup_dir = data_root
+            .join("profile")
+            .join("workflows")
+            .join(id)
+            .join("export-backups");
+        std::fs::create_dir_all(&backup_dir)?;
+        let name = format!(
+            "{}-{}-{}.bak",
+            crate::ids::sha256_prefix(artifact_id.as_bytes(), 8),
+            crate::ids::sha256_prefix(target.display().to_string().as_bytes(), 8),
+            now_iso().replace(':', "")
+        );
+        let backup_path = backup_dir.join(name);
+        std::fs::copy(target, &backup_path)?;
+        backup_note = format!("；旧版本已备份到 {}", backup_path.display());
     }
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
     crate::sync_common::atomic_write(target, content.as_bytes())?;
     Ok(crate::adapters::common::SkippedLike {
-        path: target.display().to_string(),
+        path: format!("{}{}", target.display(), backup_note),
         reason: "exported".into(),
     })
 }
@@ -450,13 +603,18 @@ mod tests {
         );
 
         // 产物：对齐 → 规格 → 票据
-        put_artifact(data.path(), &run.id, "align", "对齐记录", "v1 对齐").unwrap();
-        let _spec_art = put_artifact(data.path(), &run.id, "spec", "规格", "spec v1").unwrap();
-        let tickets = put_artifact(data.path(), &run.id, "tickets", "票据", "ticket A").unwrap();
+        put_artifact(data.path(), &run.id, "align", "对齐记录", "v1 对齐", None).unwrap();
+        let _spec_art =
+            put_artifact(data.path(), &run.id, "spec", "规格", "spec v1", None).unwrap();
+        let tickets =
+            put_artifact(data.path(), &run.id, "tickets", "票据", "ticket A", None).unwrap();
         assert!(!tickets.needs_review);
 
         // 规格变更 → 下游需复核；版本提升
-        let spec2 = put_artifact(data.path(), &run.id, "spec", "规格", "spec v2").unwrap();
+        let spec2 = put_artifact(data.path(), &run.id, "spec", "规格", "spec v2", None).unwrap();
+        // L04：过期 base_version 拒绝覆盖
+        let stale = put_artifact(data.path(), &run.id, "spec", "规格", "spec v3??", Some(1));
+        assert!(stale.is_err(), "过期版本前置应拒绝");
         assert_eq!(spec2.version, 2);
         let run2 = show(data.path(), &run.id).unwrap();
         assert!(run2.downstream_needs_review);

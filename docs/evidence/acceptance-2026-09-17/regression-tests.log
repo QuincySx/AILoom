@@ -1,0 +1,217 @@
+# 2026-09-17 返工回归证据（真实入口：CLI 子进程 + loopback HTTP 服务）
+# 命令: cargo test --offline --test rework_2026_09_17 --test console_server --test personal --test profile --test workspace --lib
+   Compiling ailoom v0.1.0 (<repo>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.80s
+     Running unittests src/lib.rs (target/debug/deps/ailoom-c9b6355038f592a7)
+
+running 87 tests
+test adapters::capability::tests::unknown_capabilities_stay_unknown ... ok
+test adapters::capability::tests::mcp_capabilities_record_trust_notes ... ok
+test adapters::capability::tests::codex_skill_uses_native_dir_and_requires_session ... ok
+test adapters::common::tests::fragment_markers_contain_resource_id ... ok
+test events::auto_sync::tests::due_respects_ttl ... ok
+test error::tests::exit_codes_follow_segment_table ... ok
+test adapters::common::tests::fragment_roundtrip_preserves_user_text ... ok
+test events::auto_sync::tests::parse_interval_days ... ok
+test error::tests::error_json_has_stable_fields ... ok
+test events::schema::tests::unknown_fields_are_tolerated ... ok
+test events::schema::tests::bad_version_and_type_rejected ... ok
+test gitx::tests::normalize_urls_strips_credentials_and_case ... ok
+test gitx::tests::redact_hides_password_keeps_utf8 ... ok
+test knowledge::search::tests::cjk_bigrams_and_ascii_words ... ok
+test learning::tests::parse_requires_title_and_body ... ok
+test learning::tests::target_decision_matrix ... ok
+test learning::tests::stable_id_ignores_whitespace_differences_only_in_body_trim ... ok
+test paths::tests::ailoom_env_used_when_xdg_unset ... ok
+test learning::tests::identity_prefers_name_and_persist_is_idempotent ... ok
+test packages::tests::exact_version_validation_matrix ... ok
+test paths::tests::empty_xdg_does_not_count_as_set ... ok
+test learning::tests::render_roundtrip_preserves_hostile_strings ... ok
+test paths::tests::layout_partitions_by_anchor_and_workspace ... ok
+test personal_instructions::tests::claude_additive_never_touches_company_files ... ok
+test paths::tests::explicit_root_wins_over_xdg_and_env ... ok
+test personal_instructions::tests::codex_view_includes_unadjusted_baseline_and_managed_section ... ok
+test git_exclude::tests::stale_managed_block_is_replaced_cleanly ... ok
+test personal_instructions::tests::worktree_entry_overrides_repo_entry ... ok
+[ailoom:info] 已把旧默认 /var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/.tmpamzEUt/home/.ailoom 的 store/ws/cache 一次性迁移到 XDG 规范位置（~/.local/share/ailoom、~/.local/state/ailoom），旧 store 位置保留兼容链接
+test personal_library::tests::escaping_link_and_symlink_rejected ... ok
+test profile::tests::deeper_template_overrides_shallower ... ok
+test profile::tests::duplicate_subproject_path_rejected_same_layer_conflict ... ok
+test profile::tests::empty_profile_is_valid_and_means_pure_v1 ... ok
+test profile::tests::host_three_state_layers ... ok
+test profile::tests::layering_priority_team_repo_subproject_worktree ... ok
+test profile::tests::personal_only_resource_enabled_without_team ... ok
+test profile::tests::toml_roundtrip_preserves_tri_states_and_empty_layers ... ok
+test profile::tests::unset_vs_inherit_vs_disable_distinguished ... ok
+test profile::tests::worktree_override_and_wt_subproject_top_priority ... ok
+test personal_library::tests::ensure_library_is_idempotent_and_offline ... ok
+test paths::tests::legacy_home_migrates_to_xdg_spec_locations ... ok
+test git_exclude::tests::user_lines_preserved_and_refcount_works ... ok
+[ailoom:warn] 旧默认目录 /var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/.tmplha6YT/home/.ailoom 迁移到 XDG 规范位置失败：继续使用旧目录（数据保持可达）
+test paths::tests::migration_failure_falls_back_to_legacy ... ok
+[ailoom:info] 已把旧默认 /var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/.tmpPJJfdC/home/.ailoom 的 store/ws/cache 一次性迁移到 XDG 规范位置（~/.local/share/ailoom、~/.local/state/ailoom），旧 store 位置保留兼容链接
+test repo_registry::tests::broken_git_file_is_error_not_nongit ... ok
+test repo_registry::tests::nongit_dir_classified_as_path_mode ... ok
+test paths::tests::migration_keeps_legacy_links_reachable_and_device_identity ... ok
+[ailoom:warn] 旧默认目录 /var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/.tmpjO742a/home/.ailoom 迁移到 XDG 规范位置失败：继续使用旧目录（数据保持可达）
+test personal_library::tests::import_without_frontmatter_gets_metadata_and_validates ... ok
+[ailoom:info] 已把旧默认 /var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/.tmpjO742a/home/.ailoom 的 store/ws/cache 一次性迁移到 XDG 规范位置（~/.local/share/ailoom、~/.local/state/ailoom），旧 store 位置保留兼容链接
+test personal_library::tests::name_override_and_invalid_name ... ok
+test paths::tests::partial_failure_cleans_empty_roots_and_retry_completes ... ok
+test paths::tests::xdg_beats_ailoom_env ... ok
+test paths::tests::xdg_spec_defaults_when_no_overrides ... ok
+test resolver::tests::different_target_keys_ok ... ok
+test resolver::tests::same_target_key_different_ids_conflict ... ok
+test resource::tests::frontmatter_parses_and_body_preserved ... ok
+test resource::tests::no_frontmatter_returns_none ... ok
+test source::tests::corrupted_lock_file_is_reported_not_repaired ... ok
+test source::tests::tree_digest_is_order_stable_and_content_sensitive ... ok
+test store::tests::layout_is_key_then_skill_under_skills_root ... ok
+test store::tests::normalize_git_ssh_and_https_same_key ... ok
+test store::tests::source_key_roundtrip ... ok
+test sync::apply::tests::accepts_missing_empty_and_existing_hooks_object ... ok
+test sync::apply::tests::nested_pointer_creates_object_intermediate_and_array_leaf ... ok
+test sync::apply::tests::null_values_treated_as_missing ... ok
+test sync::apply::tests::shallow_and_root_pointers ... ok
+test sync::apply::tests::type_conflicts_fail_explicitly ... ok
+test sync::lock::tests::release_refuses_when_owner_overwritten ... ok
+test sync::lock::tests::second_acquire_fails_while_held ... ok
+test repo_registry::tests::bare_repo_is_container_not_deployable ... ok
+test workflow::tests::library_skill_digest_detects_content_change ... ok
+test repo_registry::tests::no_remote_repo_still_git_identity ... ok
+test repo_registry::tests::register_subproject_persists ... ok
+test workspace::tests::no_root_is_error_not_global_default ... ok
+test repo_registry::tests::subdir_of_repo_keeps_git_identity ... ok
+test workflow::tests::create_bind_put_and_spec_review_flow ... ok
+test workspace::tests::paths_are_not_lowercased ... ok
+test workspace::tests::spaces_and_chinese_paths_work ... ok
+test workspace::tests::explicit_root_takes_priority ... ok
+test gitx::tests::git_command_uses_arg_array_with_spaces ... ok
+test workspace::tests::root_and_deep_subdir_same_workspace ... ok
+test workspace::tests::declaration_inside_repo_binds_nearest_directory ... ok
+test repo_registry::tests::main_and_linked_worktree_same_repo_identity ... ok
+test repo_registry::tests::detached_and_locked_states_visible ... ok
+test repo_registry::tests::prunable_state_visible_when_worktree_dir_missing ... ok
+test workspace::tests::symlinks_resolve_to_same_workspace ... ok
+test workspace::tests::worktrees_share_anchor_but_have_distinct_ids ... ok
+test repo_registry::tests::registry_refresh_marks_missing_and_relink_restores ... ok
+test repo_registry::tests::subproject_checks_boundaries ... ok
+test repo_registry::tests::same_origin_clones_are_distinct_repos_with_suggestion ... ok
+
+test result: ok. 87 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.68s
+
+     Running tests/console_server.rs (target/debug/deps/console_server-d816d516d3892c55)
+
+running 11 tests
+test ail050_cancel_at_safe_boundary ... ok
+test ail046_port_recovery_and_session_isolation ... ok
+test ail046_repo_discover_requires_approved_root ... ok
+test ail069_mcp_secret_boundary_in_editor ... ok
+[ailoom:info] 已恢复 2 个持久化任务（其中 0 个标记为中断）
+test ail046_security_matrix ... ok
+test ail054_export_boundary_fingerprint_and_backup ... ok
+test ail046_discover_draft_conflict_and_shutdown ... ok
+test ail050_stale_plan_rejected ... ok
+test ail048_repo_default_preview_across_worktrees ... ok
+test ail072_undo_conflict_and_restart_recovery ... ok
+test ail050_plan_apply_verify_undo_cycle ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
+
+     Running tests/personal.rs (target/debug/deps/personal-13651f4ee053a928)
+
+running 4 tests
+test ail044_instructions_and_exclude_via_cli ... ok
+test ail051_restore_inheritance_via_inherit_state ... ok
+test ail044_personal_selection_layers_end_to_end ... ok
+test ail044_personal_overlay_on_team_declaration_and_isolation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.62s
+
+     Running tests/profile.rs (target/debug/deps/profile-76c35e31719513b1)
+
+running 5 tests
+test missing_profile_keeps_pure_v1_semantics ... ok
+test contract_fixture_profile_v1_parses ... ok
+test corrupted_profile_errors_loudly ... ok
+test profile_stored_outside_repo_and_resolves_with_registry ... ok
+test subproject_template_missing_dir_is_unmatched_not_created ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/rework_2026_09_17.rs (target/debug/deps/rework_2026_09_17-83e5fcd2408c51f1)
+
+running 12 tests
+test ail070_artifact_history_recoverable ... ok
+test ail062_import_transaction_and_tolerant_list ... ok
+test ail069_mcp_missing_env_ref_surfaces_in_plan_notes ... ok
+test ail057_nongit_path_mode_closed_loop ... ok
+test ail056_relink_validates_identity_and_preserves_config ... ok
+test ail060_profile_format_preserving_and_conflict ... ok
+test ail058_sequential_worktree_selections_merge ... ok
+test ail055_select_targets_explicit_repo ... ok
+test ail053_undo_preserves_user_edits_and_is_reentrant ... ok
+test ail052_tracked_managed_entry_not_deleted ... ok
+test ail076_baseline_change_resynthesizes_view ... ok
+test ail061_disabled_host_blocks_team_artifacts ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.81s
+
+     Running tests/workspace.rs (target/debug/deps/workspace-a3ce213520d05b39)
+
+running 10 tests
+test discovery_fails_without_git_or_declaration ... ok
+test cache_key_stable_across_root_path_changes_of_same_remote ... ok
+test declaration_root_resources_write_to_current_checkout ... ok
+test ail039_worktree_path_with_newline_survives_porcelain_z ... ok
+test layout_binding_and_cache_partitioning ... ok
+test two_worktrees_different_bindings_do_not_interfere ... ok
+test ail039_worktree_states_and_registry_lifecycle ... ok
+test ail039_subproject_scope_boundaries ... ok
+test ail039_same_repo_from_main_wt_linked_wt_and_subdir_declaration ... ok
+test ail039_common_dir_groups_and_same_origin_only_suggested ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+
+## AIL-065 真实入口验证（2026-09-17，网络可用）
+# 命令: ailoom --data-root <tmp>/data library --action import-entry --url 'skills.sh/vercel-labs/skills/find-skills' --execute
+{"result":{"action":"import-entry","result":{"discovery_entry":"skills.sh:skills.sh/vercel-labs/skills/find-skills","executed":true,"provider":"skills.sh","repo_url":"https://github.com/vercel-labs/skills","report":{"changed_files":[],"files_copied":1,"note":"导入时间 2026-09-16T17:39:01Z；脚本仅复制未执行；源目录未修改","scripts":[],"scripts_executed":false,"skill_id":"personal/skill/personal/find-skills","source_dir":"/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/tmp.qvjO0Q1yu8/data/cache/skill-import/9f271ee02d9263c1/snapshots/d6b37f62ae23c3825b0ed16c73e123eee0a41fdc/skills/find-skills","target_dir":"/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/tmp.qvjO0Q1yu8/data/library/resources/skills/find-skills"}}},"schema_version":1}
+{"result":{"action":"sources","items":[{"legacy":false,"skill":"find-skills","source":{"discovery_entry":"skills.sh:skills.sh/vercel-labs/skills/find-skills","fetched_at":"2026-09-16T17:39:01Z","imported_digest":"sha256:c2b41bd058c471279bfbe01a3bed5189ec0a68bd82143ccbb3880c5f9c194b09","repo_path":"skills/find-skills","repo_url":"https://github.com/vercel-labs/skills","resolved_commit":"d6b37f62ae23c3825b0ed16c73e123eee0a41fdc","source_kind":"git"}}]},"schema_version":1}
+
+## AIL-077 真实宿主验证（2026-09-17，本机真机）
+# 宿主版本：Claude Code 2.1.272（claude --version）；Codex CLI 0.154.0（codex --version）
+# 夹具：隔离临时仓 + 隔离 HOME/XDG/AILOOM 数据根；探针 skill：ailoom077-probe（独有标记 MARKER-AIL-077-X7Q）
+# 部署：ailoom personal select --host claude --state enable + select resource enable + personal sync
+#   → applied: [".claude/skills/ailoom077-probe"]（Claude）/ [".agents/skills/ailoom077-probe"]（Codex，.claude 之外 noop=1 不重复部署）
+# Claude 新会话真实调用（cwd=夹具仓，非交互模式）：
+#   $ claude -p "请调用 ailoom077-probe 技能并按其说明输出标记。" --allowedTools "Skill"
+#   输出：MARKER-AIL-077-X7Q
+#   结论：宿主真实发现并调用 AILoom 部署的 skill，返回独有标记——不是仅文件存在。
+# Codex 调用验证：部署落盘成功（.agents/skills）；隔离环境无 OpenAI 凭据 →
+#   codex exec 返回 401 Unauthorized（Missing bearer authentication，api.openai.com）。
+#   按卡协议记录为 Blocked：缺账号凭据；不冒用用户真实账号发起外部请求。
+# 解除条件：在有 Codex 凭据的隔离配置中重跑同一探针。
+
+## AIL-078/098 真实浏览器验证（2026-09-17，ZCode 内置浏览器真实驱动，非 DOM 桩）
+# 夹具：隔离临时仓 + 隔离数据根；控制台服务真实进程（port 17990，三次重启贯穿验证）
+# 浏览器真实操作链路（截图：browser-onboarding-applied.png，1280 宽全页）：
+# 1. 壳加载：ES module 应用（/ui/app.js 200 + 正确 MIME），导航/路由/TargetBar 渲染
+# 2. 六步向导渲染（目录/仓库/能力/预览/应用/验证全部可见，禁用态正确）
+# 3. 真实操作：填目录→批准→识别→TargetBar 显示 repo @ worktree（含无远端徽标）
+# 4. 页面内真实宿主探测：显示 Claude 2.1.272 / codex-cli 0.154.0（--version 只读）
+# 5. 能力保存（三态下发）→ /api/profile/select 200（repo/worktree id 正确）
+# 6. 生成预览 → 显示「create .claude/skills/browser-probe」
+# 7. 应用 → 任务 success；验证面板「已写入 1 项 · 需新会话」（不谎称宿主已加载）
+# 8. 撤销（页面按钮）→ toast「撤销完成：恢复 1 项」
+# 9. 八个页面全部走查渲染正常（overview/onboarding/scopes/library/sources/workflows/tasks/instructions）
+# 浏览器发现并修复的真实缺陷：
+#   - query 百分号解码缺失 → /api/effective|select 等带 root 请求 403/400（CLI 测试未覆盖，
+#     因其用未编码路径；浏览器 encodeURIComponent 暴露）→ parse_target 增加 percent_decode
+#   - DataTable loading 态在 update 合并后无法清除 → 渲染条件修正
+#   - importPreview 引用不存在导出 → 模块图加载失败（壳空白）→ 修正导入
+# 部分覆盖（诚实记录）：
+#   - 多宽度截图：1024 视口截图超时未落盘；仅 1280 全页 1 张。键盘 Tab 走查未完成。
+#     剩余项：1024/768/390 截图、焦点环断言、组件状态样例矩阵（fixture 页）。
+#   - 浏览器内多 worktree/子项目切换、来源更新同步、流程文档全操作：后端回归已覆盖，
+#     浏览器级复跑留待 098 收尾（页面与 API 均已就绪）。

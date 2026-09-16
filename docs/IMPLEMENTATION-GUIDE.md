@@ -1,10 +1,10 @@
 # 实现 AI 工作说明
 
-当前新增 **本地控制台与 Onboarding** 工作线：先读 [规格与派工](initiatives/local-console.md) 和 AIL-039～051。既有 RW 返工记录仍见 [REWORK.md](REWORK.md)；所有状态以 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md) 为准，不能从旧轮次文字推断当前状态。
+当前执行线是[2026-09-17需求实现对齐](initiatives/implementation-alignment-2026-09-17.md)。先读本轮入口、[Web详细实施蓝图](initiatives/web-console-blueprint-2026-09-17.md)及目标卡。新增052～098为领取单位；039～051为原需求与最终验收容器。所有状态以[cards.json](cards.json)/[BACKLOG](BACKLOG.md)为准，旧完成记录不能推断当前通过。
 
 ## 领取一张卡
 
-RW 返工线领取单位是 RW 子卡；新控制台线直接领取 AIL-039～051。先同步子卡卡头、子账本和子卡索引；父卡进入实施时同步父卡与主账本/看板。子卡全完成也不免除父卡原始必需验收。
+旧 RW 返工线仅保留历史。本轮领取单位是 AIL-052～098，按依赖逐卡执行，不直接笼统重做 AIL-039～051。先同步子卡卡头、子账本和子卡索引；父卡进入实施时同步父卡与主账本/看板。子卡全完成也不免除父卡原始必需验收。
 
 1. 阅读 README、CONTEXT、SCOPE、CONTRACTS 和目标卡。用户最新指示优先。
 2. 看依赖完成记录和实际代码；Backlog 依赖不能当成已存在的 API。

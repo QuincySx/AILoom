@@ -255,18 +255,34 @@ fn ail044_personal_selection_layers_end_to_end() {
         serde_json::json!(true)
     );
 
-    // 在 web 上下文 sync：目标仍是 worktree 根（ADR：worktree 是落点，子项目只影响选择）
+    // AIL-059：子项目作用域部署落进子项目目录（web/.claude/skills），
+    // 与仓库根作用域物理隔离——父子 sync 不再互删对方入口
     let _ = c.run_json(
         &repo.join("web"),
         &["--json", "--data-root", &dr, "personal", "--action", "sync"],
     );
     assert!(
-        repo.join(".claude/skills/skill-b").exists(),
-        "web 上下文部署 skill-b"
+        repo.join("web/.claude/skills/skill-b").exists(),
+        "web 作用域在子项目目录部署 skill-b"
     );
     assert!(
-        !repo.join(".claude/skills/skill-a").exists(),
-        "web 上下文移除 skill-a"
+        repo.join(".claude/skills/skill-a").exists(),
+        "根作用域的 skill-a 不被 web sync 移除（父子不互删）"
+    );
+    assert!(
+        !repo.join(".claude/skills/skill-b").exists()
+            && !repo.join("web/.claude/skills/skill-a").exists(),
+        "子项目不重复部署根条目；根也不写子项目条目"
+    );
+    // 再次根 sync：A 保持，且不清理 web/ 下 B（统一计划器按作用域管清理）
+    let _ = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert!(
+        repo.join(".claude/skills/skill-a").exists()
+            && repo.join("web/.claude/skills/skill-b").exists(),
+        "两种执行顺序得到一致期望状态（AIL-059）"
     );
 
     // 其他 worktree 覆盖：不改变主 worktree 的文件
@@ -296,7 +312,7 @@ fn ail044_personal_selection_layers_end_to_end() {
         "wt2 无子项目上下文 → 仓库默认启用"
     );
     assert!(
-        repo.join(".claude/skills/skill-b").exists(),
+        repo.join("web/.claude/skills/skill-b").exists(),
         "主 worktree 不被 wt2 影响"
     );
 
@@ -326,7 +342,7 @@ fn ail044_personal_selection_layers_end_to_end() {
         "wt2 覆盖禁用生效"
     );
     assert!(
-        repo.join(".claude/skills/skill-b").exists(),
+        repo.join("web/.claude/skills/skill-b").exists(),
         "主 worktree 文件不受影响"
     );
 }

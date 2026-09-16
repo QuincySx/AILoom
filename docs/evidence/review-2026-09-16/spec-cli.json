@@ -1,0 +1,249 @@
+[
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "active_rel": null,
+        "hosts": {},
+        "notes": [],
+        "pending_actions": 0,
+        "repo_id": "repo-13f755542ecbedb0",
+        "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+        "resources": {},
+        "skipped": [],
+        "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+        "worktree_id": "fcadcac29d3a"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+    "args": [
+      "personal",
+      "--action",
+      "select",
+      "--host",
+      "claude",
+      "--state",
+      "enable"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "host": "claude",
+        "repo_id": "repo-13f755542ecbedb0",
+        "resource": null,
+        "scope": "仓库默认",
+        "state": "enable"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/B",
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "active_rel": null,
+        "hosts": {},
+        "notes": [],
+        "pending_actions": 0,
+        "repo_id": "repo-aac5917950bfde9d",
+        "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/B",
+        "resources": {},
+        "skipped": [],
+        "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/B",
+        "worktree_id": "bc9b41a96c8b"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/B",
+    "args": [
+      "personal",
+      "--action",
+      "select",
+      "--host",
+      "codex",
+      "--state",
+      "enable"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "host": "codex",
+        "repo_id": "repo-13f755542ecbedb0",
+        "resource": null,
+        "scope": "仓库默认",
+        "state": "enable"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+    "args": [
+      "personal",
+      "--action",
+      "select",
+      "--host",
+      "claude",
+      "--state",
+      "disable",
+      "--worktree"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "host": "claude",
+        "repo_id": "repo-13f755542ecbedb0",
+        "resource": null,
+        "scope": "当前工作树",
+        "state": "disable"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+    "args": [
+      "personal",
+      "--action",
+      "select",
+      "--host",
+      "codex",
+      "--state",
+      "disable",
+      "--worktree"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "host": "codex",
+        "repo_id": "repo-13f755542ecbedb0",
+        "resource": null,
+        "scope": "当前工作树",
+        "state": "disable"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "active_rel": null,
+        "hosts": {
+          "claude": {
+            "enabled": true,
+            "origin": "repo_default",
+            "trace": [
+              {
+                "choice": "disable",
+                "effective": true,
+                "origin": "team_declaration"
+              },
+              {
+                "choice": "enable",
+                "effective": true,
+                "origin": "repo_default"
+              }
+            ]
+          },
+          "codex": {
+            "enabled": false,
+            "origin": "worktree_override",
+            "trace": [
+              {
+                "choice": "disable",
+                "effective": true,
+                "origin": "team_declaration"
+              },
+              {
+                "choice": "enable",
+                "effective": true,
+                "origin": "repo_default"
+              },
+              {
+                "choice": "disable",
+                "effective": true,
+                "origin": "worktree_override"
+              }
+            ]
+          }
+        },
+        "notes": [],
+        "pending_actions": 0,
+        "repo_id": "repo-13f755542ecbedb0",
+        "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+        "resources": {},
+        "skipped": [],
+        "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A",
+        "worktree_id": "fcadcac29d3a"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "active_rel": null,
+        "hosts": {},
+        "notes": [],
+        "pending_actions": 0,
+        "repo_id": "repo-d5354e9145f24e5d",
+        "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+        "resources": {},
+        "skipped": [],
+        "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+        "worktree_id": "ff8c02d6924b"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "cwd": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/folder",
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 10,
+    "out": {},
+    "err": "{\"code\":\"E1001\",\"context\":{\"start\":\"/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/folder\"},\"fix\":null,\"message\":\"起点不在 Git 仓库内\"}\n"
+  }
+]

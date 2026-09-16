@@ -54,6 +54,16 @@ impl ConsoleServer {
             match TcpListener::bind(("127.0.0.1", p)) {
                 Ok(listener) => {
                     let token = new_id();
+                    // S04：启动即载入持久化任务（成功任务/幂等键可继续操作；
+                    // 中断任务显式标记，不自动重放执行动作）
+                    let (jobs_map, interrupted) = jobs::load_all_jobs(&opts.data_root);
+                    let loaded = jobs_map.len();
+                    if loaded > 0 {
+                        crate::logging::info(format!(
+                            "已恢复 {loaded} 个持久化任务（其中 {} 个标记为中断）",
+                            interrupted.len()
+                        ));
+                    }
                     let state = Arc::new(ServerState {
                         port: p,
                         data_root: opts.data_root.clone(),
@@ -62,8 +72,14 @@ impl ConsoleServer {
                         draft: Mutex::new(None),
                         shutdown_flag: Mutex::new(false),
                         events: Mutex::new(Vec::new()),
-                        jobs: Mutex::new(Default::default()),
+                        jobs: Mutex::new(jobs_map),
                     });
+                    for id in &interrupted {
+                        state.events.lock().unwrap().push(json!({
+                            "event": "job-interrupted", "id": id,
+                            "note": "服务重启导致任务中断；不自动重放",
+                        }));
+                    }
                     let st = Arc::clone(&state);
                     let thread = std::thread::spawn(move || serve(listener, st));
                     return Ok(ConsoleServer {
@@ -242,6 +258,40 @@ fn handle_conn(stream: TcpStream, state: &Arc<ServerState>) -> std::io::Result<(
     write_response(stream, &resp)
 }
 
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() + 1 && i + 2 <= bytes.len() - 1 + 1 {
+            let hex = |b: u8| -> Option<u8> {
+                match b {
+                    b'0'..=b'9' => Some(b - b'0'),
+                    b'a'..=b'f' => Some(b - b'a' + 10),
+                    b'A'..=b'F' => Some(b - b'A' + 10),
+                    _ => None,
+                }
+            };
+            if i + 2 < bytes.len() {
+                if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                    out.push(h * 16 + l);
+                    i += 3;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        } else if bytes[i] == b'+' {
+            out.push(b' ');
+            i += 1;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn parse_target(target: &str) -> (String, Vec<(String, String)>) {
     let (path, qs) = match target.split_once('?') {
         Some((p, q)) => (p.to_string(), Some(q.to_string())),
@@ -251,7 +301,7 @@ fn parse_target(target: &str) -> (String, Vec<(String, String)>) {
     if let Some(qs) = qs {
         for pair in qs.split('&') {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            query.push((k.to_string(), v.to_string()));
+            query.push((percent_decode(k), percent_decode(v)));
         }
     }
     (path, query)
@@ -289,6 +339,7 @@ fn write_response(mut stream: TcpStream, resp: &Response) -> std::io::Result<()>
 // ---------------------------------------------------------------------------
 
 pub mod jobs;
+pub mod ui;
 pub mod web;
 
 fn loopback_host_allowed(host: &str, port: u16) -> bool {
@@ -396,7 +447,23 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             )
         }
         ("GET", "/api/effective") => {
-            match crate::commands::personal::effective(None, None, None, &state.data_root) {
+            // F01/U04：作用域解析跟随页面选择的仓库/工作树根（缺省服务 cwd）
+            let root = req
+                .query
+                .iter()
+                .find(|(k, _)| k == "root")
+                .map(|(_, v)| PathBuf::from(v));
+            if let Some(r) = &root {
+                if let Err(e) = ensure_within_roots(state, r) {
+                    return Response::json(403, json!({ "error": e }));
+                }
+            }
+            match crate::commands::personal::effective(
+                root.as_deref(),
+                None,
+                None,
+                &state.data_root,
+            ) {
                 Ok(v) => Response::json(200, v),
                 Err(e) => Response::json(400, json!({ "error": e.to_string() })),
             }
@@ -412,6 +479,125 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ("POST", "/api/hosts/detect") => api_hosts_detect(state),
         ("POST", "/api/library/import") => api_library_import(state, req),
         ("GET", "/api/library/list") => api_library_list(state),
+        ("POST", "/api/library/import-git") => {
+            // AIL-064：GitHub/远程仓库导入（预览默认；execute 才复制）
+            let Some(url) = req.body.get("url").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 url" }));
+            };
+            let repo_path = req.body.get("path").and_then(|v| v.as_str());
+            let ref_ = req.body.get("ref").and_then(|v| v.as_str());
+            let name = req.body.get("name").and_then(|v| v.as_str());
+            let execute = req
+                .body
+                .get("execute")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let result = if execute {
+                crate::personal_library::git_import_execute(
+                    &state.data_root,
+                    url,
+                    repo_path,
+                    ref_,
+                    name,
+                )
+                .map(|r| json!({ "executed": true, "report": r }))
+            } else {
+                crate::personal_library::git_import_preview(
+                    &state.data_root,
+                    url,
+                    repo_path,
+                    ref_,
+                    name,
+                )
+                .map(|p| json!({ "executed": false, "preview": p }))
+            };
+            match result {
+                Ok(v) => Response::json(200, v),
+                Err(e) => {
+                    let ctx_candidates = e.context.get("candidates").cloned();
+                    Response::json(
+                        400,
+                        json!({ "error": e.to_string(), "candidates": ctx_candidates }),
+                    )
+                }
+            }
+        }
+        ("POST", "/api/library/import-entry") => {
+            // AIL-065：发现入口（skills.sh/…）导入；预览默认，execute 才复制
+            let Some(entry) = req.body.get("entry").and_then(|v| v.as_str()) else {
+                return Response::json(
+                    400,
+                    json!({ "error": "需要 entry（发现入口，如 skills.sh/<owner>/<repo>/<skill>）" }),
+                );
+            };
+            let name = req.body.get("name").and_then(|v| v.as_str());
+            let execute = req
+                .body
+                .get("execute")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            match crate::personal_library::import_via_discovery(
+                &state.data_root,
+                entry,
+                name,
+                execute,
+            ) {
+                Ok(v) => Response::json(200, v),
+                Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
+        ("POST", "/api/library/check-update") => {
+            // AIL-066：显式检查更新（只比较，不应用，不联网到非来源地址）
+            let Some(skill) = req.body.get("skill").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 skill" }));
+            };
+            match crate::personal_library::check_update(&state.data_root, skill) {
+                Ok(st) => Response::json(200, json!({ "status": st })),
+                Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
+        ("POST", "/api/library/update") => {
+            // AIL-066：应用更新（仅库内；部署需重新预览+应用）
+            let Some(skill) = req.body.get("skill").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 skill" }));
+            };
+            let execute = req
+                .body
+                .get("execute")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !execute {
+                return match crate::personal_library::check_update(&state.data_root, skill) {
+                    Ok(st) => Response::json(200, json!({ "executed": false, "status": st })),
+                    Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+                };
+            }
+            match crate::personal_library::update_execute(&state.data_root, skill) {
+                Ok(r) => Response::json(200, json!({ "executed": true, "result": r })),
+                Err(e) => Response::json(409, json!({ "error": e.to_string() })),
+            }
+        }
+        ("GET", "/api/library/sources") => {
+            // AIL-063：来源身份/版本清单
+            let lib = crate::personal_library::library_root(&state.data_root);
+            let mut items = Vec::new();
+            let skills_dir = lib.join("resources/skills");
+            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                for e in entries.flatten() {
+                    let d = e.path();
+                    if !d.is_dir() || e.file_name().to_string_lossy().starts_with('.') {
+                        continue;
+                    }
+                    let meta = crate::skill_source::read_meta(&d);
+                    items.push(json!({
+                        "skill": e.file_name().to_string_lossy(),
+                        "source": meta,
+                        "legacy": meta.is_none(),
+                    }));
+                }
+            }
+            Response::json(200, json!({ "items": items }))
+        }
         ("POST", "/api/library/delete") => {
             let Some(id) = req.body.get("id").and_then(|v| v.as_str()) else {
                 return Response::json(400, json!({ "error": "需要 id" }));
@@ -470,8 +656,19 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             else {
                 return Response::json(400, json!({ "error": "需要 artifact_id" }));
             };
-            match crate::workflow::read_artifact(&state.data_root, &id, &art) {
-                Ok(content) => Response::json(200, json!({ "content": content })),
+            let version = req
+                .query
+                .iter()
+                .find(|(k, _)| k == "version")
+                .and_then(|(_, v)| v.parse::<u32>().ok());
+            let result = match version {
+                Some(v) => crate::workflow::read_artifact_version(&state.data_root, &id, &art, v),
+                None => crate::workflow::read_artifact(&state.data_root, &id, &art),
+            };
+            match result {
+                Ok(content) => {
+                    Response::json(200, json!({ "content": content, "version": version }))
+                }
                 Err(e) => Response::json(404, json!({ "error": e.to_string() })),
             }
         }
@@ -520,8 +717,40 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             let Some(content) = req.body.get("content").and_then(|v| v.as_str()) else {
                 return Response::json(400, json!({ "error": "需要 content" }));
             };
-            match crate::workflow::put_artifact(&state.data_root, id, stage, title, content) {
+            // L04：更新已有产物时必须携带 base_version（乐观并发，不静默覆盖他人版本）
+            let base_version = req
+                .body
+                .get("base_version")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
+            match crate::workflow::put_artifact(
+                &state.data_root,
+                id,
+                stage,
+                title,
+                content,
+                base_version,
+            ) {
                 Ok(a) => Response::json(200, json!(a)),
+                Err(e) if e.code == crate::error::code::USER_CONTENT_CONFLICT => {
+                    Response::json(409, json!({ "error": e.to_string(), "context": e.context }))
+                }
+                Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
+        ("POST", "/api/workflows/rename") => {
+            // L04：重命名走独立端点（关联按 id，不因改名产生重复产物）
+            let Some(id) = req.body.get("id").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 id" }));
+            };
+            let Some(artifact_id) = req.body.get("artifact_id").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 artifact_id" }));
+            };
+            let Some(title) = req.body.get("title").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 title" }));
+            };
+            match crate::workflow::rename_artifact(&state.data_root, id, artifact_id, title) {
+                Ok(r) => Response::json(200, json!(r)),
                 Err(e) => Response::json(400, json!({ "error": e.to_string() })),
             }
         }
@@ -532,6 +761,45 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             match crate::workflow::mark_reviewed(&state.data_root, id) {
                 Ok(r) => Response::json(200, json!(r)),
                 Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
+        ("POST", "/api/workflows/record-input") => {
+            // L06：输入版本记录的真实入口（摘要取自个人库实际内容）
+            let Some(id) = req.body.get("id").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 id" }));
+            };
+            let Some(rid) = req.body.get("resource_id").and_then(|v| v.as_str()) else {
+                return Response::json(400, json!({ "error": "需要 resource_id" }));
+            };
+            match crate::workflow::record_resource_input(&state.data_root, id, rid) {
+                Ok(r) => Response::json(200, json!(r)),
+                Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
+        ("GET", "/api/fs/read") => {
+            // L06：现有文件导入产物——只在已批准根内读文本文件（≤256KB）
+            let Some(path) = req
+                .query
+                .iter()
+                .find(|(k, _)| k == "path")
+                .map(|(_, v)| v.clone())
+            else {
+                return Response::json(400, json!({ "error": "需要 path" }));
+            };
+            if let Err(e) = ensure_within_roots(state, Path::new(&path)) {
+                return Response::json(403, json!({ "error": e }));
+            }
+            let p = Path::new(&path);
+            if !p.is_file() {
+                return Response::json(400, json!({ "error": "路径不是文件" }));
+            }
+            match std::fs::read(p) {
+                Ok(bytes) if bytes.len() <= 256 * 1024 => match String::from_utf8(bytes) {
+                    Ok(text) => Response::json(200, json!({ "path": path, "content": text })),
+                    Err(_) => Response::json(400, json!({ "error": "仅支持 UTF-8 文本文件" })),
+                },
+                Ok(_) => Response::json(400, json!({ "error": "文件超过 256KB" })),
+                Err(e) => Response::json(400, json!({ "error": format!("读取失败: {e}") })),
             }
         }
         ("POST", "/api/jobs/plan") => api_jobs_plan(state, req),
@@ -564,28 +832,50 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
                 .get("execute")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let ws_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            // S03：导出目标必须在已批准根内（canonicalize 后校验边界，拒绝符号链接逃逸）
+            let target_path = Path::new(target);
+            let boundary_probe = if target_path.is_file() {
+                target_path.to_path_buf()
+            } else {
+                target_path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| target_path.to_path_buf())
+            };
+            if let Err(e) = ensure_within_roots(state, &boundary_probe) {
+                return Response::json(403, json!({ "error": e }));
+            }
             if execute {
+                // S03/L03：execute 必须携带预览确认的 target_fingerprint，
+                // 目标当前状态与预览不一致 → 拒绝覆盖（外部编辑不丢失）
+                let Some(expected_fp) = req.body.get("target_fingerprint").and_then(|v| v.as_str())
+                else {
+                    return Response::json(
+                        400,
+                        json!({ "error": "缺少 target_fingerprint（必须先预览导出并确认）" }),
+                    );
+                };
                 match crate::workflow::export_execute(
                     &state.data_root,
                     id,
                     art,
-                    &ws_root,
-                    Path::new(target),
+                    &boundary_probe,
+                    target_path,
+                    Some(expected_fp),
                 ) {
                     Ok(r) => Response::json(200, json!({ "exported": true, "target": r.path })),
-                    Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+                    Err(e) => Response::json(409, json!({ "error": e.to_string() })),
                 }
             } else {
-                match crate::workflow::export_preview(&state.data_root, id, art, Path::new(target))
-                {
+                match crate::workflow::export_preview(&state.data_root, id, art, target_path) {
                     Ok(v) => Response::json(200, v),
                     Err(e) => Response::json(400, json!({ "error": e.to_string() })),
                 }
             }
         }
         ("POST", "/api/repo/relink") => {
-            // 失联工作树重关联：新路径必须仍在同一仓库
+            // F04/F05：失联工作树重关联。新路径必须真实属于本仓库（common-dir 一致）；
+            // 整仓搬迁在 Git 身份证据吻合时迁移登记身份（repo_id/WorktreeId/配置保持）
             let Some(repo_id) = req.body.get("repo_id").and_then(|v| v.as_str()) else {
                 return Response::json(400, json!({ "error": "需要 repo_id" }));
             };
@@ -600,13 +890,25 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
                     Ok(r) => r,
                     Err(e) => return Response::json(404, json!({ "error": e.to_string() })),
                 };
-            match reg.relink_worktree(wt_id, Path::new(new_path), &crate::ids::now_iso()) {
-                Ok(()) => {
+            match reg.relink_worktree(
+                &state.data_root,
+                wt_id,
+                Path::new(new_path),
+                &crate::ids::now_iso(),
+            ) {
+                Ok(outcome) => {
                     let save = reg.save(&state.data_root);
                     match save {
                         Ok(()) => Response::json(
                             200,
-                            json!({ "relinked": true, "wt_id": wt_id, "path": new_path }),
+                            json!({
+                                "relinked": true,
+                                "wt_id": wt_id,
+                                "path": new_path,
+                                "outcome": outcome,
+                                "repo_id": reg.repo_id,
+                                "note": "重关联保持登记身份与个人配置；仓库级搬迁经别名解析继续生效",
+                            }),
                         ),
                         Err(e) => Response::json(500, json!({ "error": e.to_string() })),
                     }
@@ -635,6 +937,15 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
                 Response::json(404, json!({ "error": "任务不存在" }))
             }
         }
+        ("GET", p) if p.starts_with("/ui/") => match ui::lookup(p) {
+            Some((content, mime)) => Response {
+                status: 200,
+                content_type: mime,
+                body: content.to_string(),
+                extra_headers: Vec::new(),
+            },
+            None => Response::json(404, json!({ "error": "未知资产" })),
+        },
         (m, p) => Response::json(404, json!({ "error": format!("未知路径 {m} {p}") })),
     }
 }
@@ -783,7 +1094,23 @@ fn api_repo_discover(state: &Arc<ServerState>, req: &Request) -> Response {
             )
         }
         Ok(crate::repo_registry::PathClass::NonGit { root }) => {
-            Response::json(200, json!({ "kind": "nongit", "root": root }))
+            // F06：非 Git 路径模式是合法一等作用域（nongit-<hash>），登记后
+            // select/plan/sync 全链路可用（能力受限于无 Git exclude/工作树）。
+            let ident = crate::commands::personal::nongit_identity(&root);
+            let mut reg =
+                crate::repo_registry::RepoRegistry::load_or_create(&state.data_root, &ident);
+            if let Ok(r) = reg.as_mut() {
+                let _ = r.save(&state.data_root);
+            }
+            Response::json(
+                200,
+                json!({
+                    "kind": "nongit",
+                    "root": root,
+                    "repo_id": ident.identity.repo_id,
+                    "note": "非 Git 路径模式：以路径为身份；无 Git exclude 登记与工作树概念",
+                }),
+            )
         }
         Err(e) => Response::json(400, json!({ "error": e.to_string() })),
     }
@@ -817,12 +1144,33 @@ fn api_profile_select(state: &Arc<ServerState>, req: &Request) -> Response {
             .get("worktree")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        // F01：选择目标必须显式定位到用户在页面选择的仓库/工作树，不用服务 cwd 猜
+        repo_root: req
+            .body
+            .get("root")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from),
+        // F08：并发保护（可选）
+        base_revision: req.body.get("base_revision").and_then(|v| v.as_u64()),
     };
     if args.state.is_empty() {
         return Response::json(400, json!({ "error": "需要 state" }));
     }
+    if args.repo_root.is_none() {
+        return Response::json(
+            400,
+            json!({ "error": "需要 root（选择目标仓库/工作树的绝对路径）" }),
+        );
+    }
     match crate::commands::personal::select(&args, &state.data_root) {
         Ok(v) => Response::json(200, v),
+        Err(e) if e.code == crate::error::code::USER_CONTENT_CONFLICT => Response::json(
+            409,
+            json!({
+                "error": e.to_string(),
+                "current_revision": e.context.get("current_revision").cloned(),
+            }),
+        ),
         Err(e) => Response::json(400, json!({ "error": e.to_string() })),
     }
 }
@@ -956,38 +1304,79 @@ fn api_library_import(state: &Arc<ServerState>, req: &Request) -> Response {
 }
 
 fn library_entries(state: &Arc<ServerState>) -> Response {
+    // AIL-062：宽容列表——坏条目作为 issues 返回（带文件级定位），不锁死整个列表
     let lib = crate::personal_library::library_root(&state.data_root);
-    if !lib.is_dir() {
-        return Response::json(200, json!({ "path": lib, "entries": [] }));
-    }
-    let manifest = match crate::manifest::TeamManifest::load_from(&lib) {
-        Ok(m) => m,
-        Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
-    };
-    let entries =
-        match crate::resource::enumerate(&lib, &manifest, crate::personal_library::LIBRARY_TEAM_ID)
-        {
-            Ok(e) => e,
-            Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
-        };
-    let items: Vec<Value> = entries
-        .iter()
-        .map(|e| {
-            json!({
-                "id": e.id.to_string(),
-                "kind": e.id.kind.as_str(),
-                "name": e.id.name,
-                "namespace": e.id.namespace,
-                "description": e.description,
-                "path": e.path,
-            })
-        })
-        .collect();
-    Response::json(200, json!({ "path": lib, "entries": items }))
+    let (entries, issues) = crate::personal_library::list_tolerant(&state.data_root);
+    Response::json(
+        200,
+        json!({
+            "path": lib,
+            "entries": entries,
+            "issues": issues,
+            "note": if issues.is_empty() { "".to_string() } else {
+                "部分条目无法解析（见 issues）；其余资源仍可编辑/删除，修复后自动恢复".to_string()
+            },
+        }),
+    )
 }
 
 fn api_library_list(state: &Arc<ServerState>) -> Response {
     library_entries(state)
+}
+
+/// AIL-062：按宽容列表定位资源；坏条目返回 422 + 具体文件错误（可修复后重试）。
+struct LibraryTarget {
+    file: PathBuf,
+    kind: crate::resource::ResourceKind,
+    name: String,
+}
+
+fn find_library_target(
+    state: &ServerState,
+    id: &str,
+) -> std::result::Result<LibraryTarget, Response> {
+    let lib = crate::personal_library::library_root(&state.data_root);
+    let (entries, issues) = crate::personal_library::list_tolerant(&state.data_root);
+    if let Some(e) = entries.iter().find(|e| e.id == id) {
+        let kind = match e.kind.as_str() {
+            "skill" => crate::resource::ResourceKind::Skill,
+            "rule" => crate::resource::ResourceKind::Rule,
+            "doc" => crate::resource::ResourceKind::Doc,
+            "agent" => crate::resource::ResourceKind::Agent,
+            "mcp" => crate::resource::ResourceKind::Mcp,
+            "env" => crate::resource::ResourceKind::Env,
+            "hook" => crate::resource::ResourceKind::Hook,
+            "package" => crate::resource::ResourceKind::Package,
+            _ => crate::resource::ResourceKind::Learning,
+        };
+        let file = if e.kind == "skill" {
+            lib.join(&e.path).join("SKILL.md")
+        } else {
+            lib.join(&e.path)
+        };
+        return Ok(LibraryTarget {
+            file,
+            kind,
+            name: e.name.clone(),
+        });
+    }
+    for issue in &issues {
+        let name = std::path::Path::new(&issue.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let stem = name.trim_end_matches(".md").trim_end_matches(".toml");
+        if id.ends_with(stem) {
+            return Err(Response::json(
+                422,
+                json!({
+                    "error": format!("资源存在但无法解析：{}（{}）。修复该文件后即可继续编辑", issue.path, issue.error),
+                    "issue_path": issue.path,
+                }),
+            ));
+        }
+    }
+    Err(Response::json(404, json!({ "error": "资源不存在" })))
 }
 
 /// 读资源正文 + 指纹（并发保护）。
@@ -1000,29 +1389,30 @@ fn api_library_resource_get(state: &Arc<ServerState>, req: &Request) -> Response
     else {
         return Response::json(400, json!({ "error": "需要 id" }));
     };
-    let lib = crate::personal_library::library_root(&state.data_root);
-    let manifest = match crate::manifest::TeamManifest::load_from(&lib) {
-        Ok(m) => m,
-        Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
+    let entry = match find_library_target(state, &id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
-    let entries =
-        match crate::resource::enumerate(&lib, &manifest, crate::personal_library::LIBRARY_TEAM_ID)
-        {
-            Ok(e) => e,
-            Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
-        };
-    let Some(entry) = entries.iter().find(|e| e.id.to_string() == id) else {
-        return Response::json(404, json!({ "error": "资源不存在" }));
-    };
-    // skill 编辑 SKILL.md；其余编辑正文文件
-    let file = if entry.id.kind == crate::resource::ResourceKind::Skill {
-        lib.join(&entry.path).join("SKILL.md")
-    } else {
-        lib.join(&entry.path)
-    };
+    let file = entry.file;
     match std::fs::read_to_string(&file) {
         Ok(content) => {
             let fingerprint = crate::ids::sha256_hex(content.as_bytes());
+            // L05：MCP 原文不回显字面量秘密（占位符替换；保存时回填现值）
+            if entry.kind == crate::resource::ResourceKind::Mcp {
+                let (redacted_content, fields) = redact_mcp_literals(&content);
+                return Response::json(
+                    200,
+                    json!({
+                        "id": id,
+                        "content": redacted_content,
+                        "fingerprint": fingerprint,
+                        "redacted_fields": fields,
+                        "note": if fields.is_empty() { "".to_string() } else {
+                            "以上键为秘密：编辑器显示占位符，保存时自动回填盘上现值；新增秘密请用 $ENV:NAME 引用".to_string()
+                        },
+                    }),
+                );
+            }
             Response::json(
                 200,
                 json!({ "id": id, "content": content, "fingerprint": fingerprint }),
@@ -1041,32 +1431,29 @@ fn api_library_resource_put(state: &Arc<ServerState>, req: &Request) -> Response
         return Response::json(400, json!({ "error": "需要 content" }));
     };
     let base = req.body.get("base_fingerprint").and_then(|v| v.as_str());
-    let lib = crate::personal_library::library_root(&state.data_root);
-    let manifest = match crate::manifest::TeamManifest::load_from(&lib) {
-        Ok(m) => m,
-        Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
+    let entry = match find_library_target(state, id) {
+        Ok(t) => t,
+        Err(resp) => return resp,
     };
-    let entries =
-        match crate::resource::enumerate(&lib, &manifest, crate::personal_library::LIBRARY_TEAM_ID)
-        {
-            Ok(e) => e,
-            Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
-        };
-    let Some(entry) = entries.iter().find(|e| e.id.to_string() == id) else {
-        return Response::json(404, json!({ "error": "资源不存在" }));
-    };
-    let file = if entry.id.kind == crate::resource::ResourceKind::Skill {
-        lib.join(&entry.path).join("SKILL.md")
-    } else {
-        lib.join(&entry.path)
-    };
-    // 保存前重解析校验（frontmatter 合法性），失败不落盘
-    if entry.id.kind == crate::resource::ResourceKind::Skill {
-        let parsed = crate::resource::parse_frontmatter(content);
-        if parsed.is_err() {
-            return Response::json(400, json!({ "error": parsed.err().unwrap().to_string() }));
-        }
+    let file = entry.file;
+    // L02：保存前按类型完整校验（错误定位到字段；不过不落盘，库不再被坏文件锁死）
+    if let Err(msg) = validate_resource_content(&entry.kind, &entry.name, content) {
+        return Response::json(400, json!({ "error": format!("保存被拒绝：{msg}") }));
     }
+    // L05：MCP 占位符回填 + 字面量秘密边界
+    let content_owned: String;
+    let content = if entry.kind == crate::resource::ResourceKind::Mcp {
+        let existing_now = std::fs::read_to_string(&file).unwrap_or_default();
+        match restore_mcp_placeholders(content, &existing_now, &entry.name) {
+            Ok(restored) => {
+                content_owned = restored;
+                content_owned.as_str()
+            }
+            Err(msg) => return Response::json(400, json!({ "error": msg })),
+        }
+    } else {
+        content
+    };
     let current = std::fs::read_to_string(&file).unwrap_or_default();
     let current_fp = crate::ids::sha256_hex(current.as_bytes());
     if let Some(base) = base {
@@ -1092,6 +1479,183 @@ fn api_library_resource_put(state: &Arc<ServerState>, req: &Request) -> Response
 
 fn draft_disk_path(data_root: &Path) -> PathBuf {
     data_root.join("console").join("draft.json")
+}
+
+// ---------------------------------------------------------------------------
+// 资源编辑安全（AIL-049 返工）：保存前完整校验 + 秘密明文边界
+// ---------------------------------------------------------------------------
+
+/// 编辑器中秘密的占位值（GET 时原文被替换；PUT 时用盘上现值回填）。
+const SECRET_PLACEHOLDER: &str = "__AILOOM_REDACTED__";
+
+/// L02：保存前按资源类型完整校验（错误定位到字段；校验不过不落盘，
+/// 杜绝「保存成功但整个库无法再次读取」）。
+fn validate_resource_content(
+    kind: &crate::resource::ResourceKind,
+    entry_name: &str,
+    content: &str,
+) -> std::result::Result<(), String> {
+    match kind {
+        crate::resource::ResourceKind::Skill => {
+            let (meta, _) = crate::resource::parse_frontmatter(content)
+                .map_err(|e| format!("frontmatter 校验失败: {e}"))?;
+            match meta {
+                Some(m) => {
+                    if m.name.as_deref() != Some(entry_name) {
+                        return Err(format!(
+                            "frontmatter name({:?}) 必须与资源名({entry_name}) 一致（身份稳定）",
+                            m.name
+                        ));
+                    }
+                }
+                None => return Err("SKILL.md 缺少 frontmatter（name/description）".into()),
+            }
+            Ok(())
+        }
+        crate::resource::ResourceKind::Doc | crate::resource::ResourceKind::Learning => {
+            // Markdown：frontmatter 存在就必须合法（未闭合/类型错误即时定位）
+            crate::resource::parse_frontmatter(content)
+                .map(|_| ())
+                .map_err(|e| format!("frontmatter 校验失败: {e}"))
+        }
+        crate::resource::ResourceKind::Mcp => {
+            mcp_spec_from_content(entry_name, content).map(|_| ())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn mcp_spec_from_content(
+    entry_name: &str,
+    content: &str,
+) -> std::result::Result<crate::adapters::mcp::McpSpec, String> {
+    let entry = crate::resource::ResourceEntry {
+        id: crate::resource::ResourceId {
+            source: "personal".into(),
+            kind: crate::resource::ResourceKind::Mcp,
+            namespace: "personal".into(),
+            name: entry_name.into(),
+        },
+        meta: crate::resource::ResourceMeta {
+            shared: true,
+            projects: vec![],
+            roles: vec![],
+            namespace: "personal".into(),
+            tags: vec![],
+        },
+        path: String::new(),
+        description: String::new(),
+        raw: Some(content.to_string()),
+    };
+    crate::adapters::mcp::parse_spec(&entry).map_err(|e| e.to_string())
+}
+
+/// L05：GET 时不回显字面量秘密。env/headers 中非 `$ENV:` 引用的值替换为占位符，
+/// 返回（脱敏正文, 被脱敏键列表）。
+fn redact_mcp_literals(content: &str) -> (String, Vec<String>) {
+    let mut doc = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(d) => d,
+        Err(_) => return (content.to_string(), Vec::new()),
+    };
+    let mut redacted = Vec::new();
+    fn scrub(table: &mut toml_edit::Table, prefix: &str, redacted: &mut Vec<String>) {
+        for (k, item) in table.iter_mut() {
+            if let Some(s) = item.as_str() {
+                if !s.starts_with("$ENV:") && s != SECRET_PLACEHOLDER {
+                    *item = toml_edit::value(SECRET_PLACEHOLDER);
+                    redacted.push(format!("{prefix}{k}"));
+                }
+            }
+        }
+    }
+    if let Some(mcp) = doc.get_mut("mcp").and_then(|i| i.as_table_mut()) {
+        for key in ["env", "headers"] {
+            if let Some(t) = mcp.get_mut(key).and_then(|i| i.as_table_mut()) {
+                scrub(t, &format!("mcp.{key}."), &mut redacted);
+            }
+        }
+    }
+    for key in ["env", "headers"] {
+        if let Some(t) = doc.get_mut(key).and_then(|i| i.as_table_mut()) {
+            scrub(t, &format!("{key}."), &mut redacted);
+        }
+    }
+    (doc.to_string(), redacted)
+}
+
+/// L05：PUT 时把占位符回填为盘上现值（编辑不丢秘密引用）；新增字面量秘密 → 拒绝。
+fn restore_mcp_placeholders(
+    content: &str,
+    existing: &str,
+    entry_name: &str,
+) -> std::result::Result<String, String> {
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("MCP TOML 解析失败: {e}"))?;
+    let existing_spec = mcp_spec_from_content(entry_name, existing).ok();
+    let restore = |doc: &mut toml_edit::DocumentMut,
+                   section: Option<&str>,
+                   key: &str,
+                   redacted: &mut Vec<String>| {
+        let table_ref = match section {
+            Some(s) => doc
+                .get_mut(s)
+                .and_then(|i| i.as_table_mut())
+                .and_then(|t| t.get_mut(key).and_then(|i| i.as_table_mut())),
+            None => doc.get_mut(key).and_then(|i| i.as_table_mut()),
+        };
+        let Some(tbl) = table_ref else { return };
+        for (k, item) in tbl.iter_mut() {
+            if item.as_str() == Some(SECRET_PLACEHOLDER) {
+                let old = existing_spec.as_ref().and_then(|spec| {
+                    let pairs = match key {
+                        "env" => &spec.env,
+                        _ => &spec.headers,
+                    };
+                    pairs
+                        .iter()
+                        .find(|(pk, _)| **pk == *k)
+                        .map(|(_, pv)| pv.clone())
+                });
+                match old {
+                    Some(v) => {
+                        *item = toml_edit::value(v);
+                    }
+                    None => redacted.push(format!("{key}.{k}")),
+                }
+            }
+        }
+    };
+    let mut unresolvable = Vec::new();
+    for key in ["env", "headers"] {
+        restore(&mut doc, Some("mcp"), key, &mut unresolvable);
+        restore(&mut doc, None, key, &mut unresolvable);
+    }
+    if !unresolvable.is_empty() {
+        return Err(format!(
+            "以下键是占位符但盘上没有现值可回填：{}。请改用 $ENV: 环境变量引用，不要写明文秘密",
+            unresolvable.join(", ")
+        ));
+    }
+    // 用户新输入（回填前）含字面量秘密 → 拒绝保存；盘上既有字面量经占位符
+    // 回填往返不丢失（历史数据允许存在，编辑不扩大暴露面）
+    let input = content.to_string();
+    if let Ok(spec) = mcp_spec_from_content(entry_name, &input) {
+        let literals: Vec<String> = spec
+            .env
+            .iter()
+            .chain(spec.headers.iter())
+            .filter(|(_, v)| !v.starts_with("$ENV:") && v != SECRET_PLACEHOLDER)
+            .map(|(k, _)| k.clone())
+            .collect();
+        if !literals.is_empty() {
+            return Err(format!(
+                "MCP env/headers 含字面量秘密: {:?}。秘密只允许 $ENV:NAME 引用（值不进入配置/日志/导出）",
+                literals
+            ));
+        }
+    }
+    Ok(doc.to_string())
 }
 
 fn api_draft_get(state: &Arc<ServerState>) -> Response {

@@ -18,6 +18,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "toml_edit",
  "uuid",
  "walkdir",
 ]

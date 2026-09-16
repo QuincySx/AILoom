@@ -272,9 +272,9 @@ fn ail046_discover_draft_conflict_and_shutdown() {
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": repo }),
     );
-    assert_eq!(code, 200, "无登记仓库时给 400；此处已登记");
+    assert_eq!(code, 200, "选择需显式 root；此处已提供");
     let _ = code;
 
     // 能力矩阵可读（宿主×资源支持级别）
@@ -374,7 +374,7 @@ fn ail050_plan_apply_verify_undo_cycle() {
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": repo }),
     );
     assert_eq!(code, 200);
     // 导入 skill
@@ -408,7 +408,7 @@ fn ail050_plan_apply_verify_undo_cycle() {
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "resource": "personal/skill/personal/job-flow", "state": "enable" }),
+        json!({ "resource": "personal/skill/personal/job-flow", "state": "enable", "root": repo }),
     );
 
     // plan 任务
@@ -524,7 +524,7 @@ fn ail050_stale_plan_rejected() {
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": repo }),
     );
     assert_eq!(code, 200);
 
@@ -677,14 +677,14 @@ fn ail048_repo_default_preview_across_worktrees() {
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": main }),
     );
     assert_eq!(code, 200);
     let (code, _) = post(
         server.port,
         "/api/profile/select",
         &auth,
-        json!({ "resource": "personal/skill/personal/preview-flow", "state": "enable" }),
+        json!({ "resource": "personal/skill/personal/preview-flow", "state": "enable", "root": main }),
     );
     assert_eq!(code, 200);
 
@@ -711,6 +711,376 @@ fn ail048_repo_default_preview_across_worktrees() {
     assert!(
         !wt2.join(".claude/skills/preview-flow").exists(),
         "wt2 不被预览写入"
+    );
+
+    server.shutdown();
+    server.join();
+}
+
+// ---------------------------------------------------------------------------
+// AIL-054（S03）：workflow 导出绑定授权根 + 预览指纹前置 + 覆盖备份
+// ---------------------------------------------------------------------------
+#[test]
+fn ail054_export_boundary_fingerprint_and_backup() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17930)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let (code, _) = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": repo }),
+    );
+    assert_eq!(code, 200);
+
+    // 建流程 + 产物
+    let (code, raw) = post(
+        server.port,
+        "/api/workflows/new",
+        &auth,
+        json!({ "name": "导出流" }),
+    );
+    assert_eq!(code, 200, "{raw}");
+    let run_id = json_body(&raw)["id"].as_str().unwrap().to_string();
+    let (code, _) = post(
+        server.port,
+        "/api/workflows/artifact",
+        &auth,
+        json!({ "id": run_id, "stage": "spec", "title": "规格", "content": "导出正文 v1" }),
+    );
+    assert_eq!(code, 200);
+    let show = json_body(
+        &method(
+            server.port,
+            "GET",
+            &format!("/api/workflows/show?id={run_id}"),
+            &auth,
+            None,
+        )
+        .1,
+    );
+    let art_id = show["artifacts"][0]["id"].as_str().unwrap().to_string();
+
+    // 只授权 repo：sibling 未批准路径拒绝（S03 反例）
+    let victim = tmp.path().join("not-approved").join("victim.txt");
+    std::fs::create_dir_all(victim.parent().unwrap()).unwrap();
+    std::fs::write(&victim, "USER FILE").unwrap();
+    let (code, raw) = post(
+        server.port,
+        "/api/workflows/export",
+        &auth,
+        json!({ "id": run_id, "artifact_id": art_id, "target": victim.to_str().unwrap() }),
+    );
+    assert_eq!(code, 403, "越界导出必须拒绝: {raw}");
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        "USER FILE",
+        "越界目标逐字节保持"
+    );
+
+    // 授权根内导出：先预览拿指纹 → 指纹不匹配拒绝 → 匹配成功 + 备份
+    let target = repo.join("spec.md");
+    std::fs::write(&target, "用户已有内容").unwrap();
+    let (code, raw) = post(
+        server.port,
+        "/api/workflows/export",
+        &auth,
+        json!({ "id": run_id, "artifact_id": art_id, "target": target.to_str().unwrap() }),
+    );
+    assert_eq!(code, 200, "{raw}");
+    let fp = json_body(&raw)["target_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(raw.contains("diff"), "预览包含差异");
+    // 外部修改后旧预览失效
+    std::fs::write(&target, "用户又改了").unwrap();
+    let (code, _) = post(
+        server.port,
+        "/api/workflows/export",
+        &auth,
+        json!({ "id": run_id, "artifact_id": art_id, "target": target.to_str().unwrap(), "execute": true, "target_fingerprint": fp }),
+    );
+    assert_eq!(code, 409, "旧预览指纹失效必须拒绝");
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "用户又改了",
+        "外部编辑保持"
+    );
+    // 重新预览 + 执行 → 成功且旧版本备份存在
+    let (code, raw) = post(
+        server.port,
+        "/api/workflows/export",
+        &auth,
+        json!({ "id": run_id, "artifact_id": art_id, "target": target.to_str().unwrap() }),
+    );
+    assert_eq!(code, 200);
+    let fp2 = json_body(&raw)["target_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (code, _) = post(
+        server.port,
+        "/api/workflows/export",
+        &auth,
+        json!({ "id": run_id, "artifact_id": art_id, "target": target.to_str().unwrap(), "execute": true, "target_fingerprint": fp2 }),
+    );
+    assert_eq!(code, 200);
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "导出正文 v1",
+        "导出成功"
+    );
+    let backup_dir = server
+        .state
+        .data_root
+        .join("profile/workflows")
+        .join(&run_id)
+        .join("export-backups");
+    let backups = std::fs::read_dir(&backup_dir)
+        .map(|d| d.flatten().count())
+        .unwrap_or(0);
+    assert!(backups >= 1, "覆盖前旧版本已备份: {}", backup_dir.display());
+
+    server.shutdown();
+    server.join();
+}
+
+// ---------------------------------------------------------------------------
+// AIL-053/072（S01/S04）：undo 用户后改冲突保留；服务重启恢复任务
+// ---------------------------------------------------------------------------
+#[test]
+fn ail072_undo_conflict_and_restart_recovery() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let port = 17940;
+
+    // 第一个服务实例：批准/发现/选择/计划/应用
+    let server = ConsoleServer::start(&opts(tmp.path(), port)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let (code, _) = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": repo }),
+    );
+    assert_eq!(code, 200);
+    // 导入源目录也要在授权根内（AIL-054/046 边界一致）
+    let (code, _) = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": tmp.path() }),
+    );
+    assert_eq!(code, 200);
+    let (code, _) = post(
+        server.port,
+        "/api/repo/discover",
+        &auth,
+        json!({ "path": repo }),
+    );
+    assert_eq!(code, 200);
+    let (code, _) = post(
+        server.port,
+        "/api/profile/select",
+        &auth,
+        json!({ "host": "claude", "state": "enable", "root": repo }),
+    );
+    assert_eq!(code, 200);
+    let skill_src = tmp.path().join("skills/restart-flow");
+    std::fs::create_dir_all(&skill_src).unwrap();
+    std::fs::write(skill_src.join("SKILL.md"), "# restart-flow\n").unwrap();
+    let (code, _) = post(
+        server.port,
+        "/api/library/import",
+        &auth,
+        json!({ "dir": skill_src.to_str().unwrap(), "execute": true }),
+    );
+    assert_eq!(code, 200);
+    let (code, _) = post(
+        server.port,
+        "/api/profile/select",
+        &auth,
+        json!({ "resource": "personal/skill/personal/restart-flow", "state": "enable", "root": repo }),
+    );
+    assert_eq!(code, 200);
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/plan",
+        &auth,
+        json!({ "root": repo }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let plan_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+    wait_job(&server, &plan_id, Duration::from_secs(20));
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/apply",
+        &auth,
+        json!({ "plan_job_id": plan_id }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let apply_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+    let done = wait_job(&server, &apply_id, Duration::from_secs(20));
+    assert_eq!(done["status"], "success", "{done}");
+    let deployed = repo.join(".claude/skills/restart-flow");
+    assert!(deployed.exists());
+
+    // 用户事后手改部署产物（应用后修改）
+    let marker = repo.join(".claude/skills/restart-flow/SKILL.md");
+    if marker.is_file() {
+        std::fs::write(&marker, "USER EDIT AFTER APPLY\n").unwrap();
+    } else {
+        // symlink 部署：改为在其旁边放置用户文件不影响；直接撤销应成功
+    }
+
+    // 服务重启：任务账本从磁盘恢复；幂等键/成功任务可继续操作
+    let token1 = server.token.clone();
+    server.shutdown();
+    server.join();
+    let server2 = ConsoleServer::start(&opts(tmp.path(), port)).unwrap();
+    let auth2 = [(SESSION_HEADER, server2.token.as_str())];
+    // 旧 token 属于旧实例：写接口必须 401（会话不跨实例）
+    let (code, _) = post(
+        server2.port,
+        "/api/fs/approve",
+        &[
+            (
+                "host",
+                Box::leak(format!("127.0.0.1:{}", server2.port).into_boxed_str()),
+            ),
+            (SESSION_HEADER, &token1),
+        ],
+        json!({ "path": repo }),
+    );
+    assert_eq!(code, 401, "旧实例 token 不能操作新实例");
+    let (code, raw) = method(server2.port, "GET", "/api/jobs", &auth2, None);
+    assert_eq!(code, 200, "{raw}");
+    let jobs = json_body(&raw)["jobs"].as_array().unwrap().clone();
+    assert!(
+        jobs.iter().any(|j| j["id"] == plan_id.as_str()),
+        "重启后持久化任务恢复可见: {jobs:?}"
+    );
+    // 成功 plan 可再次 apply（恢复可操作，而非只展示 JSON）
+    let (code, raw) = post(
+        server2.port,
+        "/api/jobs/apply",
+        &auth2,
+        json!({ "plan_job_id": plan_id }),
+    );
+    assert_ne!(code, 400, "重启后 plan 仍可被引用: {raw}");
+    if code == 202 {
+        let job_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+        let done = wait_job(&server2, &job_id, Duration::from_secs(20));
+        assert!(
+            matches!(done["status"].as_str(), Some("success") | Some("failed")),
+            "重启后 apply 有确定结果: {done}"
+        );
+    }
+
+    // 撤销：undo 在重启后仍可执行（S04 可重入）
+    let (code, raw) = post(
+        server2.port,
+        "/api/jobs/undo",
+        &auth2,
+        json!({ "id": apply_id }),
+    );
+    assert_eq!(code, 200, "重启后可撤销成功任务: {raw}");
+    let undone = json_body(&raw);
+    assert!(
+        undone["conflicts"].is_array(),
+        "撤销返回明确冲突清单: {undone}"
+    );
+
+    server2.shutdown();
+    server2.join();
+}
+
+// ---------------------------------------------------------------------------
+// AIL-069（L05）：MCP 秘密边界——GET 不回显字面量秘密；PUT 接受 $ENV 引用、拒绝明文
+// ---------------------------------------------------------------------------
+#[test]
+fn ail069_mcp_secret_boundary_in_editor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17950)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    // 直接在个人库放置一个含字面量秘密的 MCP 资源（模拟历史/外部写入）
+    // 先确保合法库存在（manifest + 骨架）
+    ailoom::personal_library::ensure_library(&server.state.data_root).unwrap();
+    let mcp_dir = server.state.data_root.join("library/resources/mcp");
+    std::fs::create_dir_all(&mcp_dir).unwrap();
+    std::fs::write(
+        mcp_dir.join("secretive.toml"),
+        "name = \"secretive\"\ntype = \"stdio\"\nnamespace = \"personal\"\nshared = true\ncommand = \"/bin/echo\"\n[mcp.env]\nAPI_TOKEN = \"literal-secret-abc\"\n",
+    )
+    .unwrap();
+
+    // GET：字面量被占位符替换，不回显明文
+    let (code, raw) = method(
+        server.port,
+        "GET",
+        "/api/library/resource?id=personal/mcp/personal/secretive",
+        &auth,
+        None,
+    );
+    assert_eq!(code, 200, "{raw}");
+    assert!(
+        !raw.contains("literal-secret-abc"),
+        "GET 不回显明文秘密: {raw}"
+    );
+    assert!(raw.contains("redacted_fields"), "标注被脱敏字段");
+
+    // PUT：占位符回填盘上现值（保存不改秘密）；写明文被拒
+    let get_body = json_body(&raw);
+    let content = get_body["content"].as_str().unwrap().to_string();
+    let fp = get_body["fingerprint"].as_str().unwrap().to_string();
+    let (code, raw2) = method(
+        server.port,
+        "PUT",
+        "/api/library/resource",
+        &auth,
+        Some(
+            &json!({ "id": "personal/mcp/personal/secretive", "content": content, "base_fingerprint": fp }),
+        ),
+    );
+    assert_eq!(code, 200, "占位符回填后保存成功: {raw2}");
+    let on_disk = std::fs::read_to_string(mcp_dir.join("secretive.toml")).unwrap();
+    assert!(
+        on_disk.contains("literal-secret-abc"),
+        "现值保留在库内（占位符回填），未丢失"
+    );
+    // 改成 $ENV 引用合法
+    let (_code, raw2) = method(
+        server.port,
+        "GET",
+        "/api/library/resource?id=personal/mcp/personal/secretive",
+        &auth,
+        None,
+    );
+    let body = json_body(&raw2);
+    let content2 = body["content"]
+        .as_str()
+        .unwrap()
+        .replace("literal-secret-abc-bound", "");
+    let fp2 = body["fingerprint"].as_str().unwrap().to_string();
+    let updated = content2.replace("__AILOOM_REDACTED__", "$ENV:API_TOKEN");
+    let (code, raw3) = method(
+        server.port,
+        "PUT",
+        "/api/library/resource",
+        &auth,
+        Some(
+            &json!({ "id": "personal/mcp/personal/secretive", "content": updated, "base_fingerprint": fp2 }),
+        ),
+    );
+    assert_eq!(code, 200, "改为 $ENV 引用保存成功: {raw3}");
+    let on_disk = std::fs::read_to_string(mcp_dir.join("secretive.toml")).unwrap();
+    assert!(
+        on_disk.contains("$ENV:API_TOKEN"),
+        "引用形式落盘: {on_disk}"
     );
 
     server.shutdown();

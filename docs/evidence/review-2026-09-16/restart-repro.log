@@ -1,0 +1,3 @@
+GET old plan 200
+list after restart (200, {'jobs': []})
+apply old plan (400, {'error': '计划任务不存在'})

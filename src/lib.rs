@@ -32,6 +32,7 @@ pub mod reporting;
 pub mod require;
 pub mod resolver;
 pub mod resource;
+pub mod skill_source;
 pub mod source;
 pub mod store;
 pub mod sync;

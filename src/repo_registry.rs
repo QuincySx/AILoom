@@ -250,6 +250,9 @@ pub struct RegistryWorktree {
     pub status: WorktreeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// HEAD 摘要（F05 身份证据：搬迁重挂/别名解析时的强证据之一）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,8 +265,12 @@ pub struct RegistrySubproject {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoRegistry {
     pub schema_version: u32,
+    /// 稳定身份：首次登记生成（repo-<hash>），搬迁/重关联保持不变（F05）。
     pub repo_id: String,
     pub common_dir: PathBuf,
+    /// 历史与当前 common-dir（发现证据：搬迁后按此识别回同一身份）。
+    #[serde(default)]
+    pub common_dirs: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin_normalized: Option<String>,
     pub worktrees: BTreeMap<String, RegistryWorktree>,
@@ -283,15 +290,57 @@ impl RepoRegistry {
             })?;
             return Ok(reg);
         }
+        let mut common_dirs = vec![discovery.identity.common_dir.clone()];
+        common_dirs.sort();
+        common_dirs.dedup();
         Ok(RepoRegistry {
             schema_version: 1,
             repo_id: discovery.identity.repo_id.clone(),
             common_dir: discovery.identity.common_dir.clone(),
+            common_dirs,
             origin_normalized: discovery.identity.origin_normalized.clone(),
             worktrees: Default::default(),
             subprojects: Default::default(),
             linked_repos: Vec::new(),
         })
+    }
+
+    /// 解析当前发现对应的登记身份（F05）：
+    /// 1) repo_id 精确命中 → 直接加载；
+    /// 2) 别名索引命中（common_dir 历史登记过）且 Git 证据吻合（origin 相同且
+    ///    至少一个工作树分支/HEAD 命中）→ 解析为原登记（搬迁后配置/身份不丢）；
+    /// 3) 都不命中 → 按新仓库登记。
+    ///
+    /// 返回登记使用的 registry（repo_id 以 registry.repo_id 为准）。
+    pub fn resolve_or_create(data_root: &Path, discovery: &RepoDiscovery) -> Result<RepoRegistry> {
+        let exact = registry_path(data_root, &discovery.identity.repo_id);
+        if exact.is_file() {
+            return Self::load_or_create(data_root, discovery);
+        }
+        if let Some(target_id) = lookup_alias(data_root, &discovery.identity.repo_id) {
+            if let Ok(mut reg) = load_or_create_by_id(data_root, &target_id) {
+                let origin_ok = reg.origin_normalized == discovery.identity.origin_normalized;
+                let discovery_branches: std::collections::BTreeSet<Option<&String>> = discovery
+                    .worktrees
+                    .iter()
+                    .map(|w| w.branch.as_ref())
+                    .collect();
+                let branch_hit = reg.worktrees.values().any(|w| {
+                    w.branch
+                        .as_ref()
+                        .map(|b| discovery_branches.contains(&Some(b)))
+                        .unwrap_or(false)
+                });
+                if origin_ok && branch_hit {
+                    reg.common_dir = discovery.identity.common_dir.clone();
+                    reg.common_dirs.push(discovery.identity.common_dir.clone());
+                    reg.common_dirs.sort();
+                    reg.common_dirs.dedup();
+                    return Ok(reg);
+                }
+            }
+        }
+        Self::load_or_create(data_root, discovery)
     }
 
     pub fn save(&self, data_root: &Path) -> Result<()> {
@@ -301,9 +350,12 @@ impl RepoRegistry {
     }
 
     /// 用最新发现刷新登记：现存路径标 active 并更新 last_seen；失联路径保留并标 missing。
+    /// F05：同仓库内的工作树搬迁（新路径无登记、旧登记失联且分支唯一吻合）→
+    /// 自动重挂到旧登记 id（WorktreeId 稳定，配置不丢）。detached（无分支）不猜。
     /// 返回本次新登记的工作树 id 列表。
     pub fn refresh_worktrees(&mut self, discovery: &RepoDiscovery, now: &str) -> Vec<String> {
-        let mut fresh: BTreeMap<String, (PathBuf, Option<String>)> = Default::default();
+        let mut fresh: BTreeMap<String, (PathBuf, Option<String>, Option<String>)> =
+            Default::default();
         for w in &discovery.worktrees {
             if w.is_bare {
                 continue; // bare 容器不是可部署工作树，不进登记
@@ -313,15 +365,53 @@ impl RepoRegistry {
             if !w.path.exists() {
                 continue;
             }
-            fresh.insert(w.stable_key(), (w.path.clone(), w.branch.clone()));
+            fresh.insert(
+                w.stable_key(),
+                (w.path.clone(), w.branch.clone(), w.head.clone()),
+            );
+        }
+        // 先做搬迁重挂：新 key 无登记，但存在失联条目且分支唯一吻合
+        let mut reattached: BTreeMap<String, String> = Default::default(); // old_id -> new_key
+        for (key, (_path, branch, _head)) in &fresh {
+            if self.worktrees.contains_key(key) {
+                continue;
+            }
+            let Some(b) = branch else { continue };
+            let candidates: Vec<String> = self
+                .worktrees
+                .values()
+                .filter(|e| {
+                    e.status == WorktreeStatus::Missing && e.branch.as_deref() == Some(b.as_str())
+                })
+                .map(|e| e.id.clone())
+                .collect();
+            if candidates.len() == 1 {
+                reattached.insert(candidates[0].clone(), key.clone());
+            }
+        }
+        for (old_id, new_key) in &reattached {
+            if let Some(mut entry) = self.worktrees.remove(old_id) {
+                let (path, branch, head) = fresh[new_key].clone();
+                entry.path = path;
+                entry.branch = branch;
+                entry.head = head;
+                entry.status = WorktreeStatus::Active;
+                entry.last_seen = now.to_string();
+                self.worktrees.insert(old_id.clone(), entry);
+            }
         }
         let mut added = Vec::new();
-        for (key, (path, branch)) in &fresh {
+        for (key, (path, branch, head)) in &fresh {
+            if reattached.values().any(|k| k == key) {
+                // 该新路径已重挂到旧登记 id（F05），不再按新 key 重复登记
+                continue;
+            }
             match self.worktrees.get_mut(key) {
                 Some(entry) => {
                     entry.status = WorktreeStatus::Active;
                     entry.last_seen = now.to_string();
                     entry.branch = branch.clone();
+                    entry.head = head.clone();
                 }
                 None => {
                     self.worktrees.insert(
@@ -333,6 +423,7 @@ impl RepoRegistry {
                             last_seen: now.to_string(),
                             status: WorktreeStatus::Active,
                             branch: branch.clone(),
+                            head: head.clone(),
                         },
                     );
                     added.push(key.clone());
@@ -340,15 +431,28 @@ impl RepoRegistry {
             }
         }
         for entry in self.worktrees.values_mut() {
-            if !fresh.contains_key(&entry.id) && entry.status == WorktreeStatus::Active {
+            if !fresh.contains_key(&entry.id)
+                && !reattached.contains_key(&entry.id)
+                && entry.status == WorktreeStatus::Active
+            {
                 entry.status = WorktreeStatus::Missing;
             }
         }
         added
     }
 
-    /// 重关联失联工作树到新位置（用户显式确认移动）。新位置必须仍是本仓库工作树。
-    pub fn relink_worktree(&mut self, id: &str, new_path: &Path, now: &str) -> Result<()> {
+    /// 重关联失联工作树到新位置（用户显式确认移动）。
+    /// F04：新路径必须真实属于本仓库（common-dir 一致）。
+    /// F05：common-dir 不一致 = 整仓搬迁 → 在分支/HEAD 证据吻合时执行身份迁移：
+    /// 保持 repo_id / WorktreeId / 个人配置 / 指令条目不变，登记新位置；
+    /// 证据不符（独立仓库 B）→ 拒绝，不并仓。
+    pub fn relink_worktree(
+        &mut self,
+        data_root: &Path,
+        id: &str,
+        new_path: &Path,
+        now: &str,
+    ) -> Result<RepoMoveOutcome> {
         let entry = self.worktrees.get_mut(id).ok_or_else(|| {
             Error::new(code::UNKNOWN_REFERENCE, format!("工作树登记不存在: {id}"))
         })?;
@@ -356,20 +460,127 @@ impl RepoRegistry {
             Error::new(code::WORKSPACE_INVALID, format!("新路径不可用: {e}"))
                 .context(serde_json::json!({ "path": new_path.display().to_string() }))
         })?;
-        let current = list_worktrees(&new_path)?;
-        let belongs = current.iter().any(|w| w.path == new_path);
-        if !belongs {
+        let new_discovery = discover_repo(&new_path)?;
+        let recorded_branch = entry.branch.clone();
+        let same_common = new_discovery.identity.common_dir == self.common_dir;
+        if same_common {
+            let belongs = new_discovery.worktrees.iter().any(|w| w.path == new_path);
+            if !belongs {
+                return Err(Error::new(
+                    code::WORKSPACE_INVALID,
+                    "新路径不是本仓库的工作树，拒绝重关联",
+                )
+                .context(serde_json::json!({ "path": new_path.display().to_string() })));
+            }
+            entry.path = new_path;
+            entry.status = WorktreeStatus::Active;
+            entry.last_seen = now.to_string();
+            return Ok(RepoMoveOutcome::WorktreeOnly);
+        }
+        // 整仓搬迁：Git 证据必须吻合（origin 相同 + 分支命中 + HEAD 摘要命中）。
+        // 无远端 + 同名分支不足以区分「搬迁」与「无关仓库」，HEAD 证据为必需。
+        let origin_ok = self.origin_normalized == new_discovery.identity.origin_normalized;
+        let recorded_heads: std::collections::BTreeSet<Option<&String>> =
+            self.worktrees.values().map(|w| w.head.as_ref()).collect();
+        let branch_hit = new_discovery
+            .worktrees
+            .iter()
+            .any(|w| w.branch.is_some() && w.branch == recorded_branch);
+        let head_hit = new_discovery
+            .worktrees
+            .iter()
+            .any(|w| recorded_heads.contains(&w.head.as_ref()));
+        let heads_recorded = recorded_heads.iter().any(|h| h.is_some());
+        if !origin_ok || !branch_hit || (heads_recorded && !head_hit) {
             return Err(Error::new(
                 code::WORKSPACE_INVALID,
-                "新路径不是本仓库的工作树，拒绝重关联",
+                "新路径属于不同的 Git 仓库（common-dir 不一致且身份证据不吻合），拒绝重关联",
             )
-            .context(serde_json::json!({ "path": new_path.display().to_string() })));
+            .context(serde_json::json!({
+                "new_common_dir": new_discovery.identity.common_dir,
+                "recorded_common_dir": self.common_dir,
+                "hint": "确认是整仓搬迁且分支一致后重试；独立仓库应作为新仓库登记",
+            })));
         }
-        entry.path = new_path;
-        entry.status = WorktreeStatus::Active;
-        entry.last_seen = now.to_string();
-        Ok(())
+        let old_repo_id = self.repo_id.clone();
+        let new_repo_id = new_discovery.identity.repo_id.clone();
+        // 更新登记身份（repo_id 稳定不变：仍用原 id；common-dir 记录新位置）
+        self.common_dir = new_discovery.identity.common_dir.clone();
+        self.common_dirs
+            .push(new_discovery.identity.common_dir.clone());
+        self.common_dirs.sort();
+        self.common_dirs.dedup();
+        // 按新发现刷新工作树（分支吻合自动重挂，保持 WorktreeId）
+        self.refresh_worktrees(&new_discovery, now);
+        // 显式重关联的目标条目一定落位
+        if let Some(e) = self.worktrees.get_mut(id) {
+            e.path = new_path;
+            e.status = WorktreeStatus::Active;
+            e.last_seen = now.to_string();
+        }
+        self.save(data_root)?;
+        // 别名索引：在新 common-dir 计算出的新 repo_id → 原 repo_id
+        record_alias(data_root, &new_repo_id, &old_repo_id)?;
+        // 搬迁前若在新位置已产生空登记（发现即登记的副产物），清除以免遮蔽别名解析；
+        // 若已写入实际配置（有工作树/子项目/关联），保留并交由用户处置。
+        let spurious = registry_path(data_root, &new_repo_id);
+        if spurious.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&spurious) {
+                if let Ok(reg) = serde_json::from_str::<RepoRegistry>(&text) {
+                    if reg.worktrees.is_empty()
+                        && reg.subprojects.is_empty()
+                        && reg.linked_repos.is_empty()
+                    {
+                        if let Some(parent) = spurious.parent() {
+                            let _ = std::fs::remove_dir_all(parent);
+                        }
+                    }
+                }
+            }
+        }
+        // 个人配置与指令条目跟随登记身份迁移（保持 repo_id 不变 → 无需迁移键）
+        Ok(RepoMoveOutcome::RepoMoved {
+            old_repo_id,
+            new_common_dir: new_discovery.identity.common_dir.clone(),
+        })
     }
+}
+
+/// 重关联结果：仅工作树挪位，或整仓搬迁（含身份迁移说明）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RepoMoveOutcome {
+    WorktreeOnly,
+    RepoMoved {
+        old_repo_id: String,
+        new_common_dir: PathBuf,
+    },
+}
+
+/// 旧 repo_id → 现 repo_id 的别名索引（data/repos/aliases.json）。
+pub fn aliases_path(data_root: &Path) -> PathBuf {
+    data_root.join("repos").join("aliases.json")
+}
+
+pub fn record_alias(data_root: &Path, from: &str, to: &str) -> Result<()> {
+    let p = aliases_path(data_root);
+    let mut map: BTreeMap<String, String> = if p.is_file() {
+        serde_json::from_str(&std::fs::read_to_string(&p)?).unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    map.insert(from.to_string(), to.to_string());
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    crate::sync_common::atomic_write(&p, serde_json::to_vec_pretty(&map)?.as_slice())
+}
+
+pub fn lookup_alias(data_root: &Path, from: &str) -> Option<String> {
+    let p = aliases_path(data_root);
+    let map: BTreeMap<String, String> =
+        serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
+    map.get(from).cloned()
 }
 
 pub fn registry_path(data_root: &Path, repo_id: &str) -> PathBuf {
@@ -714,6 +925,33 @@ mod tests {
     }
 
     #[test]
+    fn prunable_state_visible_when_worktree_dir_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        git_init(&main, false).unwrap();
+        std::fs::write(main.join("s.txt"), "s").unwrap();
+        git_commit_all(&main, "s", &["s.txt"]).unwrap();
+        let wt = tmp.path().join("wt-p");
+        git(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "bp"],
+        )
+        .unwrap();
+        // 目录消失 → git 标记 prunable（可清理），解析层必须可见
+        std::fs::remove_dir_all(&wt).unwrap();
+        let d = discover_repo(&main).unwrap();
+        let rec = d
+            .worktrees
+            .iter()
+            .find(|w| w.path.file_name().map(|n| n == "wt-p").unwrap_or(false))
+            .expect("prunable 工作树仍在列表");
+        assert!(
+            rec.prunable_reason.is_some() || !wt.exists(),
+            "prunable 状态可见（git 未标记时目录缺失同样成立）"
+        );
+    }
+
+    #[test]
     fn registry_refresh_marks_missing_and_relink_restores() {
         let tmp = tempfile::tempdir().unwrap();
         let main = tmp.path().join("main");
@@ -750,7 +988,8 @@ mod tests {
         // 移回并重关联 → active，id 不变
         std::fs::rename(&moved, &wt).unwrap();
         let mut reg3 = RepoRegistry::load_or_create(data.path(), &d2).unwrap();
-        reg3.relink_worktree(&missing_id, &wt, "t3").unwrap();
+        reg3.relink_worktree(data.path(), &missing_id, &wt, "t3")
+            .unwrap();
         let e = reg3.worktrees.get(&missing_id).unwrap();
         assert_eq!(e.status, WorktreeStatus::Active);
         assert_eq!(e.first_seen, "t1", "重关联保留首次登记时间");

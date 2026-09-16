@@ -1,0 +1,159 @@
+[
+  {
+    "args": [
+      "init",
+      "--local-path",
+      "team-src",
+      "--project",
+      "a",
+      "--target",
+      "claude",
+      "--no-builtin"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "binding_path": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/data/ws/8cef35f27254c14a/binding.json",
+        "declaration_changed": true,
+        "declaration_path": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo/.ailoom/project.toml",
+        "lock_changed": true,
+        "lock_path": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo/.ailoom/machine/sources.lock.json",
+        "projects": [
+          "a"
+        ],
+        "roles": [],
+        "source": {
+          "content_digest": "sha256:69aafec3568f6fea5ed8eb67801b2d69a519d91649c3cf8cdcf00297d47d578f",
+          "identity": "local+git+/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo/team-src",
+          "mutable": true,
+          "resolved_commit": null,
+          "snapshot_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo/team-src"
+        },
+        "targets": {
+          "claude": true,
+          "codex": false
+        },
+        "workspace_id": "8cef35f27254c14a",
+        "workspace_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "args": [
+      "personal",
+      "--action",
+      "effective"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "active_rel": null,
+        "hosts": {
+          "claude": {
+            "enabled": false,
+            "origin": "repo_default",
+            "trace": [
+              {
+                "choice": "enable",
+                "effective": true,
+                "origin": "team_declaration"
+              },
+              {
+                "choice": "disable",
+                "effective": true,
+                "origin": "repo_default"
+              }
+            ]
+          }
+        },
+        "notes": [],
+        "pending_actions": 1,
+        "repo_id": "repo-7272cf61766372cd",
+        "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo",
+        "resources": {
+          "team/skill/common/example": {
+            "deployed": true,
+            "origin": "team_declaration",
+            "trace": [
+              {
+                "choice": "enable",
+                "effective": true,
+                "origin": "team_declaration"
+              }
+            ]
+          }
+        },
+        "skipped": [],
+        "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/team-host/repo",
+        "worktree_id": "8cef35f27254"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "args": [
+      "personal",
+      "--action",
+      "plan"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "actions": [
+          {
+            "action": "create",
+            "desired_hash": "sha256:4b0fe4dc3c5405e08e3b47faba7547365751dfcab0508567c0f6f30328d4236c",
+            "item_key": ".claude/skills/example#symlink",
+            "kind": "skill",
+            "path": ".claude/skills/example",
+            "reason": "目标不存在，创建",
+            "resource_id": "team/skill/common/example",
+            "target_tool": "claude"
+          }
+        ],
+        "active_rel": null,
+        "effective_enabled": [
+          "team/skill/common/example"
+        ],
+        "has_conflicts": false,
+        "notes": [],
+        "repo_id": "repo-7272cf61766372cd",
+        "skipped": [],
+        "summary": "create   .claude/skills/example\n",
+        "worktree_id": "8cef35f27254"
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  },
+  {
+    "args": [
+      "personal",
+      "--action",
+      "sync"
+    ],
+    "exit": 0,
+    "out": {
+      "result": {
+        "applied": [
+          ".claude/skills/example"
+        ],
+        "effective_enabled": [
+          "team/skill/common/example"
+        ],
+        "failed": null,
+        "noop": 0,
+        "notes": [],
+        "ok": true,
+        "pending_journal": null,
+        "skipped_company_files": [],
+        "skipped_conflicts": []
+      },
+      "schema_version": 1
+    },
+    "err": ""
+  }
+]

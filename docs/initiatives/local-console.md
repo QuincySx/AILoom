@@ -1,6 +1,6 @@
 # 本地控制台与个人项目配置
 
-状态：规划已拆卡并实现（2026-09-16：039-050 Done，051 Blocked 等待人工试用者验收）。依据：[需求与回复审查](../reviews/2026-09-15-onboarding-requirements-review.md)、[ADR-0002（proposed）](../adr/0002-repository-scope-personal-layer.md)。本计划不是 v1 已冻结能力；改变语义必须由 AIL-039/040 在 CONTRACTS 中新增版本/迁移条目，不直接改旧含义。
+状态：2026-09-17 根据实现复审与用户对齐重新打开039、040、042～050；041保留既有状态待当前版本复核，051仍Blocked。具体执行拆为[47张新卡及运行顺序](implementation-alignment-2026-09-17.md)，Web必须按[详细组件与页面蓝图](web-console-blueprint-2026-09-17.md)。本文件保留产品需求；历史Done不作为当前验收。
 
 ## 产品目标
 
@@ -44,7 +44,7 @@
 
 ## Skill、MCP、源和文档
 
-个人资源库复用 source manifest，但首次自动生成。从用户指定目录导入 skill 时预览 SKILL.md 与附属 assets/scripts/references、名称/版本冲突；默认复制到个人库，原目录不改，禁止默认执行附带命令。更新提示并展示差异，不把远端刷新等同自动信任/执行。
+个人资源库复用 source manifest，但首次自动生成。支持从 GitHub 仓库/skill 子目录、用户所称 skill.sh 等发现入口及指定本地目录预览导入 SKILL.md 与附属 assets/scripts/references；上游不必采用 AILoom manifest。保留发现入口、实际仓库、仓内路径与已解析版本，同名不同来源不可混同；默认复制到个人库，原目录不改，不执行附带命令。导入后持续保留来源关联，支持显式检查上游更新、展示差异、保护本地修改、更新个人库，再对用户选择的工作树/宿主预览同步，分别显示库与部署版本。自动更新频率、自动应用、向上游回传未确认，不默认添加；来源平台实际域名和机制由AIL-065核实。详见本轮AIL-062～068。
 
 编辑源配置与资源正文时保留未知字段/注释，使用文件版本指纹防止覆盖外部编辑。远程团队源默认作为订阅只读；修改进入个人副本或明确贡献草稿，不隐式 commit/push。支持启停订阅、固定版本、离线状态、无效资源可定位；删除源先展示受影响作用域与托管项。
 
@@ -76,22 +76,22 @@ MCP 连接、包安装、Hook 启用属于可能执行进程的动作，不能�
 
 ## 新卡索引
 
-状态以 ../cards.json 及卡头为准。2026-09-16 本轮：039-050 Done，051 Blocked（等待三名试用者人工验收）。
+状态以 ../cards.json 及卡头为准。2026-09-17：11张原主卡退回Backlog，041保留Done待复核，051因本轮实现/宿主/人工验收保持Blocked；执行卡为052～098。
 
 | 卡片 | 任务 | 前置 | 状态 |
 |---|---|---|---|
-| [AIL-039](../cards/AIL-039.md) | Git 仓库身份、工作树与子项目发现 | AIL-003 | Done |
-| [AIL-040](../cards/AIL-040.md) | 仓外个人配置、作用域继承与兼容迁移 | AIL-039, AIL-001 | Done |
+| [AIL-039](../cards/AIL-039.md) | Git 仓库身份、工作树与子项目发现 | AIL-003 | Backlog |
+| [AIL-040](../cards/AIL-040.md) | 仓外个人配置、作用域继承与兼容迁移 | AIL-039, AIL-001 | Backlog |
 | [AIL-041](../cards/AIL-041.md) | 宿主能力探测与 Codex 项目加载复核 | AIL-009, AIL-012 | Done |
-| [AIL-042](../cards/AIL-042.md) | 公司指令文件保护与个人本地调整 | AIL-040, AIL-041 | Done |
-| [AIL-043](../cards/AIL-043.md) | 个人资源库与已有 Skill 导入 | AIL-038, AIL-040 | Done |
-| [AIL-044](../cards/AIL-044.md) | 按资源与宿主选择能力及解释有效配置 | AIL-040, AIL-041 | Done |
-| [AIL-045](../cards/AIL-045.md) | Grill 到实现的流程包与文档产物关联 | AIL-043, AIL-044, AIL-015 | Done |
-| [AIL-046](../cards/AIL-046.md) | 本地 Web 控制服务与受限 API | AIL-039, AIL-040, AIL-021 | Done |
-| [AIL-047](../cards/AIL-047.md) | 个人模式 Onboarding 首次成功体验 | AIL-042, AIL-043, AIL-044, AIL-046, AIL-050 | Done |
-| [AIL-048](../cards/AIL-048.md) | 仓库工作树与子项目日常配置界面 | AIL-039, AIL-040, AIL-044, AIL-046, AIL-050, AIL-047 | Done |
-| [AIL-049](../cards/AIL-049.md) | 源、Skill、MCP 与流程文档可视化编辑 | AIL-043, AIL-044, AIL-045, AIL-046, AIL-050, AIL-047 | Done |
-| [AIL-050](../cards/AIL-050.md) | 预览应用任务、宿主验证与可恢复撤销 | AIL-042, AIL-044, AIL-046, AIL-008, AIL-013 | Done |
+| [AIL-042](../cards/AIL-042.md) | 公司指令文件保护与个人本地调整 | AIL-040, AIL-041 | Backlog |
+| [AIL-043](../cards/AIL-043.md) | 个人资源库与已有 Skill 导入 | AIL-038, AIL-040 | Backlog |
+| [AIL-044](../cards/AIL-044.md) | 按资源与宿主选择能力及解释有效配置 | AIL-040, AIL-041 | Backlog |
+| [AIL-045](../cards/AIL-045.md) | Grill 到实现的流程包与文档产物关联 | AIL-043, AIL-044, AIL-015 | Backlog |
+| [AIL-046](../cards/AIL-046.md) | 本地 Web 控制服务与受限 API | AIL-039, AIL-040, AIL-021 | Backlog |
+| [AIL-047](../cards/AIL-047.md) | 个人模式 Onboarding 首次成功体验 | AIL-042, AIL-043, AIL-044, AIL-046, AIL-050 | Backlog |
+| [AIL-048](../cards/AIL-048.md) | 仓库工作树与子项目日常配置界面 | AIL-039, AIL-040, AIL-044, AIL-046, AIL-050, AIL-047 | Backlog |
+| [AIL-049](../cards/AIL-049.md) | 源、Skill、MCP 与流程文档可视化编辑 | AIL-043, AIL-044, AIL-045, AIL-046, AIL-050, AIL-047 | Backlog |
+| [AIL-050](../cards/AIL-050.md) | 预览应用任务、宿主验证与可恢复撤销 | AIL-042, AIL-044, AIL-046, AIL-008, AIL-013 | Backlog |
 | [AIL-051](../cards/AIL-051.md) | Onboarding 与多工作树真实体验验收 | AIL-039, AIL-040, AIL-041, AIL-042, AIL-043, AIL-044, AIL-045, AIL-046, AIL-047, AIL-048, AIL-049, AIL-050 | Blocked |
 
 ## 文件交接与派工提示

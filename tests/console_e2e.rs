@@ -126,12 +126,12 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     }
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": main }),
     );
     assert_eq!(code, 200);
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "resource": "personal/skill/personal/a11y-flow", "state": "enable" }),
+        json!({ "resource": "personal/skill/personal/a11y-flow", "state": "enable", "root": main }),
     );
     assert_eq!(code, 200);
     let (code, v) = c.post("/api/jobs/plan", json!({ "root": main }));
@@ -153,7 +153,7 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     assert_eq!(code, 200);
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "resource": "personal/skill/personal/a11y-flow", "state": "disable", "worktree": true }),
+        json!({ "resource": "personal/skill/personal/a11y-flow", "state": "disable", "worktree": true, "root": wt2 }),
     );
     assert_eq!(code, 200, "wt2 覆盖写入");
     // 注意：CLI select 的 worktree 作用域按「当前 cwd」解析；控制台服务进程的 cwd
@@ -206,7 +206,6 @@ fn ail051_existing_team_declaration_overlay() {
         "# 公司规范\n\n- 用英文回复\n- 用户本地补充\n",
     )
     .unwrap();
-    let agents_before = std::fs::read(ws.join("AGENTS.md")).unwrap();
 
     let url = format!("file://{}", src.display());
     let dr = c.server.state.data_root.to_string_lossy().to_string();
@@ -250,7 +249,10 @@ fn ail051_existing_team_declaration_overlay() {
         ws.join(".claude/skills/rel-flow").exists(),
         "团队技能已部署"
     );
-    // 个人模式动作前的基线（团队 init/sync 的合法产物 .ailoom/ 声明已计入）
+    // 个人模式动作前的基线（团队 init/sync 的合法产物 .ailoom/ 声明已计入；
+    // AGENTS.md 基线在团队 sync 之后取——团队模式对 AGENTS.md 的合法写入属于基线，
+    // 个人模式从此不再触碰该文件（AIL-052：tracked 文件删除同样被拒）
+    let agents_before = std::fs::read(ws.join("AGENTS.md")).unwrap();
     let status_before = git_status(&ws);
 
     // 控制台（个人模式）叠加：个人库技能启用 + 团队技能禁用
@@ -269,17 +271,17 @@ fn ail051_existing_team_declaration_overlay() {
     }
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": ws }),
     );
     assert_eq!(code, 200);
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "resource": "personal/skill/personal/private-flow", "state": "enable" }),
+        json!({ "resource": "personal/skill/personal/private-flow", "state": "enable", "root": ws }),
     );
     assert_eq!(code, 200);
     let (code, _) = c.post(
         "/api/profile/select",
-        json!({ "resource": "team/skill/common/rel-flow", "state": "disable" }),
+        json!({ "resource": "team/skill/common/rel-flow", "state": "disable", "root": ws }),
     );
     assert_eq!(code, 200);
 

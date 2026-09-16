@@ -379,11 +379,26 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 个人资源库：init | import | list（AIL-043）
+    /// 个人资源库：init | import | import-git | list | sources | check-update | update
     Library {
-        /// 动作：init | import | list
+        /// 动作：init | import | import-git | import-entry | list | sources | check-update | update
         #[arg(long)]
         action: String,
+        /// import-git / import-entry 的仓库 URL 或发现入口（skills.sh/…）
+        #[arg(long)]
+        url: Option<String>,
+        /// import-entry：发现入口（等价 --url，语义更明确）
+        #[arg(long)]
+        entry: Option<String>,
+        /// import-git 的仓库内 skill 子目录
+        #[arg(long)]
+        path: Option<String>,
+        /// import-git 的 ref（分支/标签/commit）
+        #[arg(long)]
+        git_ref: Option<String>,
+        /// check-update / update 的 skill 名
+        #[arg(long)]
+        skill: Option<String>,
         /// import 的技能目录
         #[arg(long)]
         dir: Option<std::path::PathBuf>,
@@ -396,7 +411,7 @@ pub enum Command {
     },
     /// 个人模式：effective | select | instructions | plan | sync（AIL-044）
     Personal {
-        /// 动作：effective | select | instructions | plan | sync
+        /// 动作：effective | select | instructions | plan | sync | deploy-status | migrate-nongit
         #[arg(long)]
         action: String,
         /// 完整资源 ID（source/kind/namespace/name）
@@ -426,6 +441,9 @@ pub enum Command {
         /// plan/sync/effective 的作用域相对路径
         #[arg(long)]
         scope: Option<String>,
+        /// select 的显式仓库/工作树根（F01：不用 profile 键序猜目标仓库）
+        #[arg(long)]
+        repo: Option<std::path::PathBuf>,
     },
     /// 本地控制台（AIL-046，仅 loopback）
     Console {

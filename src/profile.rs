@@ -78,9 +78,12 @@ pub struct LibraryRef {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PersonalProfile {
     pub schema_version: u32,
+    /// 乐观并发控制（F08）：每次保存自增；外部编辑检测用（API 传 base_revision）。
+    #[serde(default)]
+    pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<LibraryRef>,
-    /// key = repo_registry RepoIdentity.repo_id
+    /// key = repo_registry RepoIdentity.repo_id（非 Git 路径模式为 nongit-<hash>）
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub repos: BTreeMap<String, RepoProfile>,
 }
@@ -89,6 +92,7 @@ impl PersonalProfile {
     pub fn new() -> PersonalProfile {
         PersonalProfile {
             schema_version: PROFILE_SCHEMA_VERSION,
+            revision: 0,
             library: None,
             repos: Default::default(),
         }
@@ -118,10 +122,40 @@ impl PersonalProfile {
     }
 
     pub fn save(&self, data_root: &Path) -> Result<()> {
+        self.save_with_guard(data_root, None)
+    }
+
+    /// 保存（F08）：文件锁 + 乐观 revision。`expect_revision` 非空且与磁盘当前
+    /// revision 不一致 → 拒绝写入（并发编辑不丢失更新）。保存自动 revision+1。
+    pub fn save_with_guard(&self, data_root: &Path, expect_revision: Option<u64>) -> Result<()> {
         self.validate()?;
+        let _lock = profile_lock(data_root)?;
         let path = Self::profile_path(data_root);
+        if let Some(expect) = expect_revision {
+            let current = if path.is_file() {
+                let text = std::fs::read_to_string(&path)?;
+                let v: toml::Value =
+                    toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
+                v.get("revision").and_then(|r| r.as_integer()).unwrap_or(0) as u64
+            } else {
+                0
+            };
+            if current != expect {
+                return Err(Error::new(
+                    code::USER_CONTENT_CONFLICT,
+                    format!(
+                        "profile.toml 已被其他会话修改（期望 revision {expect}，当前 {current}）"
+                    ),
+                )
+                .context(serde_json::json!({ "current_revision": current })));
+            }
+        }
+        let mut out = self.clone();
+        out.revision = self.revision.max(current_disk_revision(data_root)) + 1;
         std::fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))?;
-        crate::sync_common::atomic_write(&path, toml::to_string_pretty(self)?.as_bytes())
+        // 结构化保存：未知顶层字段从旧文件携带（注释仅在 select 的就地编辑路径保留）
+        let text = carrying_unknown_fields(&path, &out)?;
+        crate::sync_common::atomic_write(&path, text.as_bytes())
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -135,10 +169,12 @@ impl PersonalProfile {
             ));
         }
         for (repo_id, repo) in &self.repos {
-            if !repo_id.starts_with("repo-") || repo_id.len() != "repo-".len() + 16 {
+            if !is_valid_repo_key(repo_id) {
                 return Err(Error::new(
                     code::ILLEGAL_PATH,
-                    format!("repos key 非法（应为 repo_registry repo_id）: {repo_id}"),
+                    format!(
+                        "repos key 非法（应为 repo_registry repo_id 或 nongit-<hash>）: {repo_id}"
+                    ),
                 ));
             }
             // 子项目路径在两层都必须是相对路径
@@ -175,6 +211,299 @@ fn check_dup_paths(sps: &[SubprojectSelection], field: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// repos key：Git 仓库 `repo-`+16 位哈希；非 Git 路径模式 `nongit-`+16 位哈希。
+pub fn is_valid_repo_key(repo_id: &str) -> bool {
+    (repo_id.starts_with("repo-") && repo_id.len() == "repo-".len() + 16)
+        || (repo_id.starts_with("nongit-") && repo_id.len() == "nongit-".len() + 16)
+}
+
+/// profile.toml 跨进程互斥锁（F08：read-modify-write 不再裸奔）。
+fn profile_lock(data_root: &Path) -> Result<std::fs::File> {
+    let dir = data_root.join("profile");
+    std::fs::create_dir_all(&dir)?;
+    let lock_path = dir.join("profile.lock");
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    use fs2::FileExt;
+    f.lock_exclusive()
+        .map_err(|e| Error::new(code::INTERNAL, format!("profile 锁获取失败: {e}")))?;
+    Ok(f)
+}
+
+fn current_disk_revision(data_root: &Path) -> u64 {
+    let path = PersonalProfile::profile_path(data_root);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return 0;
+    };
+    let v: toml::Value = toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
+    v.get("revision").and_then(|r| r.as_integer()).unwrap_or(0) as u64
+}
+
+/// 结构化保存时携带旧文件的未知顶层字段（F08：不因写回丢用户扩展键）。
+fn carrying_unknown_fields(path: &Path, profile: &PersonalProfile) -> Result<String> {
+    let new_text = toml::to_string_pretty(profile)?;
+    let Ok(old_text) = std::fs::read_to_string(path) else {
+        return Ok(new_text);
+    };
+    let Ok(mut new_doc) = new_text.parse::<toml_edit::DocumentMut>() else {
+        return Ok(new_text);
+    };
+    let Ok(old_doc) = old_text.parse::<toml_edit::DocumentMut>() else {
+        return Ok(new_text);
+    };
+    const KNOWN: [&str; 4] = ["schema_version", "revision", "library", "repos"];
+    for (key, item) in old_doc.iter() {
+        if KNOWN.contains(&key) {
+            continue;
+        }
+        new_doc.insert(key, item.clone());
+    }
+    Ok(new_doc.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// 三态选择的就地编辑（F08）：toml_edit 格式保留写——注释与未知字段原样保留。
+// ---------------------------------------------------------------------------
+
+/// 选择作用域（与 ResolveScopeRequest 的层对应）。
+#[derive(Debug, Clone)]
+pub enum SelectScope {
+    RepoDefault,
+    RepoSubproject(String),
+    Worktree(String),
+    WorktreeSubproject(String, String),
+}
+
+/// 选择键。
+#[derive(Debug, Clone)]
+pub enum SelectKey {
+    Host(String),
+    Resource(String),
+}
+
+impl TriState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TriState::Inherit => "inherit",
+            TriState::Enable => "enable",
+            TriState::Disable => "disable",
+        }
+    }
+    pub fn parse_state(s: &str) -> Option<TriState> {
+        match s {
+            "enable" | "enabled" => Some(TriState::Enable),
+            "disable" | "disabled" => Some(TriState::Disable),
+            "inherit" => Some(TriState::Inherit),
+            _ => None,
+        }
+    }
+}
+
+/// 就地写入一条三态选择：文件锁 + 乐观 revision + toml_edit 格式保留。
+/// 返回新 revision。并发 base 不一致 → USER_CONTENT_CONFLICT（带当前 revision）。
+pub fn select_scoped_in_place(
+    data_root: &Path,
+    repo_id: &str,
+    scope: &SelectScope,
+    key: &SelectKey,
+    state: TriState,
+    expect_revision: Option<u64>,
+) -> Result<u64> {
+    debug_assert!(is_valid_repo_key(repo_id), "repo key 非法: {repo_id}");
+    let _lock = profile_lock(data_root)?;
+    let path = PersonalProfile::profile_path(data_root);
+    let raw = if path.is_file() {
+        std::fs::read_to_string(&path)?
+    } else {
+        format!("schema_version = {PROFILE_SCHEMA_VERSION}\nrevision = 0\n")
+    };
+    let current_rev = raw
+        .parse::<toml_edit::DocumentMut>()
+        .ok()
+        .and_then(|d: toml_edit::DocumentMut| d.get("revision").and_then(|r| r.as_integer()))
+        .unwrap_or(0) as u64;
+    if let Some(expect) = expect_revision {
+        if expect != current_rev {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!(
+                    "profile.toml 已被其他会话修改（期望 revision {expect}，当前 {current_rev}）"
+                ),
+            )
+            .context(serde_json::json!({ "current_revision": current_rev })));
+        }
+    }
+    let mut doc = raw
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| Error::new(code::SCHEMA_VERSION, format!("profile.toml 解析失败: {e}")))?;
+    doc["schema_version"] = toml_edit::value(i64::from(PROFILE_SCHEMA_VERSION));
+    doc["revision"] = toml_edit::value((current_rev + 1) as i64);
+
+    // 确保 repos.<repo_id> 表存在（inline 表会与后续子表冲突，必须是标准表）
+    if doc
+        .get("repos")
+        .and_then(|i: &toml_edit::Item| i.as_table())
+        .is_none()
+    {
+        doc["repos"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let repos = doc["repos"].as_table_mut().unwrap();
+    if repos
+        .get(repo_id)
+        .and_then(|i: &toml_edit::Item| i.as_table())
+        .is_none()
+    {
+        repos.insert(repo_id, toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    let repo_tbl = repos
+        .get_mut(repo_id)
+        .unwrap()
+        .as_table_mut()
+        .ok_or_else(|| Error::new(code::SCHEMA_VERSION, "repos.<repo_id> 不是表"))?;
+
+    fn ensure_subtable<'t>(
+        tbl: &'t mut toml_edit::Table,
+        key: &str,
+    ) -> Result<&'t mut toml_edit::Table> {
+        if tbl.get(key).and_then(|i| i.as_table()).is_none() {
+            tbl.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        tbl.get_mut(key)
+            .unwrap()
+            .as_table_mut()
+            .ok_or_else(|| Error::new(code::SCHEMA_VERSION, format!("{key} 不是表")))
+    }
+
+    // 定位目标选择表（default / subprojects[] / worktrees.<wt> / wt_subprojects.<wt>[])
+    let sel_tbl: &mut toml_edit::Table = match scope {
+        SelectScope::RepoDefault => {
+            if repo_tbl
+                .get("default")
+                .and_then(|i: &toml_edit::Item| i.as_table())
+                .is_none()
+            {
+                repo_tbl.insert("default", toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            repo_tbl
+                .get_mut("default")
+                .unwrap()
+                .as_table_mut()
+                .ok_or_else(|| Error::new(code::SCHEMA_VERSION, "default 不是表"))?
+        }
+        SelectScope::RepoSubproject(sp_path) => {
+            let arr = ensure_subproject_array(repo_tbl, "subprojects")?;
+            find_or_append_subproject(arr, sp_path)?
+        }
+        SelectScope::Worktree(wt) => {
+            let wts = ensure_subtable(repo_tbl, "worktrees")?;
+            if wts.get(wt).and_then(|i| i.as_table()).is_none() {
+                wts.insert(wt, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            wts.get_mut(wt)
+                .unwrap()
+                .as_table_mut()
+                .ok_or_else(|| Error::new(code::SCHEMA_VERSION, "worktrees.<wt> 不是表"))?
+        }
+        SelectScope::WorktreeSubproject(wt, sp_path) => {
+            let wts = ensure_subtable(repo_tbl, "wt_subprojects")?;
+            if wts
+                .get(wt)
+                .and_then(|i: &toml_edit::Item| i.as_array_of_tables())
+                .is_none()
+            {
+                wts.insert(wt, toml_edit::Item::ArrayOfTables(Default::default()));
+            }
+            let arr = wts
+                .get_mut(wt)
+                .unwrap()
+                .as_array_of_tables_mut()
+                .ok_or_else(|| {
+                    Error::new(code::SCHEMA_VERSION, "wt_subprojects.<wt> 不是表数组")
+                })?;
+            find_or_append_subproject(arr, sp_path)?
+        }
+    };
+
+    let (map_key, value_key) = match key {
+        SelectKey::Host(h) => ("hosts", h.clone()),
+        SelectKey::Resource(r) => ("resources", r.clone()),
+    };
+    if sel_tbl
+        .get(map_key)
+        .and_then(|i: &toml_edit::Item| i.as_table())
+        .is_none()
+    {
+        sel_tbl.insert(map_key, toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    let map = sel_tbl
+        .get_mut(map_key)
+        .unwrap()
+        .as_table_mut()
+        .ok_or_else(|| Error::new(code::SCHEMA_VERSION, format!("{map_key} 不是表")))?;
+    // AIL-058：恢复继承 = 删除本层显式项（未设置即继承下层）；enable/disable 写显式值。
+    // 空集合与未设置等价（该层不再表态），残壳表一并移除。
+    if state == TriState::Inherit {
+        map.remove(&value_key);
+        if map.is_empty() {
+            sel_tbl.remove(map_key);
+        }
+    } else {
+        map.insert(&value_key, toml_edit::value(state.as_str()));
+    }
+
+    // 写回前以类型化模型复验（机器可读性不回退）
+    let text = doc.to_string();
+    let parsed: PersonalProfile = toml::from_str(&text).map_err(|e| {
+        Error::new(
+            code::SCHEMA_VERSION,
+            format!("编辑后 profile 校验失败: {e}"),
+        )
+    })?;
+    parsed.validate()?;
+    crate::sync_common::atomic_write(&path, text.as_bytes())?;
+    Ok(current_rev + 1)
+}
+
+fn ensure_subproject_array<'t>(
+    repo_tbl: &'t mut toml_edit::Table,
+    key: &str,
+) -> Result<&'t mut toml_edit::ArrayOfTables> {
+    if repo_tbl
+        .get(key)
+        .and_then(|i| i.as_array_of_tables())
+        .is_none()
+    {
+        repo_tbl.insert(key, toml_edit::Item::ArrayOfTables(Default::default()));
+    }
+    repo_tbl
+        .get_mut(key)
+        .unwrap()
+        .as_array_of_tables_mut()
+        .ok_or_else(|| Error::new(code::SCHEMA_VERSION, format!("{key} 不是表数组")))
+}
+
+fn find_or_append_subproject<'t>(
+    arr: &'t mut toml_edit::ArrayOfTables,
+    path: &str,
+) -> Result<&'t mut toml_edit::Table> {
+    let existing_idx = arr
+        .iter()
+        .position(|t| t.get("path").and_then(|p| p.as_str()) == Some(path));
+    let idx = match existing_idx {
+        Some(i) => i,
+        None => {
+            let mut t = toml_edit::Table::new();
+            t.insert("path", toml_edit::value(path));
+            arr.push(t);
+            arr.len() - 1
+        }
+    };
+    Ok(arr.get_mut(idx).unwrap())
 }
 
 // ---------------------------------------------------------------------------

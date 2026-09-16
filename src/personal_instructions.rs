@@ -30,6 +30,11 @@ pub fn entry_path(data_root: &Path, repo_id: &str, worktree_id: Option<&str>) ->
     }
 }
 
+/// 某仓库全部指令条目的目录（迁移用，AIL-057）。
+pub fn entry_base(data_root: &Path, repo_id: &str) -> PathBuf {
+    data_root.join("profile").join("instructions").join(repo_id)
+}
+
 /// 读取有效个人指令：工作树条目优先于仓库默认（覆盖语义，来源可解释）。
 pub fn load_entry(data_root: &Path, repo_id: &str, worktree_id: Option<&str>) -> Option<String> {
     if let Some(wt) = worktree_id {
@@ -74,6 +79,27 @@ pub struct SkippedTarget {
     pub reason: String,
 }
 
+/// 路径是否已被 Git 跟踪（工作树根相对路径；非 Git 目录恒为 false）。
+/// 个人模式守卫的基础判断：对 create/update/delete/restore/undo 全部生效。
+pub fn path_is_git_tracked(ws_root: &Path, rel: &str) -> bool {
+    if !ws_root.join(".git").exists() && find_git_boundary(ws_root).is_none() {
+        return false;
+    }
+    let out = git_optional(ws_root, &["ls-files", "--", rel]).unwrap_or_default();
+    !out.trim().is_empty()
+}
+
+fn find_git_boundary(start: &Path) -> Option<PathBuf> {
+    let mut dir = Some(start.to_path_buf());
+    while let Some(current) = dir {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        dir = current.parent().map(Path::to_path_buf);
+    }
+    None
+}
+
 /// 个人模式守卫：过滤落在 Git 已跟踪路径上的产物 → 显式跳过并说明，
 /// 绝不借 skip-worktree/assume-unchanged/rm --cached 隐藏修改。
 pub fn guard_company_files(
@@ -88,8 +114,7 @@ pub fn guard_company_files(
         let tracked = match cache.get(&path_str) {
             Some(v) => *v,
             None => {
-                let out = git_optional(ws_root, &["ls-files", "--", &path_str]).unwrap_or_default();
-                let t = !out.trim().is_empty();
+                let t = path_is_git_tracked(ws_root, &path_str);
                 cache.insert(path_str.clone(), t);
                 t
             }

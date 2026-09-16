@@ -3,16 +3,25 @@
 //! 部署期望 = 团队层（若有声明且源就绪；个人模式关闭内置与索引片段）
 //! + 个人层有效配置（三态选择解释，profile 驱动）
 //! + 个人指令条目（042）。所有个人新增经公司文件守卫；不写 .ailoom/project.toml。
+//!
+//! 2026-09-16 复审返工：
+//! - F06：非 Git 路径模式显式登记（nongit-<hash>），effective/select/plan/sync 全链路可用。
+//! - F07：子项目作用域的部署落点是子项目目录（<worktree>/<rel>/…），与仓库根作用域
+//!   物理隔离——统一计划器按作用域过滤清理动作，父子 sync 不再互删同一入口。
+//! - F03：团队层产物按最终 enabled_hosts 过滤（个人禁用宿主后团队资源不再照写）。
+//! - S02：公司文件保护覆盖全部计划动作（含清单清理的删除/恢复），且 apply 前复核。
+//! - F01/F02：select 以显式仓库/工作树根定位身份，逐字段合并不整层替换。
+//! - F09：MCP 缺失引用环境变量检查进入 notes（只报缺失，不读取/输出值）。
 
 use crate::adapters::{render as render_artifacts, ToolTargets};
 use crate::appctx::AppContext;
 use crate::error::{code, Error, Result};
 use crate::personal_instructions as pi;
 use crate::profile::{
-    resolve_effective, EffectiveConfig, PersonalProfile, ResolveScopeRequest, ScopeSelection,
-    TriState,
+    resolve_effective, EffectiveConfig, PersonalProfile, ResolveScopeRequest, SelectKey,
+    SelectScope, TriState,
 };
-use crate::repo_registry::{self, RepoDiscovery, RepoRegistry};
+use crate::repo_registry::{self, RepoDiscovery, RepoIdentity, RepoRegistry};
 use crate::resolver::{resolve, ResolveRequest};
 use crate::source::LocalSource;
 use crate::sync::manifest::ManagedManifest;
@@ -27,10 +36,14 @@ pub struct PersonalPrepare {
     pub ctx: AppContext,
     pub repo: RepoDiscovery,
     pub registry: RepoRegistry,
-    /// 当前工作树在登记中的 id
+    /// 当前工作树在登记中的 id（非 Git 路径模式为 "root"）
     pub wt_id: String,
     /// 当前作用域相对仓库根的路径（None = 工作树根）
     pub active_rel: Option<String>,
+    /// 部署落点：仓库默认/worktree 作用域 = 工作树根；子项目作用域 = 工作树根/<rel>
+    pub scope_dir: PathBuf,
+    /// 非 Git 路径模式（F06）
+    pub is_nongit: bool,
     pub profile: PersonalProfile,
     pub effective: EffectiveConfig,
     pub artifacts: Vec<crate::adapters::common::Artifact>,
@@ -51,7 +64,15 @@ fn team_layer(
     notes: &mut Vec<String>,
 ) -> Result<Option<Prepared>> {
     let cwd = std::env::current_dir()?;
-    let ws = crate::workspace::discover(&cwd, explicit_root)?;
+    // 个人模式：非 Git / 无声明目录没有团队层，不因此报错（AIL-057 闭环）
+    let ws = match crate::workspace::discover(&cwd, explicit_root) {
+        Ok(ws) => ws,
+        Err(e) if e.code == code::WORKSPACE_ROOT_NOT_FOUND => {
+            notes.push("无团队声明（非 Git 或未绑定目录）：跳过团队层".into());
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    };
     let decl_path = match &ws.declaration_path {
         Some(p) => p.clone(),
         None => return Ok(None),
@@ -73,6 +94,90 @@ fn team_layer(
     }
 }
 
+/// 非 Git 路径模式身份（F06）：`nongit-` + 路径哈希。无 Git 元数据可用，
+/// 身份即路径本身；路径搬迁视为新模式（与 Git 仓的身份证据模型不同，显式说明）。
+pub fn nongit_identity(root: &Path) -> RepoDiscovery {
+    let repo_id = format!(
+        "nongit-{}",
+        crate::ids::sha256_prefix(root.to_string_lossy().as_bytes(), 16)
+    );
+    RepoDiscovery {
+        identity: RepoIdentity {
+            repo_root: root.to_path_buf(),
+            common_dir: root.to_path_buf(),
+            repo_id,
+            origin_normalized: None,
+            origin_raw: None,
+        },
+        worktrees: Vec::new(),
+        start: root.to_path_buf(),
+        current_worktree: root.to_path_buf(),
+    }
+}
+
+fn nongit_ctx(data_root: Option<&Path>, root: &Path) -> Result<AppContext> {
+    let data_root_buf = crate::paths::resolve_data_root(data_root)?;
+    let data_root = &data_root_buf;
+    let anchor = format!(
+        "nongit+{}",
+        crate::ids::sha256_prefix(root.to_string_lossy().as_bytes(), 32)
+    );
+    let workspace = crate::workspace::Workspace {
+        workspace_root: root.to_path_buf(),
+        anchor_key: crate::ids::sha256_prefix(anchor.as_bytes(), 16),
+        repository_anchor: anchor,
+        workspace_id: crate::ids::workspace_id_from_root(root),
+        is_git: false,
+        declaration_path: None,
+    };
+    let layout =
+        crate::paths::layout_for(data_root, &workspace.workspace_id, &workspace.anchor_key);
+    let device_id = crate::config::device_id(data_root)?;
+    Ok(AppContext {
+        data_root: data_root_buf,
+        layout,
+        workspace,
+        device: device_id,
+    })
+}
+
+/// 校验作用域相对路径并返回部署落点（F07）：目录必须存在（未匹配不自动创建）、
+/// 不越界、不穿越嵌套 Git 边界。
+fn validate_scope_dir(
+    discovery: Option<&RepoDiscovery>,
+    worktree_root: &Path,
+    rel: &str,
+) -> Result<PathBuf> {
+    crate::manifest::validate_relative_path("scope", rel)?;
+    let scope_dir = worktree_root.join(rel);
+    if !scope_dir.is_dir() {
+        return Err(Error::new(
+            code::WORKSPACE_INVALID,
+            format!("子项目目录在本工作树不存在（未匹配；不自动创建业务目录）: {rel}"),
+        )
+        .context(serde_json::json!({ "rel": rel })));
+    }
+    if let Some(d) = discovery {
+        let check = repo_registry::check_subproject(d, rel);
+        if !check.ok {
+            return Err(Error::new(code::ILLEGAL_PATH, check.reason)
+                .context(serde_json::json!({ "rel": rel })));
+        }
+    }
+    Ok(scope_dir)
+}
+
+/// 清理动作的作用域归属（F07）：仓库根 sync 只清理根作用域条目；
+/// 子项目 sync 只清理本子项目路径下的条目——父子不互删。
+fn path_in_scope(path: &str, active_rel: Option<&str>, registered_rels: &[String]) -> bool {
+    match active_rel {
+        Some(rel) => path == rel || path.starts_with(&format!("{rel}/")),
+        None => !registered_rels
+            .iter()
+            .any(|r| !r.is_empty() && path.starts_with(&format!("{r}/"))),
+    }
+}
+
 /// 组装个人模式部署准备（不写盘；plan 纯只读）。
 pub fn prepare_personal(
     data_root: Option<&Path>,
@@ -86,46 +191,84 @@ pub fn prepare_personal(
             .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("显式根不可用: {e}")))?,
         None => std::env::current_dir()?,
     };
-    // Git 身份（AIL-039）：个人模式以 Git 仓库为前提；非 Git 显式报错不当路径模式写
-    let repo = repo_registry::discover_repo(&root)?;
-    let ctx = AppContext::discover(data_root, &root, explicit_root)?;
-    // 登记并刷新工作树
-    let mut registry = RepoRegistry::load_or_create(data_root_resolved, &repo)?;
-    registry.refresh_worktrees(&repo, &crate::ids::now_iso());
-    registry.save(data_root_resolved)?;
+    // Git 身份优先（F06）：明确非 Git → 路径模式；Git 探测错误 → 显式失败
+    let (repo, is_nongit) = match repo_registry::classify_path(&root)? {
+        repo_registry::PathClass::Git(d) => (d, false),
+        repo_registry::PathClass::NonGit { root } => (nongit_identity(&root), true),
+    };
+    let ctx = if is_nongit {
+        nongit_ctx(data_root, &root)?
+    } else {
+        AppContext::discover(data_root, &root, explicit_root)?
+    };
+    let worktree_root = ctx.workspace.workspace_root.clone();
+    // 解析登记身份（F05）：搬迁/别名命中时以已登记 repo_id 为准（配置不丢）
+    let mut registry = RepoRegistry::resolve_or_create(data_root_resolved, &repo)?;
+    if !is_nongit {
+        registry.refresh_worktrees(&repo, &crate::ids::now_iso());
+        registry.save(data_root_resolved)?;
+    } else {
+        registry.save(data_root_resolved)?;
+    }
+    let repo_id = registry.repo_id.clone();
     let wt_canon = repo
         .current_worktree
         .canonicalize()
         .unwrap_or_else(|_| repo.current_worktree.clone());
-    let wt_id = registry
-        .worktrees
-        .values()
-        .find(|w| w.path == wt_canon)
-        .map(|w| w.id.clone())
-        .ok_or_else(|| {
-            Error::new(
-                code::WORKSPACE_INVALID,
-                "当前工作树未进入登记（内部一致性错误）",
-            )
-        })?;
-    // 当前作用域相对路径：显式指定优先；否则 root 相对所在 worktree
+    let wt_id = if is_nongit {
+        "root".to_string()
+    } else {
+        registry
+            .worktrees
+            .values()
+            .find(|w| w.path == wt_canon)
+            .map(|w| w.id.clone())
+            .ok_or_else(|| {
+                Error::new(
+                    code::WORKSPACE_INVALID,
+                    "当前工作树未进入登记（内部一致性错误）",
+                )
+            })?
+    };
+    // 当前作用域相对路径：显式指定优先；否则 root 相对所在 worktree（仅 Git 模式）
     let active_rel = match scope_rel {
         Some(rel) => Some(rel),
         None => {
-            let rel = root
-                .strip_prefix(&repo.current_worktree)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if rel.is_empty() || rel == "." {
+            if is_nongit {
                 None
             } else {
-                Some(rel)
+                let rel = root
+                    .strip_prefix(&repo.current_worktree)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if rel.is_empty() || rel == "." {
+                    None
+                } else {
+                    Some(rel)
+                }
             }
         }
     };
+    // F07：作用域落点。子项目作用域必须命中真实目录，不自动创建业务目录。
+    let scope_dir = match &active_rel {
+        Some(rel) => validate_scope_dir(
+            if is_nongit { None } else { Some(&repo) },
+            &worktree_root,
+            rel,
+        )?,
+        None => worktree_root.clone(),
+    };
 
     let mut notes = Vec::new();
-    let team = team_layer(data_root, explicit_root, &mut notes)?;
+    let team = if active_rel.is_some() {
+        notes.push(
+            "子项目作用域：团队层资源部署在仓库根，宿主从祖先目录仍可见；本作用域只管理子项目内的个人能力（不重复部署/删除仓库根条目）"
+                .into(),
+        );
+        None
+    } else {
+        team_layer(data_root, explicit_root, &mut notes)?
+    };
 
     // 团队层期望 id 集（v1 解析结果，语义不变）
     let team_enabled: Vec<String> = team
@@ -154,9 +297,18 @@ pub fn prepare_personal(
         .unwrap_or_default();
 
     let profile = PersonalProfile::load_or_default(data_root_resolved)?;
+    // F06/AIL-057：目录后来初始化 Git 时的显式迁移提示（不默默合并）
+    if !is_nongit {
+        let old_nongit = nongit_identity(&worktree_root).identity.repo_id;
+        if profile.repos.contains_key(&old_nongit) && old_nongit != repo_id {
+            notes.push(format!(
+                "检测到该目录在非 Git 路径模式下的个人配置（{old_nongit}）；运行 ailoom personal --action migrate-nongit --root <路径> 迁移到 Git 身份（{repo_id}），不自动合并"
+            ));
+        }
+    }
     let effective = resolve_effective(ResolveScopeRequest {
         profile: &profile,
-        repo_id: &repo.identity.repo_id,
+        repo_id: &repo_id,
         worktree_id: &wt_id,
         active_rel: active_rel.as_deref(),
         team_enabled: &team_enabled,
@@ -169,6 +321,7 @@ pub fn prepare_personal(
         .filter(|(_, v)| !v.deployed)
         .map(|(k, _)| k.clone())
         .collect();
+    // F03：最终启用宿主（个人层三态解释后）。团队层与个人库产物都按它过滤。
     let enabled_hosts: Vec<String> = effective
         .hosts
         .iter()
@@ -179,7 +332,7 @@ pub fn prepare_personal(
     let mut artifacts: Vec<crate::adapters::common::Artifact> = Vec::new();
 
     // 团队层产物：个人模式剔除内置资源与文档索引片段（会写公司 AGENTS.md/CLAUDE.md），
-    // 再剔除被个人层显式禁用的资源
+    // 再剔除被个人层显式禁用的资源与被禁用宿主的产物（F03）
     if let Some(p) = &team {
         for a in &p.artifacts {
             if a.resource_id.starts_with("ailoom-builtin/")
@@ -188,6 +341,9 @@ pub fn prepare_personal(
                 continue;
             }
             if disabled_ids.contains(&a.resource_id) {
+                continue;
+            }
+            if !enabled_hosts.iter().any(|h| h == &a.target_tool) {
                 continue;
             }
             artifacts.push(a.clone());
@@ -201,6 +357,7 @@ pub fn prepare_personal(
         .filter(|(k, v)| v.deployed && k_starts_personal(k))
         .map(|(k, _)| k.clone())
         .collect();
+    let mut personal_selected_entries: Vec<crate::resource::ResourceEntry> = Vec::new();
     let mut unsupported = Vec::new();
     if !personal_enabled.is_empty() {
         let lib = crate::personal_library::ensure_library(data_root_resolved)?;
@@ -228,31 +385,58 @@ pub fn prepare_personal(
         };
         // 过滤出被启用的资源
         let filtered_desired = filter_desired_by_ids(&desired, &personal_enabled);
-        let (mut lib_artifacts, lib_unsupported) = render_artifacts(
-            &filtered_desired,
-            &snap.root,
-            &targets,
-            &ctx.workspace.workspace_root,
-        )?;
+        // AIL-044：不凭名字假定安装——被启用但个人库中不存在的资源显式 unsupported
+        let resolved_ids: std::collections::BTreeSet<String> = filtered_desired
+            .selected
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        for id in &personal_enabled {
+            if !resolved_ids.contains(id) {
+                unsupported.push(crate::adapters::UnsupportedItem {
+                    resource_id: id.clone(),
+                    tool: "-".into(),
+                    kind: "resource".into(),
+                    reason: "个人库中不存在该资源（不凭名字假定安装）；请在资源库导入或修正资源 ID"
+                        .into(),
+                });
+            }
+        }
+        personal_selected_entries = filtered_desired
+            .selected
+            .iter()
+            .map(|s| s.entry.clone())
+            .collect();
+        let (mut lib_artifacts, lib_unsupported) =
+            render_artifacts(&filtered_desired, &snap.root, &targets, &worktree_root)?;
+        // F07：子项目作用域的产物落进子项目目录
+        if let Some(rel) = &active_rel {
+            for a in &mut lib_artifacts {
+                a.path = PathBuf::from(rel).join(&a.path);
+            }
+        }
         artifacts.append(&mut lib_artifacts);
         unsupported.extend(lib_unsupported);
     }
 
-    // 个人指令条目（AIL-042）
-    let entry = pi::load_entry(
-        data_root_resolved,
-        &repo.identity.repo_id,
-        Some(wt_id.as_str()),
-    );
+    // 个人指令条目（AIL-042）：Codex 替代视图按作用域取最近基线（子项目用其目录内基线）
+    let entry = pi::load_entry(data_root_resolved, &repo_id, Some(wt_id.as_str()));
     let instr_artifacts = match entry {
-        Some(content) => pi::render(&ctx.workspace.workspace_root, &enabled_hosts, &content)?,
+        Some(content) => {
+            let mut arts = pi::render(&scope_dir, &enabled_hosts, &content)?;
+            if let Some(rel) = &active_rel {
+                for a in &mut arts {
+                    a.path = PathBuf::from(rel).join(&a.path);
+                }
+            }
+            arts
+        }
         None => Vec::new(),
     };
     artifacts.extend(instr_artifacts);
 
     // 公司文件守卫（个人模式全部产物适用）
-    let (mut artifacts, skipped) =
-        pi::guard_company_files(&ctx.workspace.workspace_root, artifacts)?;
+    let (mut artifacts, mut skipped) = pi::guard_company_files(&worktree_root, artifacts)?;
     if !skipped.is_empty() {
         notes.push(format!(
             "公司文件保护：{} 个目标被跳过（详见 skipped）",
@@ -286,13 +470,7 @@ pub fn prepare_personal(
     let managed_path = ctx.layout.managed_manifest_path.clone();
     let managed = ManagedManifest::load(&managed_path)?
         .unwrap_or_else(|| ManagedManifest::new(&ctx.workspace.workspace_id));
-    let mut plan = build_plan(
-        &artifacts,
-        &managed,
-        &ctx.workspace.workspace_root,
-        "personal-mode",
-        None,
-    )?;
+    let mut plan = build_plan(&artifacts, &managed, &worktree_root, "personal-mode", None)?;
     for u in &unsupported {
         plan.actions.push(crate::sync::plan::PlanAction {
             action: crate::sync::plan::ActionKind::Unsupported,
@@ -308,12 +486,90 @@ pub fn prepare_personal(
         });
     }
 
+    // S02 + F07：计划后处理。
+    // - 公司文件保护覆盖全部清理动作：被跟踪路径不因「从期望集合移除」变成删除目标；
+    // - 清理动作按作用域过滤：父子作用域不互相移除对方的托管条目。
+    {
+        let mut registered_rels: Vec<String> = registry.subprojects.keys().cloned().collect();
+        let repo_prof = profile.repo(&repo_id);
+        for sp in &repo_prof.subprojects {
+            registered_rels.push(sp.path.clone());
+        }
+        for sps in repo_prof.wt_subprojects.values() {
+            for sp in sps {
+                registered_rels.push(sp.path.clone());
+            }
+        }
+        registered_rels.sort();
+        registered_rels.dedup();
+        let is_cleanup = |a: &crate::sync::plan::PlanAction| {
+            a.desired_hash.is_empty() && a.manifest_hash.is_some()
+        };
+        let mut removed = Vec::new();
+        plan.actions.retain(|a| {
+            if !is_cleanup(a) {
+                return true;
+            }
+            if a.path.is_empty() {
+                return true;
+            }
+            if pi::path_is_git_tracked(&worktree_root, &a.path) {
+                skipped.push(pi::SkippedTarget {
+                    path: a.path.clone(),
+                    reason: "公司已跟踪文件：个人模式不执行清理/删除（保护覆盖计划动作）".into(),
+                });
+                removed.push(a.path.clone());
+                return false;
+            }
+            if !path_in_scope(&a.path, active_rel.as_deref(), &registered_rels) {
+                removed.push(a.path.clone());
+                return false;
+            }
+            true
+        });
+        if !removed.is_empty() {
+            notes.push(format!(
+                "统一计划器：{} 个清理动作超出当前作用域或受公司文件保护，已从计划移除（不跨作用域互删）",
+                removed.len()
+            ));
+        }
+    }
+
+    // F09：MCP 引用缺失诊断进入 notes（只报缺失键名，不读取/输出值）
+    {
+        let deployed_ids: std::collections::BTreeSet<String> = artifacts
+            .iter()
+            .filter(|a| a.kind == "mcp")
+            .map(|a| a.resource_id.clone())
+            .collect();
+        for e in &personal_selected_entries {
+            if e.id.kind != crate::resource::ResourceKind::Mcp {
+                continue;
+            }
+            if !deployed_ids.contains(&e.id.to_string()) {
+                continue;
+            }
+            if let Ok(spec) = crate::adapters::mcp::parse_spec(e) {
+                let missing = crate::adapters::mcp::missing_env_refs(&spec);
+                if !missing.is_empty() {
+                    notes.push(format!(
+                        "MCP {} 缺失引用环境变量: {}（仅检查存在性，不输出值；设置成功 ≠ 连接成功）",
+                        e.id,
+                        missing.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(PersonalPrepare {
         ctx,
         repo,
         registry,
         wt_id,
         active_rel,
+        scope_dir,
+        is_nongit,
         profile,
         effective,
         artifacts,
@@ -350,22 +606,24 @@ pub fn effective(
     data_root_resolved: &Path,
 ) -> Result<Value> {
     let p = prepare_personal(data_root, explicit_root, scope_rel, data_root_resolved)?;
-    let actions: Vec<&str> = p
+    let pending = p
         .plan
         .actions
         .iter()
         .filter(|a| !matches!(a.action, crate::sync::plan::ActionKind::Noop))
-        .map(|_| "pending")
-        .collect();
+        .count();
     Ok(json!({
-        "repo_id": p.repo.identity.repo_id,
+        "repo_id": p.registry.repo_id,
         "repo_root": p.repo.identity.repo_root,
         "worktree": p.repo.current_worktree,
         "worktree_id": p.wt_id,
         "active_rel": p.active_rel,
+        "scope_dir": p.scope_dir,
+        "is_nongit": p.is_nongit,
+        "profile_revision": p.profile.revision,
         "hosts": p.effective.hosts,
         "resources": p.effective.resources,
-        "pending_actions": actions.len(),
+        "pending_actions": pending,
         "skipped": p.skipped,
         "notes": p.notes,
     }))
@@ -377,153 +635,193 @@ pub struct SelectArgs {
     pub state: String,
     pub subproject: Option<String>,
     pub worktree: bool,
+    /// F01：显式仓库/工作树根（CLI --repo 或 API root）。缺省用进程 cwd，
+    /// 不再回退到「profile 里最近登记的仓库」——那会把配置写错仓库。
+    pub repo_root: Option<PathBuf>,
+    /// F08：并发保护。提供时与磁盘 revision 不一致 → 冲突。
+    pub base_revision: Option<u64>,
 }
 
-/// `personal select` / `personal host`：写入个人层三态选择（profile，仓外）。
+/// `personal select`：写入个人层三态选择（profile，仓外，格式保留）。
 pub fn select(args: &SelectArgs, data_root_resolved: &Path) -> Result<Value> {
-    let state = match args.state.as_str() {
-        "enable" | "enabled" => TriState::Enable,
-        "disable" | "disabled" => TriState::Disable,
-        "inherit" => TriState::Inherit,
-        other => {
-            return Err(Error::new(
-                code::USAGE,
-                format!("state 非法: {other}（enable | disable | inherit）"),
-            ))
-        }
-    };
-    let mut profile = PersonalProfile::load_or_default(data_root_resolved)?;
-    // 单仓库 CLI 场景：首次选择时从登记目录取最近登记的仓库；控制台按 repo_id 显式操作
-    if profile.repos.is_empty() {
-        let discovered = discover_latest_repo_id(data_root_resolved)?;
-        profile.repos.entry(discovered).or_default();
-    }
-    let repo_id = profile.repos.keys().last().cloned().unwrap_or_default();
-    let repo_entry = profile.repos.entry(repo_id.clone()).or_default();
-    let mut sel = ScopeSelection::default();
-    if let Some(res) = &args.resource {
-        sel.resources.insert(res.clone(), state);
-    }
-    if let Some(host) = &args.host {
-        sel.hosts.insert(host.clone(), state);
-    }
+    let state = TriState::parse_state(&args.state).ok_or_else(|| {
+        Error::new(
+            code::USAGE,
+            format!("state 非法: {}（enable | disable | inherit）", args.state),
+        )
+    })?;
     if args.resource.is_none() && args.host.is_none() {
         return Err(Error::new(
             code::USAGE,
             "需要 --resource <完整资源ID> 或 --host <宿主名>",
         ));
     }
-    let scope_desc = if args.worktree {
-        // 需要当前工作树 id
-        let wt = discover_current_wt_id(data_root_resolved, &repo_id)?;
-        if args.subproject.is_some() {
-            let path = args.subproject.clone().unwrap();
-            let list = repo_entry.wt_subprojects.entry(wt).or_default();
-            match list.iter_mut().find(|s| s.path == path) {
-                Some(s) => {
-                    if let Some(r) = &args.resource {
-                        s.selection.resources.insert(r.clone(), state);
-                    }
-                    if let Some(h) = &args.host {
-                        s.selection.hosts.insert(h.clone(), state);
-                    }
-                }
-                None => {
-                    list.push(crate::profile::SubprojectSelection {
-                        path,
-                        selection: sel.clone(),
-                    });
-                }
-            }
-            "worktree 子项目".to_string()
+    // F01：目标仓库身份来自显式根或 cwd 的真实发现，绝不用 profile 键序猜
+    let anchor = args
+        .repo_root
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let (repo_id, wt_id) = match repo_registry::classify_path(&anchor)? {
+        repo_registry::PathClass::Git(d) => {
+            let mut reg = RepoRegistry::resolve_or_create(data_root_resolved, &d)?;
+            reg.refresh_worktrees(&d, &crate::ids::now_iso());
+            reg.save(data_root_resolved)?;
+            let wt_canon = d
+                .current_worktree
+                .canonicalize()
+                .unwrap_or_else(|_| d.current_worktree.clone());
+            let wt = reg
+                .worktrees
+                .values()
+                .find(|w| w.path == wt_canon)
+                .map(|w| w.id.clone())
+                .ok_or_else(|| Error::new(code::WORKSPACE_INVALID, "当前工作树未登记"))?;
+            (reg.repo_id.clone(), wt)
+        }
+        repo_registry::PathClass::NonGit { root } => {
+            (nongit_identity(&root).identity.repo_id, "root".to_string())
+        }
+    };
+    let scope = if args.worktree {
+        if let Some(path) = &args.subproject {
+            SelectScope::WorktreeSubproject(wt_id.clone(), path.clone())
         } else {
-            repo_entry.worktrees.insert(wt, sel.clone());
-            "当前工作树".to_string()
+            SelectScope::Worktree(wt_id.clone())
         }
     } else if let Some(path) = &args.subproject {
-        let list = &mut repo_entry.subprojects;
-        match list.iter_mut().find(|s| &s.path == path) {
-            Some(s) => {
-                if let Some(r) = &args.resource {
-                    s.selection.resources.insert(r.clone(), state);
-                }
-                if let Some(h) = &args.host {
-                    s.selection.hosts.insert(h.clone(), state);
-                }
-            }
-            None => {
-                list.push(crate::profile::SubprojectSelection {
-                    path: path.clone(),
-                    selection: sel.clone(),
-                });
-            }
-        }
-        format!("仓库子项目模板 {path}")
+        SelectScope::RepoSubproject(path.clone())
     } else {
-        repo_entry.default = Some(match repo_entry.default.take() {
-            Some(mut d) => {
-                if let Some(r) = &args.resource {
-                    d.resources.insert(r.clone(), state);
-                }
-                if let Some(h) = &args.host {
-                    d.hosts.insert(h.clone(), state);
-                }
-                d
-            }
-            None => sel.clone(),
-        });
-        "仓库默认".to_string()
+        SelectScope::RepoDefault
     };
-    profile.save(data_root_resolved)?;
+    let key = if let Some(res) = &args.resource {
+        SelectKey::Resource(res.clone())
+    } else {
+        SelectKey::Host(args.host.clone().unwrap_or_default())
+    };
+    let new_rev = crate::profile::select_scoped_in_place(
+        data_root_resolved,
+        &repo_id,
+        &scope,
+        &key,
+        state,
+        args.base_revision,
+    )?;
+    let scope_desc = match &scope {
+        SelectScope::RepoDefault => "仓库默认".to_string(),
+        SelectScope::RepoSubproject(p) => format!("仓库子项目模板 {p}"),
+        SelectScope::Worktree(w) => format!("工作树 {w}"),
+        SelectScope::WorktreeSubproject(w, p) => format!("工作树 {w} 子项目 {p}"),
+    };
     Ok(json!({
         "repo_id": repo_id,
+        "worktree_id": wt_id,
         "scope": scope_desc,
         "resource": args.resource,
         "host": args.host,
         "state": args.state,
+        "revision": new_rev,
     }))
 }
 
-fn discover_latest_repo_id(data_root: &Path) -> Result<String> {
-    let dir = data_root.join("repos");
-    let mut best: Option<(std::time::SystemTime, String)> = None;
-    for e in std::fs::read_dir(&dir)
-        .map_err(|_| Error::new(code::WORKSPACE_INVALID, "没有已登记仓库"))?
-        .flatten()
-    {
-        let reg = e.path().join("registry.json");
-        if let Ok(meta) = std::fs::metadata(&reg) {
-            if let Ok(m) = meta.modified() {
-                let id = e.file_name().to_string_lossy().to_string();
-                if best.as_ref().map(|(t, _)| m > *t).unwrap_or(true) {
-                    best = Some((m, id));
-                }
-            }
+/// AIL-057：非 Git 路径模式目录后来初始化 Git 时的显式身份迁移。
+/// 个人配置与指令条目从 nongit-<hash> 迁到 Git repo_id；不丢弃、不默默合并：
+/// 目标 Git 身份已有配置时拒绝并让用户显式选择。
+pub fn migrate_nongit(explicit_root: Option<&Path>, data_root_resolved: &Path) -> Result<Value> {
+    let root = match explicit_root {
+        Some(r) => r
+            .canonicalize()
+            .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("路径不可用: {e}")))?,
+        None => std::env::current_dir()?,
+    };
+    let git = match repo_registry::classify_path(&root)? {
+        repo_registry::PathClass::Git(d) => d,
+        repo_registry::PathClass::NonGit { .. } => {
+            return Err(Error::new(
+                code::WORKSPACE_INVALID,
+                "该目录仍不是 Git 仓库；无需迁移",
+            ))
         }
+    };
+    let mut reg = RepoRegistry::resolve_or_create(data_root_resolved, &git)?;
+    reg.refresh_worktrees(&git, &crate::ids::now_iso());
+    reg.save(data_root_resolved)?;
+    let git_id = reg.repo_id.clone();
+    let nongit_id = nongit_identity(&root).identity.repo_id;
+    if nongit_id == git_id {
+        return Ok(json!({ "migrated": false, "note": "身份相同，无需迁移" }));
     }
-    best.map(|(_, id)| id)
-        .ok_or_else(|| Error::new(code::WORKSPACE_INVALID, "没有已登记仓库"))
+    // 指令条目迁移
+    let old_dir = crate::personal_instructions::entry_base(data_root_resolved, &nongit_id);
+    let new_dir = crate::personal_instructions::entry_base(data_root_resolved, &git_id);
+    let mut moved_instructions = false;
+    if old_dir.is_dir() && !new_dir.exists() {
+        std::fs::rename(&old_dir, &new_dir)?;
+        moved_instructions = true;
+    }
+    // 个人配置迁移
+    let mut profile = PersonalProfile::load_or_default(data_root_resolved)?;
+    let had_profile = profile.repos.contains_key(&nongit_id);
+    if had_profile {
+        if profile.repos.contains_key(&git_id) {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!(
+                    "Git 身份 {git_id} 已存在个人配置；为避免覆盖，请手工核对 profile.toml 后删除不要的一侧（nongit 键 {nongit_id}）"
+                ),
+            ));
+        }
+        let entry = profile.repos.remove(&nongit_id).unwrap();
+        profile.repos.insert(git_id.clone(), entry);
+        profile.save(data_root_resolved)?;
+    }
+    Ok(json!({
+        "migrated": had_profile || moved_instructions,
+        "from": nongit_id,
+        "to": git_id,
+        "profile_moved": had_profile,
+        "instructions_moved": moved_instructions,
+        "note": "迁移完成；旧 nongit 登记保留为历史，不再被 personal 流程选中",
+    }))
 }
 
-fn discover_current_wt_id(data_root: &Path, repo_id: &str) -> Result<String> {
-    // 当前 cwd 所在 worktree 的登记 id
-    let cwd = std::env::current_dir()?;
-    let repo = repo_registry::discover_repo(&cwd)?;
-    if repo.identity.repo_id != repo_id {
-        // 当前目录与最近登记仓库不同：仍按 repo_id 的登记 + 当前发现刷新
+/// AIL-067：库内 skill 在当前工作树的部署版本状态。
+/// 列出引用作用域、已部署哈希与库内当前哈希；过期显示待同步，不宣称已生效。
+pub fn deploy_status(
+    explicit_root: Option<&Path>,
+    data_root: Option<&Path>,
+    data_root_resolved: &Path,
+) -> Result<Value> {
+    let p = prepare_personal(data_root, explicit_root, None, data_root_resolved)?;
+    let mut items = Vec::new();
+    for a in &p.artifacts {
+        if a.kind != "skill" || !a.resource_id.starts_with("personal/") {
+            continue;
+        }
+        let current_desired = a.desired_hash().unwrap_or_default();
+        let item = p.managed.items.get(&a.item_key());
+        let deployed_hash = item.map(|i| i.content_hash.clone());
+        let up_to_date = deployed_hash.as_deref() == Some(current_desired.as_str());
+        items.push(json!({
+            "resource_id": a.resource_id,
+            "tool": a.target_tool,
+            "path": a.path,
+            "deployed": deployed_hash.is_some(),
+            "up_to_date": up_to_date,
+            "state": if deployed_hash.is_none() {
+                "not-deployed"
+            } else if up_to_date {
+                "current"
+            } else {
+                "stale（库已更新，需重新预览+应用）"
+            },
+        }));
     }
-    let mut reg = RepoRegistry::load_or_create(data_root, &repo)?;
-    reg.refresh_worktrees(&repo, &crate::ids::now_iso());
-    reg.save(data_root)?;
-    let wt_canon = repo
-        .current_worktree
-        .canonicalize()
-        .unwrap_or_else(|_| repo.current_worktree.clone());
-    reg.worktrees
-        .values()
-        .find(|w| w.path == wt_canon)
-        .map(|w| w.id.clone())
-        .ok_or_else(|| Error::new(code::WORKSPACE_INVALID, "当前工作树未登记"))
+    Ok(json!({
+        "repo_id": p.registry.repo_id,
+        "worktree_id": p.wt_id,
+        "items": items,
+        "note": "库更新后旧计划自动失效（计划指纹绑定库内容）；部署到其他工作树需分别选择并应用",
+    }))
 }
 
 /// `personal instructions`：保存/清除个人指令条目。
@@ -535,7 +833,7 @@ pub fn instructions(
 ) -> Result<Value> {
     let cwd = std::env::current_dir()?;
     let repo = repo_registry::discover_repo(&cwd)?;
-    let mut reg = RepoRegistry::load_or_create(data_root_resolved, &repo)?;
+    let mut reg = RepoRegistry::resolve_or_create(data_root_resolved, &repo)?;
     reg.refresh_worktrees(&repo, &crate::ids::now_iso());
     reg.save(data_root_resolved)?;
     let wt_canon = repo
@@ -547,7 +845,7 @@ pub fn instructions(
         .values()
         .find(|w| w.path == wt_canon)
         .map(|w| w.id.clone());
-    let repo_id = repo.identity.repo_id.clone();
+    let repo_id = reg.repo_id.clone();
     let scope_wt: Option<&str> = if worktree_scoped {
         wt_id.as_deref()
     } else {
@@ -581,14 +879,36 @@ pub fn plan(
     Ok(json!({
         "summary": p.plan.summary(),
         "actions": p.plan.actions,
-        "repo_id": p.repo.identity.repo_id,
+        "repo_id": p.registry.repo_id,
         "worktree_id": p.wt_id,
         "active_rel": p.active_rel,
+        "scope_dir": p.scope_dir,
+        "is_nongit": p.is_nongit,
+        "profile_revision": p.profile.revision,
         "effective_enabled": p.effective.enabled_resources(),
         "skipped": p.skipped,
         "notes": p.notes,
         "has_conflicts": p.plan.has_conflicts(),
     }))
+}
+
+/// apply 前的公司文件复核（S02 纵深防御）：计划与执行之间跟踪状态可能变化。
+fn verify_no_tracked_targets(p: &PersonalPrepare) -> Result<()> {
+    for a in &p.plan.actions {
+        if a.path.is_empty() {
+            continue;
+        }
+        if pi::path_is_git_tracked(&p.ctx.workspace.workspace_root, &a.path) {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!(
+                    "公司文件保护：{} 已被 Git 跟踪，拒绝执行计划动作（请重新 plan）",
+                    a.path
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `personal sync`：应用个人模式部署（复用 sync 的 apply/journal/lock）。
@@ -598,7 +918,8 @@ pub fn sync(
     data_root: Option<&Path>,
     data_root_resolved: &Path,
 ) -> Result<Value> {
-    let p = prepare_personal(data_root, explicit_root, scope_rel, data_root_resolved)?;
+    let mut p = prepare_personal(data_root, explicit_root, scope_rel, data_root_resolved)?;
+    verify_no_tracked_targets(&p)?;
     let _run_id = format!("personal-{}", crate::ids::new_id());
     let journal_root = &p.ctx.layout.journal_dir;
     let lock_dir = p.ctx.layout.ws_dir.join("locks");
@@ -614,15 +935,20 @@ pub fn sync(
     )?;
     if report.ok {
         managed.save(&p.managed_path)?;
-        // exclude 登记：仅个人新增产物路径（引用计数，多工作树共享 common exclude）
-        let patterns = pi::exclude_patterns(&p.artifacts);
-        if !patterns.is_empty() {
-            crate::git_exclude::add_patterns(
-                &p.repo.identity.common_dir,
-                data_root_resolved,
-                &p.repo.identity.repo_id,
-                &patterns,
-            )?;
+        // exclude 登记：仅 Git 仓库（nongit 无 info/exclude，不注册）
+        if !p.is_nongit {
+            let patterns = pi::exclude_patterns(&p.artifacts);
+            if !patterns.is_empty() {
+                crate::git_exclude::add_patterns(
+                    &p.repo.identity.common_dir,
+                    data_root_resolved,
+                    &p.registry.repo_id,
+                    &patterns,
+                )?;
+            }
+        } else {
+            p.notes
+                .push("非 Git 路径模式：无 Git exclude 可登记；产物为普通文件".into());
         }
     }
     Ok(json!({
@@ -634,6 +960,42 @@ pub fn sync(
         "pending_journal": report.pending_journal,
         "skipped_company_files": p.skipped,
         "notes": p.notes,
+        "repo_id": p.registry.repo_id,
+        "worktree_id": p.wt_id,
+        "active_rel": p.active_rel,
+        "scope_dir": p.scope_dir,
         "effective_enabled": p.effective.enabled_resources(),
     }))
+}
+
+/// 供 jobs.rs 的 apply 任务复用（相同保护与管道）。
+pub fn apply_prepared_personal(p: &PersonalPrepare) -> Result<crate::sync::apply::ApplyReport> {
+    verify_no_tracked_targets(p)?;
+    let journal_root = &p.ctx.layout.journal_dir;
+    let lock_dir = p.ctx.layout.ws_dir.join("locks");
+    let mut managed = p.managed.clone();
+    let report = crate::sync::apply::apply(
+        &p.plan,
+        &p.artifacts,
+        &mut managed,
+        &p.ctx.workspace.workspace_root,
+        &lock_dir,
+        journal_root,
+        &p.ctx.device,
+    )?;
+    if report.ok {
+        managed.save(&p.managed_path)?;
+        if !p.is_nongit {
+            let patterns = pi::exclude_patterns(&p.artifacts);
+            if !patterns.is_empty() {
+                crate::git_exclude::add_patterns(
+                    &p.repo.identity.common_dir,
+                    &p.ctx.data_root,
+                    &p.registry.repo_id,
+                    &patterns,
+                )?;
+            }
+        }
+    }
+    Ok(report)
 }

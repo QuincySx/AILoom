@@ -767,6 +767,8 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
         let mut run_broken = false;
         for entry in entries.into_iter().rev() {
             let file = ws_root.join(&entry.path);
+            // 恢复写回的是 AILoom 写入前的备份字节（回滚自己的部分写入），
+            // 即使路径后来被跟踪也只会回到公司原有内容——不属于改写
             let current_hash = match std::fs::read(&file) {
                 Ok(bytes) => format!("sha256:{}", crate::ids::sha256_hex(&bytes)),
                 Err(_) if entry.written_hash.is_empty() => String::new(),

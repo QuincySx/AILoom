@@ -95,15 +95,32 @@ fn ail047_onboarding_first_run_closed_loop() {
     let server = ConsoleServer::start(&opts(tmp.path(), 17910)).unwrap();
     let token = server.token.clone();
 
-    // 前端页面可达且包含向导要素
-    let (code, raw) = method(server.port, "GET", "/?token=x", &[], None);
+    // 前端页面可达：壳注入会话令牌并加载 ES module 应用（AIL-080 分层架构）；
+    // 向导要素位于 /ui 模块（onboarding 页面与任务/验证组件）
+    let (code, raw) = method(server.port, "GET", "/", &[], None);
     assert_eq!(code, 200);
-    assert!(
-        raw.contains("首次设置")
-            && raw.contains("预览将要做的改动")
-            && raw.contains("在宿主里真实验证")
-    );
     assert!(raw.contains(&token), "页面注入会话令牌");
+    assert!(raw.contains("/ui/app.js"), "壳加载模块化应用");
+    for asset in [
+        "/ui/tokens.css",
+        "/ui/pages/onboarding.js",
+        "/ui/features/planPreview.js",
+    ] {
+        let (code, path) = method(server.port, "GET", asset, &[], None);
+        assert_eq!(code, 200, "资产可达: {asset}");
+        assert!(
+            path.contains("text/css") || path.contains("javascript"),
+            "正确 MIME: {asset}"
+        );
+    }
+    assert!(
+        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择工作目录")
+            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择宿主与能力")
+            && ailoom::console::ui::PLAN_PREVIEW_JS.contains("预览将要做的改动")
+            && ailoom::console::ui::PLAN_PREVIEW_JS.contains("在宿主里真实验证")
+            && ailoom::console::ui::APP_JS.contains("hashchange"),
+        "向导与路由要素分布在对应模块内"
+    );
 
     // 公司样仓：含已跟踪 AGENTS.md（用户自己还有未暂存修改）
     let repo = tmp.path().join("company-repo");
@@ -204,14 +221,14 @@ fn ail047_onboarding_first_run_closed_loop() {
         server.port,
         "/api/profile/select",
         &token,
-        json!({ "host": "claude", "state": "enable" }),
+        json!({ "host": "claude", "state": "enable", "root": repo }),
     );
     assert_eq!(code, 200);
     let (code, _) = post(
         server.port,
         "/api/profile/select",
         &token,
-        json!({ "resource": "personal/skill/personal/onboard-flow", "state": "enable" }),
+        json!({ "resource": "personal/skill/personal/onboard-flow", "state": "enable", "root": repo }),
     );
     assert_eq!(code, 200);
 

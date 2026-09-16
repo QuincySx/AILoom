@@ -1,0 +1,32 @@
+{
+  "cross_repo": [
+    200,
+    {
+      "path": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/B",
+      "relinked": true,
+      "wt_id": "fcadcac29d3a"
+    }
+  ],
+  "moved": [
+    200,
+    {
+      "path": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+      "relinked": true,
+      "wt_id": "fcadcac29d3a"
+    }
+  ],
+  "effective": {
+    "active_rel": null,
+    "hosts": {},
+    "notes": [],
+    "pending_actions": 0,
+    "repo_id": "repo-d5354e9145f24e5d",
+    "repo_root": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+    "resources": {},
+    "skipped": [],
+    "worktree": "/private/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review0916-spec-9jeeb9qh/A-moved",
+    "worktree_id": "ff8c02d6924b"
+  },
+  "old_repo": "repo-13f755542ecbedb0",
+  "old_worktree": "fcadcac29d3a"
+}

@@ -2,8 +2,8 @@
 
 以 Rust 构建的项目与团队 AI 资源、知识和协作工具。
 
-**状态：2026-09-15 第二轮返工完成：35 张 Done、3 张 Blocked（AIL-009/012/014，外部授权或宿主能力阻塞）、0 张 Backlog；18 张返工子卡全部完成。**
-验证：286 测试通过 / 0 失败 / 1 ignored（真实 npm registry 用例按设计 ignored）+ fmt/Clippy 干净（[全量日志](docs/evidence/logs/2026-09-15-rework-full-validation.log)）；Claude Code/Codex 真机验收证据见 [宿主验收记录](docs/evidence/2026-09-13-host-acceptance.md)。执行者从 [任务看板](docs/BACKLOG.md) 领取未关闭项。
+**状态：2026-09-17 需求实现对齐：98 张主卡，58 Backlog、4 Blocked、36 Done。**
+新增47张执行卡（28张功能修复/补齐/验收 + 19张Web分层实施），11张旧主卡已根据复审重新打开。执行者从[本轮入口](docs/initiatives/implementation-alignment-2026-09-17.md)开始，Web按[Token→组件→状态→页面蓝图](docs/initiatives/web-console-blueprint-2026-09-17.md)逐步实施；全局状态见[任务看板](docs/BACKLOG.md)。旧测试通过不代表本轮需求已验收。
 
 ## 快速开始
 
@@ -44,5 +44,5 @@ cargo test --locked --all-features
 
 后续能力独立保留，不以同步器代替完整产品目标。
 
-- [本地控制台与 Onboarding 计划（待实现）](docs/initiatives/local-console.md)
+- [本地控制台与 Onboarding 需求规格（本轮返工中）](docs/initiatives/local-console.md)
 - [个人配置/Git 需求及回复审查](docs/reviews/2026-09-15-onboarding-requirements-review.md)

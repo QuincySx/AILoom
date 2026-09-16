@@ -462,6 +462,11 @@ fn run(cli: &cli::Cli) -> Result<()> {
             dir,
             name,
             execute,
+            url,
+            entry,
+            path,
+            git_ref,
+            skill,
         }) => {
             let value = ailoom::commands::library::run(
                 action,
@@ -470,6 +475,10 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 *execute,
                 cli.json,
                 cli.data_root.as_deref(),
+                url.as_deref().or(entry.as_deref()),
+                path.as_deref(),
+                git_ref.as_deref(),
+                skill.as_deref(),
             )?;
             if cli.json {
                 output::emit_json(&value);
@@ -487,6 +496,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             clear,
             root,
             scope,
+            repo,
         }) => {
             let data_root_resolved = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
             let value = match action.as_str() {
@@ -520,9 +530,20 @@ fn run(cli: &cli::Cli) -> Result<()> {
                         })?,
                         subproject: subproject.clone(),
                         worktree: *worktree,
+                        repo_root: repo.clone(),
+                        base_revision: None,
                     };
                     ailoom::commands::personal::select(&args, &data_root_resolved)?
                 }
+                "deploy-status" => ailoom::commands::personal::deploy_status(
+                    root.as_deref(),
+                    cli.data_root.as_deref(),
+                    &data_root_resolved,
+                )?,
+                "migrate-nongit" => ailoom::commands::personal::migrate_nongit(
+                    repo.as_deref(),
+                    &data_root_resolved,
+                )?,
                 "instructions" => ailoom::commands::personal::instructions(
                     file.as_deref(),
                     *clear,
@@ -533,7 +554,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     return Err(ailoom::error::Error::new(
                         ailoom::error::code::USAGE,
                         format!(
-                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync）"
+                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync | migrate-nongit）"
                         ),
                     ))
                 }
