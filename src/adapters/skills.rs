@@ -1,7 +1,12 @@
-//! Skills 适配（AIL-009 + ADR-0001）：实体进 SkillStore，Workspace 只挂 symlink。
-//! Claude：`.claude/skills/<name>` → store；Codex：`.ailoom/skills/<name>` → store + config.toml。
+//! Skills 适配（AIL-009 + ADR-0001；AIL-041 复核）：实体进 SkillStore，Workspace 只挂 symlink。
+//! Claude：`.claude/skills/<name>` → store；
+//! Codex：`.agents/skills/<name>` → store（官方原生项目技能目录，支持 symlink、自动发现），
+//! 并在 `.codex/config.toml` skills.config 保留显式条目（path 指向 SKILL.md，可禁用）。
+//! 旧版 `.ailoom/skills/<name>` 部署由 sync 的过期清理迁移（旧条目 Delete → 新条目 Create）。
 
-use super::common::{Artifact, ArtifactBody, CODEX_MANAGED_SKILL_PREFIX};
+use super::common::{
+    is_codex_managed_config_path, Artifact, ArtifactBody, CODEX_NATIVE_SKILLS_DIR,
+};
 use super::{Tool, UnsupportedItem};
 use crate::error::{code, Error, Result};
 use crate::resource::ResourceEntry;
@@ -32,7 +37,8 @@ pub fn render(
 
     let link_path: PathBuf = match tool {
         Tool::Claude => PathBuf::from(format!(".claude/skills/{}", entry.id.name)),
-        Tool::Codex => PathBuf::from(format!("{CODEX_MANAGED_SKILL_PREFIX}{}", entry.id.name)),
+        // AIL-041：官方原生项目技能目录（symlink 可被宿主扫描发现）
+        Tool::Codex => PathBuf::from(format!("{CODEX_NATIVE_SKILLS_DIR}/{}", entry.id.name)),
         // alva 通过 co-load 直接读取 .claude/skills（paths.rs 核实），无需单独部署
         Tool::Alva => return Ok(()),
     };
@@ -52,7 +58,8 @@ pub fn render(
     Ok(())
 }
 
-/// 汇总 Codex skills.config 数组产物（条目 path 指向托管前缀下的链接目录）。
+/// 汇总 Codex skills.config 数组产物（条目 path 指向原生发现目录下的 SKILL.md，
+/// 形态与官方 skills.config 示例一致；AILoom 托管旧条目 `.ailoom/skills/…` 一并清除迁移）。
 pub fn render_config(
     managed_skill_names: &[String],
     ws_root: &Path,
@@ -81,7 +88,7 @@ pub fn render_config(
                     .get("path")
                     .and_then(|p| p.as_str())
                     .unwrap_or_default();
-                if !path.starts_with(CODEX_MANAGED_SKILL_PREFIX) {
+                if !is_codex_managed_config_path(path) {
                     user_entries.push(item.clone());
                 }
             }
@@ -93,7 +100,7 @@ pub fn render_config(
         let t = item.as_table_mut().unwrap();
         t.insert(
             "path".into(),
-            toml::Value::String(format!("{CODEX_MANAGED_SKILL_PREFIX}{name}")),
+            toml::Value::String(format!("{CODEX_NATIVE_SKILLS_DIR}/{name}/SKILL.md")),
         );
         t.insert("enabled".into(), toml::Value::Boolean(true));
         merged.push(item);

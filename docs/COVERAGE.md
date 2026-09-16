@@ -1,6 +1,6 @@
 # 参考能力覆盖表
 
-初版 M0—M3 共23卡，后续14卡，共37卡。2026-09-12 审查后，28 卡退回 Backlog、9 卡保留 Done；状态见 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md)，返工要求见 [REWORK.md](REWORK.md)。本表只映射能力与责任卡，不表示功能已实现或验收完成。
+当前共 51 张主卡；新增 AIL-039～051 本地控制台/个人配置/Onboarding。状态见 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md)，新需求映射见 [本地控制台计划](initiatives/local-console.md)。本表仅映射能力，不代表全部功能已验收。
 
 | 能力 | AILoom卡 |
 |---|---|

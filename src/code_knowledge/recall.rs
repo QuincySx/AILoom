@@ -129,6 +129,8 @@ fn weight_of(kind: &str, confidence: &str) -> f64 {
         ("contains", _) => 0.4,
         ("use-dep", _) => 0.6,
         ("call", "ast") => 0.8,
+        // RW-10：作用域解析成功的调用边（目标为完整符号身份），可信度最高
+        ("call", "ast-scoped") => 0.9,
         ("call", "name-based-project") => 0.7,
         ("call", _) => 0.5,
         _ => 0.3,

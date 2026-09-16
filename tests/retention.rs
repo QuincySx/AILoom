@@ -466,3 +466,125 @@ fn export_includes_archives_and_bad_lines_reported() {
     assert_eq!(metrics["bad_event_lines"], 1, "{metrics}");
     assert_eq!(metrics["sessions"][0]["session_id"], "s1");
 }
+
+/// RW-09/R06：采集→轮转→受控报告确认→cleanup 后，正常 session 入口的累计值
+/// 与清理前一致（基线消费，不读归档）；重投已清理事件不重复计数；新增事件
+/// 正确累加；基线损坏时拒绝破坏性清理并可重试。
+#[test]
+fn cleanup_persists_cumulative_baseline_and_entries_stay_consistent() {
+    let tmp = tempfile::tempdir().unwrap();
+    ailoom::gitx::git_init(tmp.path(), false).unwrap();
+    let ctx =
+        AppContext::discover(Some(&tmp.path().join("data")), tmp.path(), Some(tmp.path())).unwrap();
+    ailoom::paths::ensure_layout(&ctx.layout).unwrap();
+
+    let mk_prompt = |ctx: &AppContext, id: &str, n: u64| {
+        let mut e = ev(ctx, "s1", n as usize);
+        e.event_id = id.into();
+        e.kind = "prompt".into();
+        ailoom::events::store::append_event(&ctx.layout.events_file, &e).unwrap();
+    };
+    let metrics = || -> serde_json::Value {
+        ailoom::commands::session::run(
+            &ailoom::commands::session::SessionArgs {
+                action: "metrics".into(),
+                session: Some("s1".into()),
+                file: None,
+                share: None,
+                root: Some(tmp.path().to_path_buf()),
+            },
+            true,
+            Some(&tmp.path().join("data")),
+        )
+        .unwrap_or_else(|e| panic!("session metrics 失败: {e}"))
+    };
+
+    mk_prompt(&ctx, "e1", 1);
+    mk_prompt(&ctx, "e2", 2);
+    assert_eq!(metrics()["prompt_count"], 2, "清理前累计");
+
+    // 轮转：e1/e2 进入归档
+    let mut rot = data_args(tmp.path(), "rotate", false);
+    rot.max_size_mb = 0.000001;
+    let v = data_run2(&rot, true, Some(&tmp.path().join("data"))).unwrap();
+    assert_eq!(v["rotated"], true);
+
+    // 受控报告确认（写确认水位线：e1/e2/e3 已确认）
+    mk_prompt(&ctx, "e3", 3);
+    let cp = serde_json::json!({
+        "schema_version": 1,
+        "pushed_batches": ["b-confirm"],
+        "pending": {},
+        "confirmed_event_ids": ["e1", "e2", "e3"],
+    });
+    std::fs::write(
+        ctx.layout.ws_dir.join("report-checkpoint.json"),
+        serde_json::to_string_pretty(&cp).unwrap(),
+    )
+    .unwrap();
+
+    // cleanup：删除已确认归档（删除前基线持久化）
+    let cl = data_args(tmp.path(), "cleanup", false);
+    let v = data_run2(&cl, true, Some(&tmp.path().join("data"))).unwrap();
+    assert!(
+        !v["removed"].as_array().unwrap().is_empty(),
+        "归档应被清理: {v}"
+    );
+
+    // 清理后正常 session 入口：累计一致（基线 2 + 实时 e3 1 = 3）
+    let after = metrics();
+    assert_eq!(after["prompt_count"], 3, "清理后累计一致: {after}");
+
+    // 重投已清理事件（同 id、不同内容）→ 不重复计数
+    mk_prompt(&ctx, "e1", 7);
+    let after2 = metrics();
+    assert_eq!(after2["prompt_count"], 3, "重投已清算事件不重复: {after2}");
+
+    // 新事件 → 正确累加（基线 2 + 实时 e3/e4 2 = 4）
+    mk_prompt(&ctx, "e4", 9);
+    let after3 = metrics();
+    assert_eq!(after3["prompt_count"], 4, "新增事件累加: {after3}");
+
+    // 基线损坏：再轮转出新的已确认归档后，cleanup 拒绝（可修复重试）
+    mk_prompt(&ctx, "e5", 5);
+    let mut rot2 = data_args(tmp.path(), "rotate", false);
+    rot2.max_size_mb = 0.000001;
+    let v = data_run2(&rot2, true, Some(&tmp.path().join("data"))).unwrap();
+    assert_eq!(v["rotated"], true);
+    let cp = serde_json::json!({
+        "schema_version": 1,
+        "pushed_batches": ["b-confirm"],
+        "pending": {},
+        "confirmed_event_ids": ["e1", "e2", "e3", "e4", "e5"],
+    });
+    std::fs::write(
+        ctx.layout.ws_dir.join("report-checkpoint.json"),
+        serde_json::to_string_pretty(&cp).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(ctx.layout.ws_dir.join("metrics-baseline.json"), "{corrupt").unwrap();
+    let err = data_run2(
+        &data_args(tmp.path(), "cleanup", false),
+        true,
+        Some(&tmp.path().join("data")),
+    );
+    assert!(err.is_err(), "基线损坏必须拒绝破坏性清理");
+    // 修复基线后重试成功
+    let identities = serde_json::json!({
+        "schema_version": 1,
+        "identities": {},
+        "accounted_event_ids": ["e1", "e2", "e3", "e4"],
+    });
+    std::fs::write(
+        ctx.layout.ws_dir.join("metrics-baseline.json"),
+        serde_json::to_string_pretty(&identities).unwrap(),
+    )
+    .unwrap();
+    let v = data_run2(
+        &data_args(tmp.path(), "cleanup", false),
+        true,
+        Some(&tmp.path().join("data")),
+    )
+    .unwrap_or_else(|e| panic!("修复后 cleanup 应成功: {e}"));
+    assert!(!v["removed"].as_array().unwrap().is_empty(), "{v}");
+}

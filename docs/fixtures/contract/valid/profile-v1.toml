@@ -1,0 +1,29 @@
+# AIL-040 个人配置合法示例（契约 §11.2）
+schema_version = 1
+
+[library]
+path = "/home/me/.local/state/ailoom/library"
+
+[repos."repo-0123456789abcdef"]
+[repos."repo-0123456789abcdef".default]
+[repos."repo-0123456789abcdef".default.hosts]
+claude = "enable"
+codex = "disable"
+[repos."repo-0123456789abcdef".default.resources]
+"personal/skill/common/my-flow" = "enable"
+"team/skill/common/deploy" = "disable"
+"team/skill/common/lint" = "inherit"
+
+[[repos."repo-0123456789abcdef".subprojects]]
+path = "web"
+[repos."repo-0123456789abcdef".subprojects.selection.resources]
+"team/skill/common/deploy" = "enable"
+
+[repos."repo-0123456789abcdef".worktrees.wt123]
+[repos."repo-0123456789abcdef".worktrees.wt123.resources]
+"team/skill/common/deploy" = "disable"
+
+[[repos."repo-0123456789abcdef".wt_subprojects."wt123"]]
+path = "web/docs"
+[repos."repo-0123456789abcdef".wt_subprojects."wt123".selection.hosts]
+codex = "enable"

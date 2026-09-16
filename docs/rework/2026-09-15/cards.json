@@ -1,0 +1,294 @@
+[
+  {
+    "id": "RW-01",
+    "title": "旧默认目录迁移保持技能链接和设备身份",
+    "status": "Done",
+    "priority": "P1",
+    "parents": [
+      "AIL-003",
+      "AIL-009"
+    ],
+    "findings": [
+      "S01"
+    ],
+    "depends_on": [],
+    "file": "RW-01.md"
+  },
+  {
+    "id": "RW-02",
+    "title": "首次同步创建嵌套 Hook 配置",
+    "status": "Done",
+    "priority": "P1",
+    "parents": [
+      "AIL-008",
+      "AIL-032"
+    ],
+    "findings": [
+      "S02"
+    ],
+    "depends_on": [],
+    "file": "RW-02.md"
+  },
+  {
+    "id": "RW-03",
+    "title": "软件包精确版本校验与安装幂等",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-033"
+    ],
+    "findings": [
+      "S03"
+    ],
+    "depends_on": [],
+    "file": "RW-03.md"
+  },
+  {
+    "id": "RW-04",
+    "title": "安装器最终切换失败恢复旧安装",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-029"
+    ],
+    "findings": [
+      "S04"
+    ],
+    "depends_on": [
+      "RW-17"
+    ],
+    "file": "RW-04.md"
+  },
+  {
+    "id": "RW-05",
+    "title": "迁移目标内部符号链接边界",
+    "status": "Done",
+    "priority": "P1",
+    "parents": [
+      "AIL-036"
+    ],
+    "findings": [
+      "R01"
+    ],
+    "depends_on": [],
+    "file": "RW-05.md"
+  },
+  {
+    "id": "RW-06",
+    "title": "会话完整身份贯穿聚合看板与报告",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-019",
+      "AIL-021",
+      "AIL-022"
+    ],
+    "findings": [
+      "R02"
+    ],
+    "depends_on": [],
+    "file": "RW-06.md"
+  },
+  {
+    "id": "RW-07",
+    "title": "看板按最新生命周期事件恢复运行态",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-021"
+    ],
+    "findings": [
+      "R03"
+    ],
+    "depends_on": [
+      "RW-06"
+    ],
+    "file": "RW-07.md"
+  },
+  {
+    "id": "RW-08",
+    "title": "补传开关与跨日累计报告一致性",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-022"
+    ],
+    "findings": [
+      "R04",
+      "R05"
+    ],
+    "depends_on": [
+      "RW-06"
+    ],
+    "file": "RW-08.md"
+  },
+  {
+    "id": "RW-09",
+    "title": "清理前持久化累计及幂等基线",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-037"
+    ],
+    "findings": [
+      "R06"
+    ],
+    "depends_on": [
+      "RW-08"
+    ],
+    "file": "RW-09.md"
+  },
+  {
+    "id": "RW-10",
+    "title": "图谱符号身份加入模块作用域",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-026"
+    ],
+    "findings": [
+      "R07"
+    ],
+    "depends_on": [],
+    "file": "RW-10.md"
+  },
+  {
+    "id": "RW-11",
+    "title": "工作树内容变化触发图谱过期",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-027"
+    ],
+    "findings": [
+      "R08"
+    ],
+    "depends_on": [
+      "RW-10"
+    ],
+    "file": "RW-11.md"
+  },
+  {
+    "id": "RW-12",
+    "title": "跨目标导入的资源身份和文件隔离",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-034"
+    ],
+    "findings": [
+      "R09"
+    ],
+    "depends_on": [],
+    "file": "RW-12.md"
+  },
+  {
+    "id": "RW-13",
+    "title": "PR 合并构图使用正确快照并可失败重试",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-035"
+    ],
+    "findings": [
+      "R10",
+      "R11"
+    ],
+    "depends_on": [
+      "RW-11",
+      "RW-14"
+    ],
+    "file": "RW-13.md"
+  },
+  {
+    "id": "RW-14",
+    "title": "PR 候选使用完整身份并隔离编号边界",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-035"
+    ],
+    "findings": [
+      "R12",
+      "R13"
+    ],
+    "depends_on": [],
+    "file": "RW-14.md"
+  },
+  {
+    "id": "RW-15",
+    "title": "Hook 后续处理沿用 payload 工作区",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-018",
+      "AIL-020"
+    ],
+    "findings": [
+      "R14"
+    ],
+    "depends_on": [],
+    "file": "RW-15.md"
+  },
+  {
+    "id": "RW-16",
+    "title": "团队 Hook 超时覆盖派生进程与管道排空",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-032"
+    ],
+    "findings": [
+      "R15"
+    ],
+    "depends_on": [
+      "RW-15",
+      "RW-02"
+    ],
+    "file": "RW-16.md"
+  },
+  {
+    "id": "RW-17",
+    "title": "定位安装器 HTTP fixture 失败并恢复可信验证",
+    "status": "Done",
+    "priority": "P1",
+    "parents": [
+      "AIL-002",
+      "AIL-029"
+    ],
+    "findings": [],
+    "depends_on": [],
+    "file": "RW-17.md"
+  },
+  {
+    "id": "RW-18",
+    "title": "当前版本全链路复验与关卡证据更新",
+    "status": "Done",
+    "priority": "P2",
+    "parents": [
+      "AIL-023",
+      "AIL-038"
+    ],
+    "findings": [],
+    "depends_on": [
+      "RW-01",
+      "RW-02",
+      "RW-03",
+      "RW-04",
+      "RW-05",
+      "RW-06",
+      "RW-07",
+      "RW-08",
+      "RW-09",
+      "RW-10",
+      "RW-11",
+      "RW-12",
+      "RW-13",
+      "RW-14",
+      "RW-15",
+      "RW-16",
+      "RW-17"
+    ],
+    "file": "RW-18.md"
+  }
+]

@@ -901,3 +901,140 @@ fn correction_heuristic_end_to_end_via_hook_entry() {
     let m = metrics();
     assert_eq!(m["corrections_heuristic"], 0, "关闭后不再计数: {m}");
 }
+
+// ---------- AIL-018/020 返工回归（RW-15/R14）：后续处理沿用 payload 工作区 ----------
+
+/// Stop 的摩擦提示在「进程 cwd=A、payload.cwd=B」时必须作用于 B：
+/// B 有足够干预则提示（marker 落在 B，A 无标记）；显式 --root A 优先则不提示；
+/// 事件采集与后续处理使用同一解析结果。
+#[test]
+fn stop_prompt_follows_payload_workspace_not_process_cwd() {
+    let c = Ctx::new();
+    let bare = c.tmp.path().join("origin.git");
+    ailoom::gitx::git_init(&bare, true).unwrap();
+    let team_src = common::make_team_source(c.tmp.path());
+    ailoom::gitx::git(
+        &team_src,
+        &["remote", "add", "origin", bare.to_str().unwrap()],
+    )
+    .unwrap();
+    ailoom::gitx::git(&team_src, &["push", "-q", "-u", "origin", "HEAD"]).unwrap();
+    let ws_a = common::make_business_repo(c.tmp.path(), "biz-a");
+    let ws_b = common::make_business_repo(c.tmp.path(), "biz-b");
+    let dr = c.dr();
+    for ws in [&ws_a, &ws_b] {
+        let args = [
+            "--data-root".to_string(),
+            dr.clone(),
+            "init".to_string(),
+            "--url".to_string(),
+            team_src.to_str().unwrap().to_string(),
+            "--project".to_string(),
+            "a".to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run(ws, &refs);
+        assert_eq!(code, 0, "{stderr}");
+    }
+
+    // 在 B 种入 2 次人工干预（会话 rw15-s）
+    let wsid_b = ailoom::ids::workspace_id_from_root(&ws_b.canonicalize().unwrap());
+    let ef = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(&wsid_b)
+        .join("events")
+        .join("events.jsonl");
+    for n in 1..=2 {
+        let e = ailoom::events::schema::Event {
+            schema_version: 1,
+            event_id: format!("rw15-int-{n}"),
+            session_id: "rw15-s".into(),
+            workspace_id: wsid_b.to_string(),
+            device_id: "dev".into(),
+            tool: "claude".into(),
+            time: ailoom::ids::now_iso(),
+            kind: "tool".into(),
+            tool_name: Some("Bash".into()),
+            exit_code: None,
+            duration_ms: None,
+            prompt_len: None,
+            prompt_hash: None,
+            tokens: None,
+            dedup_key: Some(format!("intervention-{n}")),
+        };
+        assert!(ailoom::events::store::append_event(&ef, &e).unwrap());
+    }
+
+    // 进程 cwd=A、payload.cwd=B、无 --root：提示必须按 B 的数据触发
+    let stop = |proc_cwd: &Path, payload_cwd: &Path, root: Option<&Path>| {
+        let payload = format!(
+            r#"{{"session_id":"rw15-s","cwd":"{}"}}"#,
+            payload_cwd.display()
+        );
+        let mut args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "Stop".to_string(),
+        ];
+        if let Some(r) = root {
+            args.push("--root".to_string());
+            args.push(r.to_str().unwrap().to_string());
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        c.run_stdin(proc_cwd, &refs, &payload)
+    };
+
+    let (code, stdout, stderr) = stop(&ws_a, &ws_b, None);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let root = v["result"]["workspace_root"].as_str().unwrap();
+    assert!(
+        root.ends_with("biz-b"),
+        "workspace_root 应解析为 payload 工作区 B: {root}"
+    );
+    let notice = v["result"]["friction_notice"].as_str().unwrap_or_default();
+    assert!(
+        notice.contains("rw15-s"),
+        "提示应按 B 的干预数据触发: {stdout}"
+    );
+    // 提示标记落在 B，A 未被触碰
+    let summary = |ws: &Path| {
+        c.tmp
+            .path()
+            .join("data")
+            .join("ws")
+            .join(ailoom::ids::workspace_id_from_root(
+                &ws.canonicalize().unwrap(),
+            ))
+            .join("summary")
+    };
+    assert!(
+        summary(&ws_b).join("rw15-s.prompted").exists(),
+        "标记应在 B"
+    );
+    assert!(
+        !summary(&ws_a).join("rw15-s.prompted").exists(),
+        "A 不应有提示标记"
+    );
+
+    // 显式 --root A 优先于 payload B：按 A 的数据决策（A 无干预 → 不提示）
+    let (code, stdout, stderr) = stop(&ws_b, &ws_b, Some(&ws_a));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert!(v["result"]["workspace_root"]
+        .as_str()
+        .unwrap()
+        .ends_with("biz-a"));
+    assert!(
+        v["result"]["friction_notice"].as_str().is_none(),
+        "显式 root=A 不应按 B 提示: {stdout}"
+    );
+}

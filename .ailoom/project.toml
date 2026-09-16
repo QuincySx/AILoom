@@ -1,0 +1,15 @@
+schema_version = 1
+projects = ["a"]
+roles = []
+builtins = true
+reporting_enabled = false
+
+[source]
+name = "team"
+type = "git"
+url = "/tmp/rw15-repro/src"
+ref_ = "main"
+
+[targets]
+claude = true
+codex = true

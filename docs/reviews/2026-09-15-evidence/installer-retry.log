@@ -1,0 +1,58 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.33s
+     Running tests/installer.rs (target/debug/deps/installer-7ffbc759f0312d84)
+
+running 6 tests
+test npm_wrapper_locates_local_artifact_and_passes_through ... ok
+test installer_rejects_unsupported_platform ... ok
+test installer_sha256_tool_fallback_and_fail_closed ... FAILED
+test installer_failed_upgrade_preserves_old_install ... FAILED
+test installer_installs_and_upgrades_verified_artifacts ... FAILED
+test installer_uninstall_keeps_user_files ... FAILED
+
+failures:
+
+---- installer_sha256_tool_fallback_and_fail_closed stdout ----
+
+thread 'installer_sha256_tool_fallback_and_fail_closed' (1817839) panicked at tests/installer.rs:294:5:
+assertion `left == right` failed: 只有 sha256sum 时应成功: curl: (7) Failed to connect to 127.0.0.1 port 62298 after 0 ms: Couldn't connect to server
+[ailoom-install] 错误：下载失败：检查网络/代理（HTTPS_PROXY）或 AILOOM_DOWNLOAD_BASE
+
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- installer_failed_upgrade_preserves_old_install stdout ----
+
+thread 'installer_failed_upgrade_preserves_old_install' (1817836) panicked at tests/installer.rs:228:5:
+assertion `left == right` failed: 首次安装应成功
+  left: 1
+ right: 0
+
+---- installer_installs_and_upgrades_verified_artifacts stdout ----
+
+thread 'installer_installs_and_upgrades_verified_artifacts' (1817837) panicked at tests/installer.rs:202:5:
+assertion `left == right` failed: 安装失败: curl: (7) Failed to connect to 127.0.0.1 port 62299 after 0 ms: Couldn't connect to server
+[ailoom-install] 错误：下载失败：检查网络/代理（HTTPS_PROXY）或 AILOOM_DOWNLOAD_BASE
+
+  left: 1
+ right: 0
+
+---- installer_uninstall_keeps_user_files stdout ----
+
+thread 'installer_uninstall_keeps_user_files' (1817840) panicked at tests/installer.rs:375:5:
+assertion `left == right` failed: curl: (7) Failed to connect to 127.0.0.1 port 62297 after 0 ms: Couldn't connect to server
+[ailoom-install] 错误：下载失败：检查网络/代理（HTTPS_PROXY）或 AILOOM_DOWNLOAD_BASE
+
+  left: 1
+ right: 0
+
+
+failures:
+    installer_failed_upgrade_preserves_old_install
+    installer_installs_and_upgrades_verified_artifacts
+    installer_sha256_tool_fallback_and_fail_closed
+    installer_uninstall_keeps_user_files
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.23s
+
+error: test failed, to rerun pass `--test installer`

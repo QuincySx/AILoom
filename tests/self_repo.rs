@@ -507,3 +507,159 @@ fn contribute_self_cli_creates_reviewable_branch() {
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(v["result"]["no_changes"], true, "{v}");
 }
+
+/// RW-05/R01：子树内部祖先符号链接指向工作区外时，任何物化前拒绝，
+/// 外部内容零写入、声明不变；正常迁移与失败后重试不受影响。
+#[test]
+fn migrate_rejects_internal_ancestor_symlink_escape_before_materialize() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+
+    let outside = c.tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    let before = snapshot_dir(&outside);
+
+    // R01 反例：.ailoom-team（真实目录）/ resources → 工作区外
+    std::fs::create_dir_all(ws.join(".ailoom-team")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, ws.join(".ailoom-team/resources")).unwrap();
+    let dr = c.dr();
+    let args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        src.to_str().unwrap(),
+    ];
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_ne!(code, 0, "内部祖先链接越界必须拒绝");
+    assert!(stderr.contains("E8002"), "应报越界错误: {stderr}");
+    assert_eq!(before, snapshot_dir(&outside), "外部内容零写入");
+    let decl = std::fs::read_to_string(ws.join(".ailoom/project.toml")).unwrap();
+    assert!(decl.contains("type = \"git\""), "声明未被切换: {decl}");
+
+    // 悬空链接（无法解析）同样拒绝
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(ws.join(".ailoom-team/resources"));
+        std::os::unix::fs::symlink(
+            c.tmp.path().join("no-such-target"),
+            ws.join(".ailoom-team/dangling"),
+        )
+        .unwrap();
+        let (code, _, stderr) = c.run(&ws, &args);
+        assert_ne!(code, 0, "悬空链接必须拒绝");
+        assert!(
+            stderr.contains("E8002") || stderr.contains("无法解析"),
+            "悬空链接错误: {stderr}"
+        );
+        let _ = std::fs::remove_file(ws.join(".ailoom-team/dangling"));
+    }
+
+    // 阻断解除后同一工作区重试：完整迁移成功（可重试性）
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "解除链接后迁移应成功: {stderr}");
+    assert!(ws.join(".ailoom-team/resources/skills").is_dir() || ws.join(".ailoom-team").is_dir());
+}
+
+/// 多层祖先链接、最终叶子链接、源侧越界链接均在写入前拒绝。
+#[test]
+fn migrate_boundary_scan_covers_deep_ancestors_leaf_and_source_links() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_ws(&c, &ws, &src);
+    let outside = c.tmp.path().join("outside2");
+    std::fs::create_dir_all(&outside).unwrap();
+    let dr = c.dr();
+    let args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        src.to_str().unwrap(),
+    ];
+
+    // 1) 多层祖先：.ailoom-team/x/y → 外部，源含 x/y 下文件
+    std::fs::create_dir_all(ws.join(".ailoom-team/x")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, ws.join(".ailoom-team/x/y")).unwrap();
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_ne!(code, 0, "多层祖先链接越界必须拒绝");
+    assert!(stderr.contains("E8002"));
+    let _ = std::fs::remove_file(ws.join(".ailoom-team/x/y"));
+
+    // 2) 最终叶子链接：.ailoom-team/leaf.md → 外部已有文件（内容不同 → 预检拒绝）
+    #[cfg(unix)]
+    {
+        std::fs::write(outside.join("victim.md"), b"external bytes").unwrap();
+        let leaf_before = snapshot_dir(&outside);
+        std::os::unix::fs::symlink(outside.join("victim.md"), ws.join(".ailoom-team/leaf.md"))
+            .unwrap();
+        let (code, _, stderr) = c.run(&ws, &args);
+        assert_ne!(code, 0, "最终叶子链接必须拒绝: {stderr}");
+        assert!(stderr.contains("E8002") || stderr.contains("拒绝"));
+        let _ = std::fs::remove_file(ws.join(".ailoom-team/leaf.md"));
+        assert_eq!(leaf_before, snapshot_dir(&outside), "叶子链接目标未被改写");
+    }
+
+    // 3) 源含越界链接：迁移在写入前失败
+    let src2 = c.tmp.path().join("team-src-with-link");
+    crate_clone_tree(&src, &src2);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, src2.join("resources/escape-link")).unwrap();
+    let args2 = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "migrate",
+        "--from",
+        src2.to_str().unwrap(),
+    ];
+    let (code, _, stderr) = c.run(&ws, &args2);
+    assert_ne!(code, 0, "源含越界链接必须拒绝");
+    assert!(stderr.contains("E8002"));
+
+    // victim.md 是本测试写入的外部文件；断言其内容此后未被迁移触碰
+    assert_eq!(
+        std::fs::read_to_string(outside.join("victim.md")).unwrap(),
+        "external bytes",
+        "外部文件逐字节不变"
+    );
+    assert_eq!(
+        std::fs::read_dir(&outside).unwrap().count(),
+        1,
+        "外部目录无新增条目"
+    );
+    let decl = std::fs::read_to_string(ws.join(".ailoom/project.toml")).unwrap();
+    assert!(decl.contains("type = \"git\""), "声明未被切换");
+}
+
+/// 复制目录树（测试辅助，跳过 .git）。
+fn crate_clone_tree(from: &Path, to: &Path) {
+    for entry in walkdir::WalkDir::new(from)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let rel = match entry.path().strip_prefix(from) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if rel.components().any(|c| c.as_os_str() == ".git") {
+            continue;
+        }
+        let dest = to.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&dest).unwrap();
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::copy(entry.path(), &dest).unwrap();
+        }
+    }
+}

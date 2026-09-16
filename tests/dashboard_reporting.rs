@@ -483,7 +483,7 @@ fn report_pending_retry_repushes_and_clears() {
         "retry".to_string(),
     ];
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (code, stdout, stderr) = c.run(&ws, &refs);
+    let (code, stdout, stderr) = c.run_env(&ws, &refs, "AILOOM_REPORTING", "1");
     assert_eq!(code, 0, "{stderr}");
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(v["result"]["retried"], 1);
@@ -826,4 +826,604 @@ fn dashboard_empty_workspace_shows_empty_state() {
 
     server.kill().unwrap();
     let _ = server.wait();
+}
+
+/// RW-06/R02：真实 CLI 注入同名 session 的不同设备事件——metrics 列表两条独立、
+/// 单 session 查询给出歧义解释、/api/state 同样独立（与 CLI 同一聚合语义）。
+#[test]
+fn same_session_across_devices_distinct_in_metrics_and_dashboard() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+
+    // 设备 2：改写 device-id 后以同名 session 采集（同一工作区、同一宿主）
+    let device_file = c.tmp.path().join("data").join("device-id");
+    let dev1 = std::fs::read_to_string(&device_file).unwrap();
+    std::fs::write(&device_file, "device-two-rw06").unwrap();
+    for ev in ["session-start", "stop"] {
+        // payload 加区分字段：不同设备事件内容不同（event_id 去重按内容）
+        let payload = format!(
+            r#"{{"session_id":"s-board","cwd":"{}","device_hint":"two"}}"#,
+            ws.display()
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            ev.to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run_stdin(&ws, &refs, &payload);
+        assert_eq!(code, 0, "{stderr}");
+    }
+    std::fs::write(&device_file, dev1).unwrap();
+
+    // metrics 列表：s-board 两条独立（device_id 不同），不合并
+    let args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "session",
+        "--action",
+        "metrics",
+    ];
+    let refs: Vec<&str> = args.to_vec();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let sessions = v["result"]["sessions"].as_array().unwrap();
+    let board: Vec<&serde_json::Value> = sessions
+        .iter()
+        .filter(|s| s["session_id"] == "s-board")
+        .collect();
+    assert_eq!(board.len(), 2, "跨设备同名会话应独立: {v}");
+    let devices: std::collections::BTreeSet<String> = board
+        .iter()
+        .map(|s| s["device_id"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert_eq!(devices.len(), 2, "两条会话设备不同: {v}");
+
+    // 单 session 查询：歧义可解释
+    let args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "session",
+        "--action",
+        "metrics",
+        "--session",
+        "s-board",
+    ];
+    let refs: Vec<&str> = args.to_vec();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["identity_ambiguous"], true, "{v}");
+    assert_eq!(
+        v["result"]["identities"].as_array().map(|a| a.len()),
+        Some(2),
+        "{v}"
+    );
+
+    // 看板 /api/state：s-board 两条独立（与 CLI 同一聚合语义）
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = Command::new(bin())
+        .args([
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "dashboard",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(&ws)
+        .envs(common::isolated_child_env(c.tmp.path()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut connected = false;
+    for _ in 0..40 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(connected, "看板端口未就绪");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .write_all(b"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut body = String::new();
+    stream.read_to_string(&mut body).unwrap();
+    let json_start = body.find('{').expect("JSON 响应");
+    let state: serde_json::Value = serde_json::from_str(&body[json_start..]).unwrap();
+    let board_rows: Vec<&serde_json::Value> = state["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["session_id"] == "s-board")
+        .collect();
+    assert_eq!(board_rows.len(), 2, "看板同样按完整身份独立: {state}");
+    server.kill().unwrap();
+    let _ = server.wait();
+}
+
+/// RW-07/R03：状态按最新生命周期事件变化——Stop 后继续输入恢复 running；
+/// 最新事件为 Stop（含进程重启后）为 idle；仅有 session-start 为 running。
+#[test]
+fn dashboard_state_follows_latest_lifecycle_event() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+
+    let hook = |ev: &str, sid: &str| {
+        // 事件去重按内容：尾部 hint 使每次注入内容不同（模拟真实不同事件）
+        let hint = format!(
+            "{}-{}",
+            ev,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                % 100000
+        );
+        let payload = format!(
+            r#"{{"session_id":"{sid}","cwd":"{}","hint":"{}"}}"#,
+            ws.display(),
+            hint
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            ev.to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run_stdin(&ws, &refs, &payload);
+        assert_eq!(code, 0, "{stderr}");
+    };
+
+    // s-board：session-start → stop（现有种子）→ 再来一次 prompt：应恢复 running
+    hook("UserPromptSubmit", "s-board");
+    // s2：只有 stop → idle
+    hook("Stop", "s2");
+    // s3：只有 session-start → running
+    hook("SessionStart", "s3");
+
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = Command::new(bin())
+        .args([
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "dashboard",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(&ws)
+        .envs(common::isolated_child_env(c.tmp.path()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut connected = false;
+    for _ in 0..40 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(connected, "看板端口未就绪");
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .write_all(b"GET /api/state HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let mut body = String::new();
+    stream.read_to_string(&mut body).unwrap();
+    let json_start = body.find('{').expect("JSON 响应");
+    let state: serde_json::Value = serde_json::from_str(&body[json_start..]).unwrap();
+    server.kill().unwrap();
+    let _ = server.wait();
+
+    let state_of = |sid: &str| -> Vec<String> {
+        state["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["session_id"] == sid)
+            .map(|s| s["state"].as_str().unwrap_or("").to_string())
+            .collect()
+    };
+    assert_eq!(
+        state_of("s-board"),
+        vec!["running"],
+        "Stop 后 prompt 恢复 running: {state}"
+    );
+    assert_eq!(
+        state_of("s2"),
+        vec!["idle"],
+        "最新事件为 Stop → idle: {state}"
+    );
+    assert_eq!(
+        state_of("s3"),
+        vec!["running"],
+        "仅 session-start → running: {state}"
+    );
+}
+
+/// RW-07：SSE 初始快照 + 指纹变化推送 + 断线重连。跨进程 hook 事件使
+/// /api/events 在不刷新页面的情况下从 idle → running → idle。
+fn read_sse_frames(stream: &mut TcpStream, frames: usize) -> String {
+    use std::io::Read;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+        .unwrap();
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while buf.windows(2).filter(|w| w == b"\n\n").count() < frames {
+        let n = stream.read(&mut chunk).unwrap_or_else(|e| {
+            panic!(
+                "SSE 读取超时/断开: {e}; 已读 {} 字节: {}",
+                buf.len(),
+                String::from_utf8_lossy(&buf)
+            )
+        });
+        assert!(n > 0, "SSE 流提前结束");
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+#[test]
+fn dashboard_sse_pushes_state_transitions_without_page_refresh() {
+    let c = Ctx::new();
+    let (ws, _bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+
+    let hook = |ev: &str, sid: &str| {
+        // 事件去重按内容：尾部 hint 使每次注入内容不同（模拟真实不同事件）
+        let hint = format!(
+            "{}-{}",
+            ev,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+                % 100000
+        );
+        let payload = format!(
+            r#"{{"session_id":"{sid}","cwd":"{}","hint":"{}"}}"#,
+            ws.display(),
+            hint
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            ev.to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run_stdin(&ws, &refs, &payload);
+        assert_eq!(code, 0, "{stderr}");
+    };
+    // sse1：Start→Stop（当前 idle）
+    hook("SessionStart", "sse1");
+    hook("Stop", "sse1");
+
+    let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = port_probe.local_addr().unwrap().port();
+    drop(port_probe);
+    let mut server = Command::new(bin())
+        .args([
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "dashboard",
+            "--port",
+            &port.to_string(),
+        ])
+        .current_dir(&ws)
+        .envs(common::isolated_child_env(c.tmp.path()))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut connected = false;
+    for _ in 0..40 {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(connected, "看板端口未就绪");
+
+    let state_in_frame = |frame: &str| -> serde_json::Value {
+        let data_line = frame
+            .lines()
+            .find(|l| l.starts_with("data: "))
+            .expect("SSE data 行");
+        serde_json::from_str::<serde_json::Value>(&data_line[6..]).unwrap()
+    };
+    let state_of = |v: &serde_json::Value, sid: &str| -> String {
+        v["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["session_id"] == sid)
+            .map(|s| s["state"].as_str().unwrap_or("").to_string())
+            .unwrap_or_default()
+    };
+
+    // 订阅：初始快照（无论是否带 Last-Event-ID）→ sse1 idle
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .write_all(b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let frame1 = read_sse_frames(&mut stream, 1);
+    let v1 = state_in_frame(&frame1);
+    assert_eq!(state_of(&v1, "sse1"), "idle", "初始快照: {frame1}");
+
+    // 独立进程 hook：新 Prompt → SSE 推送 running（页面不刷新）
+    hook("UserPromptSubmit", "sse1");
+    let frame2 = read_sse_frames(&mut stream, 1);
+    let v2 = state_in_frame(&frame2);
+    assert_eq!(
+        state_of(&v2, "sse1"),
+        "running",
+        "SSE 应推送 running: {frame2}"
+    );
+
+    // 再 Stop → SSE 推送 idle
+    hook("Stop", "sse1");
+    let frame3 = read_sse_frames(&mut stream, 1);
+    let v3 = state_in_frame(&frame3);
+    assert_eq!(state_of(&v3, "sse1"), "idle", "SSE 应推送 idle: {frame3}");
+    drop(stream);
+
+    // 断线重连：新连接立即获得全量快照（含最新状态），服务器正常接受
+    let mut stream2 = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream2
+        .write_all(b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    let reframed = read_sse_frames(&mut stream2, 1);
+    let v4 = state_in_frame(&reframed);
+    assert_eq!(state_of(&v4, "sse1"), "idle", "重连快照: {reframed}");
+    drop(stream2);
+
+    server.kill().unwrap();
+    let _ = server.wait();
+}
+
+// ---------- AIL-022 返工回归（RW-08/R04+R05） ----------
+
+/// R04：先制造真实 pending（离线推送失败冻结），关闭 reporting 后 retry/push
+/// 均不发生远端写入（裸远端 refs 前后不变）；开关恢复后 retry 补传成功。
+/// R05：同会话身份跨日（不同日期文件名）重报在 digest 中合并为一条取最大值，
+/// 不重复累计。
+#[test]
+fn report_retry_gated_by_switch_and_crossday_snapshot_merged_once() {
+    let c = Ctx::new();
+    let (ws, bare) = setup_ws_with_events(&c);
+    let dr = c.dr();
+
+    let hook_prompt = |text: &str| {
+        let payload = format!(
+            r#"{{"session_id":"s-rw08","cwd":"{}","prompt":"{text}"}}"#,
+            ws.display()
+        );
+        let args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            dr.clone(),
+            "hook".to_string(),
+            "--tool".to_string(),
+            "claude".to_string(),
+            "--event".to_string(),
+            "UserPromptSubmit".to_string(),
+            "--root".to_string(),
+            ws.to_str().unwrap().to_string(),
+        ];
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, _, stderr) = c.run_stdin(&ws, &refs, &payload);
+        assert_eq!(code, 0, "{stderr}");
+    };
+
+    let remote_refs = || {
+        ailoom::gitx::git(
+            &bare,
+            &["for-each-ref", "refs/heads", "--format=%(refname)"],
+        )
+        .unwrap()
+    };
+
+    // 基线推送成功（reporting 显式开启）
+    let (code, _, stderr) = push_report(&c, &ws);
+    assert_eq!(code, 0, "{stderr}");
+
+    // 制造真实 pending：追加事件 → 断远端 → 推送失败冻结 → 恢复远端
+    let hidden = c.tmp.path().join("origin.git-hidden");
+    ailoom::gitx::git(&bare, &["config", "--get", "core.bare"]).unwrap(); // 触碰确认存在
+    hook_prompt("pending 事件一");
+    std::fs::rename(&bare, &hidden).unwrap();
+    let push_args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr.clone(),
+        "report".to_string(),
+        "--action".to_string(),
+        "push".to_string(),
+    ];
+    let push_refs: Vec<&str> = push_args.iter().map(String::as_str).collect();
+    let (code, _, _) = c.run_env(&ws, &push_refs, "AILOOM_REPORTING", "1");
+    assert_ne!(code, 0, "远端不可达推送必须失败");
+    std::fs::rename(&hidden, &bare).unwrap();
+    let refs_after_pending = remote_refs();
+
+    // 关闭 reporting：retry 不得发生远端写入（refs 前后不变），pending 保留
+    let retry_args = [
+        "--json".to_string(),
+        "--data-root".to_string(),
+        dr.clone(),
+        "report".to_string(),
+        "--action".to_string(),
+        "retry".to_string(),
+    ];
+    let refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["retried"], 0, "{v}");
+    assert_eq!(v["result"]["reporting_enabled"], false, "{v}");
+    assert_eq!(remote_refs(), refs_after_pending, "关闭期间远端零写入");
+    // push 同样被开关拒绝
+    let (code, _, _) = c.run_env(&ws, &push_refs, "AILOOM_REPORTING", "0");
+    assert_ne!(code, 0, "关闭时 push 必须拒绝");
+    assert_eq!(remote_refs(), refs_after_pending, "远端仍零写入");
+
+    // 开关恢复：retry 补传成功，pending 清空
+    let (code, stdout, stderr) = c.run_env(&ws, &refs, "AILOOM_REPORTING", "1");
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["retried"], 1, "补传应成功: {v}");
+    let status_args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "report",
+        "--action",
+        "status",
+    ];
+    let refs: Vec<&str> = status_args.to_vec();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        v["result"]["pending"].as_object().map(|o| o.is_empty()),
+        Some(true),
+        "{v}"
+    );
+
+    // 追加事件后再推一次：今日快照 prompt=2（真实增量体现在新快照）
+    hook_prompt("pending 事件二");
+    let (code, push_out, stderr) = push_report(&c, &ws);
+    assert_eq!(code, 0, "{stderr}");
+    let branch: String = serde_json::from_str::<serde_json::Value>(push_out.trim()).unwrap()
+        ["result"]["branch"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // R05 跨日合并：在报告分支手工加入昨日同名身份文件（较低计数），
+    // digest 必须合并为一条取最大值（不重复累计）
+    let wid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let device = std::fs::read_to_string(c.tmp.path().join("data").join("device-id"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let sidh = ailoom::ids::sha256_prefix(format!("{wid}|{device}|claude|s-rw08").as_bytes(), 16);
+    // 取远端报告分支中今天的文件，复制为昨日文件名并把计数改低
+    let clone = c.tmp.path().join("digest-clone");
+    ailoom::gitx::git(
+        &bare,
+        &[
+            "clone",
+            "-q",
+            bare.to_str().unwrap(),
+            clone.to_str().unwrap(),
+            "--branch",
+            &branch,
+        ],
+    )
+    .unwrap();
+    let listing = ailoom::gitx::git(&clone, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
+    let today_file = listing
+        .lines()
+        .find(|l| l.starts_with("reports/sessions/") && l.ends_with(&format!("-{sidh}.json")))
+        .expect("s-rw08 的今日报告文件存在")
+        .to_string();
+    let yesterday_file = format!("reports/sessions/2020-01-01-{sidh}.json");
+    let body = ailoom::gitx::git(&clone, &["show", &format!("HEAD:{today_file}")]).unwrap();
+    let mut v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    if let Some(rec) = v["record"].as_object_mut() {
+        rec.insert("prompt_count".into(), serde_json::json!(1));
+    } // 昨日快照较低（1），今日快照为 2 → 合并取最大值 2
+    std::fs::write(
+        clone.join(&yesterday_file),
+        serde_json::to_string_pretty(&v).unwrap(),
+    )
+    .unwrap();
+    ailoom::gitx::git(&clone, &["add", "-A"]).unwrap();
+    ailoom::gitx::git(
+        &clone,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "yesterday copy",
+        ],
+    )
+    .unwrap();
+    ailoom::gitx::git(&clone, &["push", "-q", "origin", "HEAD"]).unwrap();
+
+    // digest：同身份跨日两条文件 → 一条记录，计数取最大值（不重复累计）
+    let args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "report",
+        "--action",
+        "digest",
+    ];
+    let refs: Vec<&str> = args.to_vec();
+    let (code, stdout, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let rows: Vec<&serde_json::Value> = v["result"]["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["session_id_hash"] == sidh.as_str())
+        .collect();
+    assert_eq!(rows.len(), 1, "跨日同身份只合并为一条: {v}");
+    let prompts = rows[0]["prompt_count"].as_u64().unwrap();
+    assert_eq!(prompts, 2, "取累计快照最大值 2 而非相加 3: {v}");
+    assert!(
+        rows[0]["dates"]
+            .as_array()
+            .map(|d| d.len() == 2)
+            .unwrap_or(false),
+        "两个上报日期都可见: {}",
+        rows[0]["dates"]
+    );
 }

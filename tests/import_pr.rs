@@ -615,8 +615,30 @@ fn pr_state_transitions_stale_merge_and_idempotent_baseline() {
     assert_eq!(v["result"]["status"], "candidate-unverified", "{v}");
     let p1 = v["result"]["draft_path"].as_str().unwrap().to_string();
 
-    // 2) force-push：head=bbbb → 新候选；旧候选标记 stale
-    let path_env = write_fake_gh(&c, &meta("bbbbbbbbbbbb", false, "open", "修复缓存 v2"));
+    // 2) force-push：head=真实提交 → 新候选；旧候选标记 stale
+    std::fs::create_dir_all(ws.join("src")).unwrap();
+    std::fs::write(ws.join("src/fix.rs"), "pub fn fixed() -> u32 { 1 }\n").unwrap();
+    ailoom::gitx::git(&ws, &["add", "-A"]).unwrap();
+    ailoom::gitx::git(
+        &ws,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "fix",
+        ],
+    )
+    .unwrap();
+    let merged_head = ailoom::gitx::git(&ws, &["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+    let path_env = write_fake_gh(&c, &meta(&merged_head, false, "open", "修复缓存 v2"));
     let (code, v, stderr) = pr_draft(&c, &ws, &path_env, url);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(v["result"]["stale_marked"], 1, "旧 head 候选被失效: {v}");
@@ -629,8 +651,8 @@ fn pr_state_transitions_stale_merge_and_idempotent_baseline() {
     );
     assert!(std::path::Path::new(&p1).is_file(), "旧候选保留可查询");
 
-    // 3) 同 head bbbb merged=true → 刷新为 candidate-merged 并推进图基线
-    let path_env = write_fake_gh(&c, &meta("bbbbbbbbbbbb", true, "closed", "修复缓存 v2"));
+    // 3) 同 head merged=true → 刷新为 candidate-merged 并推进图基线
+    let path_env = write_fake_gh(&c, &meta(&merged_head, true, "closed", "修复缓存 v2"));
     let (code, v, stderr) = pr_draft(&c, &ws, &path_env, url);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
@@ -652,7 +674,14 @@ fn pr_state_transitions_stale_merge_and_idempotent_baseline() {
         .join("graph-baseline.jsonl");
     assert!(baseline.is_file(), "合并应推进图基线记录");
     let btext = std::fs::read_to_string(&baseline).unwrap();
-    assert!(btext.contains("team/alpha#7@bbbbbbbbbbbb"), "{btext}");
+    assert!(
+        btext.contains(&format!("team/alpha#7@{merged_head}")),
+        "{btext}"
+    );
+    assert!(
+        btext.contains("\"state\": \"success\"") || btext.contains("\"state\":\"success\""),
+        "{btext}"
+    );
     // 构图确实执行：项目图文件生成
     let graph = c
         .tmp
@@ -719,4 +748,578 @@ fn pr_same_number_and_head_prefix_across_repos_distinct() {
     assert_eq!(code, 0, " hostile 标题不得失败: {stderr}");
     let text = std::fs::read_to_string(v3["result"]["draft_path"].as_str().unwrap()).unwrap();
     assert!(text.contains("status: candidate-unverified"), "{text}");
+}
+
+/// RW-12/R09：同一文档跨目标导入各自独立（候选名/落盘路径含 target，
+/// 不覆盖原归属）；内容更新只更新对应目标且原位进行；旧版本 checkpoint
+/// （名字哈希不含 target）被识别并沿用旧名，不重复发布。
+#[test]
+fn import_target_isolation_and_legacy_checkpoint_compat() {
+    let c = Ctx::new();
+    let (_bare, ws) = setup(&c);
+    let dir = c.tmp.path().join("d3");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("postmortem.md"), "# 复盘\n\n内容 v1\n").unwrap();
+
+    // 目标 A：导入
+    let (code, stdout, stderr) = run_refs(
+        &c,
+        &ws,
+        &import_args(&c, &dir, "project:a", "learning", true),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let name_a = v["result"]["planned"][0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 目标 shared：名字必须不同（R09：不再覆盖 A 的归属）
+    let (code, stdout, stderr) =
+        run_refs(&c, &ws, &import_args(&c, &dir, "shared", "learning", true));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let name_shared = v["result"]["planned"][0]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(
+        name_a, name_shared,
+        "跨目标候选名必须隔离: {name_a} vs {name_shared}"
+    );
+
+    // 重复导入不增生
+    let (_, stdout, _) = run_refs(
+        &c,
+        &ws,
+        &import_args(&c, &dir, "project:a", "learning", true),
+    );
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["imported"], 0, "{v}");
+
+    // 内容更新：A 原位更新（名字不变），shared 独立更新
+    std::fs::write(dir.join("postmortem.md"), "# 复盘\n\n内容 v2\n").unwrap();
+    let (code, stdout, stderr) = run_refs(
+        &c,
+        &ws,
+        &import_args(&c, &dir, "project:a", "learning", true),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["imported"], 1, "{v}");
+    assert_eq!(
+        v["result"]["planned"][0]["name"].as_str().unwrap(),
+        name_a,
+        "A 原位更新名字不变"
+    );
+    let (code, stdout, stderr) =
+        run_refs(&c, &ws, &import_args(&c, &dir, "shared", "learning", true));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["imported"], 1, "{v}");
+    assert_eq!(
+        v["result"]["planned"][0]["name"].as_str().unwrap(),
+        name_shared,
+        "shared 独立原位更新"
+    );
+
+    // 旧 checkpoint 兼容：把 A 的记录键改写为旧版名字（哈希不含 target），
+    // 再次导入应识别为已导入（跳过），不改名、不重复发布
+    let wsid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let cp_path = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(wsid)
+        .join("import-checkpoint.json");
+    let cp_text = std::fs::read_to_string(&cp_path).unwrap();
+    let mut cp: serde_json::Value = serde_json::from_str(&cp_text).unwrap();
+    let keys: Vec<String> = cp["imported"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    let key_a = keys
+        .iter()
+        .find(|k| k.ends_with(&format!("|{name_a}")))
+        .expect("checkpoint 应含 A 记录")
+        .clone();
+    let parts: Vec<&str> = key_a.split('|').collect();
+    let identity = parts[0];
+    let legacy_name = format!(
+        "d3-postmortem-{}",
+        ailoom::ids::sha256_prefix(format!("{identity}\0postmortem.md").as_bytes(), 8)
+    );
+    let legacy_key = format!("{identity}|learning|project:a|{legacy_name}");
+    let rec = cp["imported"][&key_a].clone();
+    cp["imported"].as_object_mut().unwrap().remove(&key_a);
+    cp["imported"]
+        .as_object_mut()
+        .unwrap()
+        .insert(legacy_key.clone(), rec);
+    std::fs::write(&cp_path, serde_json::to_string_pretty(&cp).unwrap()).unwrap();
+
+    let (code, stdout, stderr) = run_refs(
+        &c,
+        &ws,
+        &import_args(&c, &dir, "project:a", "learning", true),
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(
+        v["result"]["skipped_unchanged"], 1,
+        "旧名候选应按 digest 识别为已导入（兼容，不重复发布）: {v}"
+    );
+    assert_eq!(v["result"]["imported"], 0, "{v}");
+    assert!(
+        !v["result"]["planned"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == name_a),
+        "不得再以新名重复发布同一（来源,路径,目标）: {v}"
+    );
+}
+
+// ---------- AIL-035 返工回归（RW-14/R12+R13）：候选完整身份与编号边界 ----------
+
+fn gh_runner(
+    c: &Ctx,
+    ws: &Path,
+    path_env: &str,
+    json_file: std::path::PathBuf,
+    url: &str,
+) -> (i32, serde_json::Value, String) {
+    let out = std::process::Command::new(bin())
+        .args([
+            "--json",
+            "--data-root",
+            c.dr().as_str(),
+            "pr",
+            "--action",
+            "draft",
+            "--url",
+            url,
+            "--project",
+            "a",
+        ])
+        .current_dir(ws)
+        .env("PATH", path_env)
+        .env("PR_JSON_FILE", json_file.to_str().unwrap())
+        .envs(common::isolated_child_env(c.tmp.path()))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let v = serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap_or_default();
+    (out.status.code().unwrap_or(-1), v, stderr)
+}
+
+fn pr_json(head: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("gh-{}-{head}.json", std::process::id()));
+    std::fs::write(
+        &p,
+        format!(
+            r#"{{"title":"t-{head}","state":"open","merged":false,"body":"b","head":{{"sha":"{head}"}}}}"#
+        ),
+    )
+    .unwrap();
+    p
+}
+
+/// R12：同 repo 的 #1/#10/#11 并存；更新 #1 只作废 #1 的旧 head，
+/// #10/#11 候选不受影响。R13：同 8 位前缀不同完整 SHA 是不同候选（不误去重）；
+/// 相同完整 head 幂等；force-push 后旧候选标记 stale。
+#[test]
+fn pr_candidate_identity_boundaries_and_full_sha() {
+    let c = Ctx::new();
+    let (_bare, ws) = setup(&c);
+    let fake_bin = c.tmp.path().join("fake-bin2");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let gh = fake_bin.join("gh");
+    std::fs::write(&gh, "#!/bin/sh\ncat \"$PR_JSON_FILE\"\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path_env = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let url = |n: u64| format!("https://github.com/team/repo/pull/{n}");
+    let draft_dir = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws.canonicalize().unwrap(),
+        ))
+        .join("pr-candidates");
+
+    // R12：#1、#10、#11 并存
+    for (n, head) in [(1u64, "aaaa0000"), (10, "bbbb1111"), (11, "cccc2222")] {
+        let (code, v, stderr) = gh_runner(&c, &ws, &path_env, pr_json(head), &url(n));
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(v["result"]["deduplicated"], false, "{v}");
+    }
+    let f = |n: u64, head: &str| draft_dir.join(format!("pr-github-team__repo-{n}-{head}.md"));
+    assert!(f(1, "aaaa0000").is_file());
+    assert!(f(10, "bbbb1111").is_file());
+    assert!(f(11, "cccc2222").is_file());
+
+    // 更新 #1（force-push 到新 head）：只作废 #1 的旧候选，#10/#11 不受影响
+    let (code, v, stderr) = gh_runner(&c, &ws, &path_env, pr_json("dddd3333"), &url(1));
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(v["result"]["stale_marked"], 1, "只应标记 #1 旧候选: {v}");
+    assert!(f(1, "dddd3333").is_file());
+    assert!(
+        !f(1, "aaaa0000").is_file() || {
+            // 旧文件保留但应标记 stale
+            std::fs::read_to_string(f(1, "aaaa0000"))
+                .map(|t| t.contains("candidate-stale"))
+                .unwrap_or(false)
+        }
+    );
+    for (n, head) in [(10u64, "bbbb1111"), (11, "cccc2222")] {
+        let text = std::fs::read_to_string(f(n, head)).unwrap();
+        assert!(
+            !text.contains("candidate-stale"),
+            "{n} 不应被误标 stale: {text}"
+        );
+    }
+
+    // R13：同 8 位前缀（deadbeef）、不同完整 SHA → 不同身份，不误去重
+    let (code, v1, stderr) = gh_runner(&c, &ws, &path_env, pr_json("deadbeef1111"), &url(20));
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(v1["result"]["deduplicated"], false);
+    let (code, v2, _) = gh_runner(&c, &ws, &path_env, pr_json("deadbeef2222"), &url(20));
+    assert_eq!(code, 0);
+    assert_eq!(
+        v2["result"]["deduplicated"], false,
+        "同前缀不同完整 SHA 不得误去重: {v2}"
+    );
+    assert_ne!(
+        v1["result"]["draft_path"].as_str().unwrap(),
+        v2["result"]["draft_path"].as_str().unwrap()
+    );
+    // 同完整 head 再次 draft → 幂等
+    let (code, v3, _) = gh_runner(&c, &ws, &path_env, pr_json("deadbeef1111"), &url(20));
+    assert_eq!(code, 0);
+    assert_eq!(v3["result"]["deduplicated"], true, "同完整 head 幂等");
+    // force-push 语义：后 draft 的 head 使先前的同 PR 候选 stale
+    let old =
+        std::fs::read_to_string(draft_dir.join("pr-github-team__repo-20-deadbeef1111.md")).unwrap();
+    assert!(old.contains("candidate-stale"), "旧 head 候选应标记 stale");
+
+    // 旧截断文件名兼容：legacy 文件记录同一完整 head → 迁移到新名且幂等去重
+    let legacy = draft_dir.join("pr-github-team__repo-30-deadbeef.md");
+    std::fs::write(
+        &legacy,
+        "---\nstatus: candidate-unverified\nhead_sha: deadbeef9999\n---\n\n# PR #30\n",
+    )
+    .unwrap();
+    let (code, v4, stderr) = gh_runner(&c, &ws, &path_env, pr_json("deadbeef9999"), &url(30));
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        v4["result"]["deduplicated"], true,
+        "legacy 同 head 应迁移并去重: {v4}"
+    );
+    assert!(
+        draft_dir
+            .join("pr-github-team__repo-30-deadbeef9999.md")
+            .is_file(),
+        "迁移到完整 SHA 文件名"
+    );
+    assert!(!legacy.exists(), "legacy 文件已迁移删除");
+}
+
+// ---------- AIL-035 返工回归（RW-13/R10+R11）：合并构图快照与重试 ----------
+
+fn draft_dir2(c: &Ctx, ws: &Path) -> std::path::PathBuf {
+    c.tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws.canonicalize().unwrap(),
+        ))
+        .join("pr-candidates")
+}
+
+/// R10：目标项目显式化（不隐式选第一个绑定）、未绑定/未指定显式跳过；
+/// 图内容来自合并 head 的受控快照（checkout 落后不冒充）；快照不可得 → pending。
+/// R11：构建失败不写成功标记、重试可完成；成功后重复幂等；closed 未合并不推进。
+#[test]
+fn pr_merge_graph_baseline_targeting_snapshot_and_retry() {
+    let c = Ctx::new();
+    let (bare, ws) = setup(&c);
+    // 绑定 a、b 两个项目（与 setup 相同的源 URL，避免锁身份漂移）
+    let args = vec![
+        "--json".to_string(),
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+        "--project".to_string(),
+        "b".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    // 业务仓 main：lib.rs（warm）；分支提交 adds extra.rs（cold）→ 合并 head C2
+    std::fs::create_dir_all(ws.join("src")).unwrap();
+    std::fs::write(ws.join("src/lib.rs"), "pub fn warm() -> u32 { 1 }\n").unwrap();
+    ailoom::gitx::git(&ws, &["add", "-A"]).unwrap();
+    ailoom::gitx::git(
+        &ws,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    )
+    .unwrap();
+    ailoom::gitx::git(&ws, &["checkout", "-q", "-b", "prbranch"]).unwrap();
+    std::fs::write(ws.join("src/extra.rs"), "pub fn cold() -> u32 { 2 }\n").unwrap();
+    ailoom::gitx::git(&ws, &["add", "-A"]).unwrap();
+    ailoom::gitx::git(
+        &ws,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "pr",
+        ],
+    )
+    .unwrap();
+    let head = ailoom::gitx::git(&ws, &["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+    ailoom::gitx::git(&ws, &["checkout", "-q", "main"]).unwrap();
+
+    let url = "https://github.com/team/repo/pull/9";
+    let draft_with = |project: Option<&str>, head_sha: &str| {
+        let path_env = write_fake_gh(&c, &meta(head_sha, true, "closed", "合并"));
+        let mut args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            c.dr(),
+            "pr".to_string(),
+            "--action".to_string(),
+            "draft".to_string(),
+            "--url".to_string(),
+            url.to_string(),
+        ];
+        if let Some(p) = project {
+            args.push("--project".to_string());
+            args.push(p.to_string());
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = c.run_with_path(&ws, &refs, &path_env);
+        let v = serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap_or_default();
+        (code, v, stderr)
+    };
+    let wsid = ailoom::ids::workspace_id_from_root(&ws.canonicalize().unwrap());
+    let index = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(&wsid)
+        .join("index");
+    let baseline = c
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(&wsid)
+        .join("graph-baseline.jsonl");
+    let marker_has_success = |sha: &str| {
+        baseline.is_file()
+            && std::fs::read_to_string(&baseline)
+                .map(|t| t.lines().any(|l| l.contains(sha) && l.contains("success")))
+                .unwrap_or(false)
+    };
+
+    // 1) 未指定 --project：显式跳过，不隐式选第一个绑定项目
+    let (code, v, stderr) = draft_with(None, &head);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        v["result"]["baseline"].is_null()
+            || v["result"]["baseline"]["graph_baseline"] == "not-merged"
+            || v["result"]["baseline"]["graph_baseline"] == "skipped",
+        "未指定项目不得隐式推进: {v}"
+    );
+
+    // 用新 PR 编号验证 baseline 细节（同 head 不同 PR 即不同 identity）
+    let url2 = "https://github.com/team/repo/pull/91";
+    let draft_url = |project: Option<&str>, head_sha: &str, u: &str| {
+        let path_env = write_fake_gh(&c, &meta(head_sha, true, "closed", "合并"));
+        let mut args = vec![
+            "--json".to_string(),
+            "--data-root".to_string(),
+            c.dr(),
+            "pr".to_string(),
+            "--action".to_string(),
+            "draft".to_string(),
+            "--url".to_string(),
+            u.to_string(),
+        ];
+        if let Some(p) = project {
+            args.push("--project".to_string());
+            args.push(p.to_string());
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = c.run_with_path(&ws, &refs, &path_env);
+        let v = serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap_or_default();
+        (code, v, stderr)
+    };
+    let (code, v, stderr) = draft_url(None, &head, url2);
+    assert_eq!(code, 0, "{stderr}");
+    let b = v["result"]["baseline"].clone();
+    assert_eq!(b["graph_baseline"], "skipped", "未指定项目应跳过: {v}");
+    assert!(b["reason"].as_str().unwrap().contains("未指定"), "{b}");
+
+    // 1b) 未绑定项目 c → skipped
+    let (code, v, stderr) = draft_url(Some("c"), &head, "https://github.com/team/repo/pull/92");
+    assert_eq!(code, 0, "{stderr}");
+    let b = v["result"]["baseline"].clone();
+    assert_eq!(b["graph_baseline"], "skipped", "{v}");
+    assert!(
+        b["reason"].as_str().unwrap().contains("未在工作区绑定"),
+        "{b}"
+    );
+
+    // 2) 明确目标 b：推进 b；图内容来自合并 head 快照（含 extra.rs，工作区没有）
+    let (code, v, stderr) = draft_url(Some("b"), &head, "https://github.com/team/repo/pull/93");
+    assert_eq!(code, 0, "{stderr}");
+    let b = v["result"]["baseline"].clone();
+    assert_eq!(b["graph_baseline"], "advanced", "{v}");
+    assert_eq!(b["graph"]["project"], "b");
+    assert!(
+        !index.join("codegraph-a.json").exists(),
+        "不得推进未指定项目 a"
+    );
+    let g: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(index.join("codegraph-b.json")).unwrap())
+            .unwrap();
+    assert_eq!(g["revision"], head, "图 revision = 合并 head");
+    assert!(
+        g["files"].get("src/extra.rs").is_some(),
+        "图内容来自合并快照（含工作区没有的 extra.rs）: {g}"
+    );
+    assert!(marker_has_success(&head), "成功标记落盘");
+
+    // 3) 成功后重复 → already-advanced（幂等）
+    {
+        let head2 = {
+            std::fs::write(ws.join("src/lib.rs"), "pub fn warm() -> u32 { 3 }\n").unwrap();
+            ailoom::gitx::git(&ws, &["add", "-A"]).unwrap();
+            ailoom::gitx::git(
+                &ws,
+                &[
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-qm",
+                    "again",
+                ],
+            )
+            .unwrap();
+            ailoom::gitx::git(&ws, &["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let (code, v, stderr) =
+            draft_url(Some("b"), &head2, "https://github.com/team/repo/pull/94");
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(v["result"]["baseline"]["graph_baseline"], "advanced", "{v}");
+        // 幂等：删除草稿文件后重放同 (PR, head)（dedup 分支不再短路）
+        std::fs::remove_file(
+            draft_dir2(&c, &ws).join(format!("pr-github-team__repo-94-{head2}.md")),
+        )
+        .unwrap();
+        let (code, v, _) = draft_url(Some("b"), &head2, "https://github.com/team/repo/pull/94");
+        assert_eq!(code, 0);
+        assert_eq!(
+            v["result"]["baseline"]["graph_baseline"], "already-advanced",
+            "成功后重复幂等: {v}"
+        );
+    }
+
+    // 4) 快照不可得（伪造 head 不在对象库）→ pending，不写成功标记
+    let (code, v, stderr) = draft_url(
+        Some("b"),
+        "feedface0000",
+        "https://github.com/team/repo/pull/96",
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let b = v["result"]["baseline"].clone();
+    assert_eq!(b["graph_baseline"], "pending", "{v}");
+    assert!(
+        !marker_has_success("feedface0000"),
+        "pending 不得写成功标记"
+    );
+
+    // 5) 构建失败（图损坏）→ CLI 非零且不写成功标记；修复后重试成功
+    std::fs::write(index.join("codegraph-b.json"), "{corrupt").unwrap();
+    let head3 = {
+        std::fs::write(ws.join("src/lib.rs"), "pub fn warm() -> u32 { 4 }\n").unwrap();
+        ailoom::gitx::git(&ws, &["add", "-A"]).unwrap();
+        ailoom::gitx::git(
+            &ws,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "r3",
+            ],
+        )
+        .unwrap();
+        ailoom::gitx::git(&ws, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string()
+    };
+    let (code, _, stderr) = draft_url(Some("b"), &head3, "https://github.com/team/repo/pull/97");
+    assert_ne!(code, 0, "图损坏时合并推进必须失败: {stderr}");
+    assert!(!marker_has_success(&head3), "失败不得写成功标记");
+    // 修复后重试可完成
+    std::fs::remove_file(index.join("codegraph-b.json")).unwrap();
+    let (code, v, stderr) = draft_url(Some("b"), &head3, "https://github.com/team/repo/pull/97");
+    assert_eq!(code, 0, "重试应成功: {stderr}");
+    assert_eq!(v["result"]["baseline"]["graph_baseline"], "advanced", "{v}");
+    assert!(marker_has_success(&head3));
 }

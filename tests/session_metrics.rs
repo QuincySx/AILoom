@@ -1,6 +1,9 @@
 //! 会话、Token 与人工干预聚合（AIL-019）+ 摩擦提示（AIL-020）单元/集成测试。
 
-use ailoom::events::aggregate::{aggregate_session, parse_claude_transcript, HeuristicConfig};
+use ailoom::events::aggregate::{
+    aggregate_all, aggregate_session, parse_claude_transcript, session_identities, HeuristicConfig,
+    SessionMetrics,
+};
 use ailoom::events::friction::{build_share_record, friction_score, should_prompt, FrictionConfig};
 use ailoom::events::schema::{Event, TokenSnapshot};
 
@@ -298,7 +301,13 @@ fn same_session_string_with_different_tools_not_merged_in_listing() {
     let events = vec![ev("stop", "dual", None, None, None, None), b];
     let all = aggregate_all("wsA", &events, &cfg()).unwrap();
     assert_eq!(all.len(), 2, "provider 同名 session 不合并: {all:?}");
-    assert!(all.contains_key("claude/dual") && all.contains_key("codex/dual"));
+    // RW-06：键含设备维度（tool/session@device）
+    assert!(
+        all.keys().any(|k| k.starts_with("claude/dual@"))
+            && all.keys().any(|k| k.starts_with("codex/dual@")),
+        "键: {:?}",
+        all.keys().collect::<Vec<_>>()
+    );
 }
 
 // ---------- AIL-020 提示认领（并发安全） ----------
@@ -322,4 +331,53 @@ fn claim_prompted_is_atomic_and_releasable() {
     assert!(ailoom::events::friction::was_prompted(tmp.path(), "s1"));
     // 其他会话独立
     assert!(ailoom::events::friction::claim_prompted(tmp.path(), "s2").unwrap());
+}
+
+/// RW-06/R02：完整会话身份四元组（workspace/device/tool/session）。
+/// 同名 session 跨设备/跨宿主在 aggregate_all 中各自独立；
+/// session_identities 提供单 session 查询的歧义解释；
+/// 共享记录身份含完整四元组（不同身份不同上报文件）。
+#[test]
+fn full_identity_prevents_cross_device_and_cross_tool_merging() {
+    let mut dev2 = ev("prompt", "same-sid", None, None, None, None);
+    dev2.device_id = "dev-2".into();
+    let mut tool2 = ev("prompt", "same-sid", None, None, None, None);
+    tool2.tool = "codex".into();
+    let events = vec![
+        ev("prompt", "same-sid", None, None, None, None),
+        dev2,
+        tool2,
+    ];
+
+    // 聚合：三个完整身份 → 三条独立会话，各 1 个 prompt（不合并计数）
+    let all = aggregate_all("wsA", &events, &cfg()).unwrap();
+    assert_eq!(all.len(), 3, "身份键: {:?}", all.keys().collect::<Vec<_>>());
+    for (k, m) in &all {
+        assert_eq!(m.prompt_count, 1, "{k} 不应合并他身份事件");
+        assert!(!m.device_id.is_empty(), "{k} 应携带设备维度");
+    }
+
+    // 歧义解释：单 session 查询能列出全部完整身份
+    let ids = session_identities("wsA", "same-sid", &events);
+    assert_eq!(ids.len(), 3, "{ids:?}");
+
+    // 共享记录：不同设备/宿主的同名 session → 不同 session_id_hash（不同上报文件）
+    let base = |device: &str, tool: &str| SessionMetrics {
+        session_id: "same-sid".into(),
+        workspace_id: "wsA".into(),
+        tool: tool.into(),
+        device_id: device.into(),
+        ..Default::default()
+    };
+    let h1 = build_share_record(&base("dev-1", "claude"));
+    let h2 = build_share_record(&base("dev-2", "claude"));
+    let h3 = build_share_record(&base("dev-1", "codex"));
+    assert_ne!(
+        h1["session_id_hash"], h2["session_id_hash"],
+        "跨设备身份不同"
+    );
+    assert_ne!(
+        h1["session_id_hash"], h3["session_id_hash"],
+        "跨宿主身份不同"
+    );
 }

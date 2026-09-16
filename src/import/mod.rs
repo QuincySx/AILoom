@@ -334,9 +334,25 @@ pub fn run(args: &ImportArgs, json: bool, data_root: Option<&std::path::Path>) -
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| format!("doc-{}", &digest[..8]));
-            let sid8 = crate::ids::sha256_prefix(format!("{}\0{rel}", src.identity).as_bytes(), 8);
-            let name = format!("{}-{}-{sid8}", src.prefix, sanitize(&stem));
-            let key = candidate_key(&src.identity, &kind, &target, &name);
+            // RW-12/R09：候选名（=落盘路径）必须包含目标，跨目标导入各自独立、
+            // 不互相覆盖归属。兼容：旧版本候选名哈希不含 target——checkpoint 中
+            // 已有旧名记录的候选继续沿用旧名（原位更新/跳过），禁止静默重归属
+            // 或重复发布。
+            let legacy_sid8 =
+                crate::ids::sha256_prefix(format!("{}\0{rel}", src.identity).as_bytes(), 8);
+            let legacy_name = format!("{}-{}-{legacy_sid8}", src.prefix, sanitize(&stem));
+            let legacy_key = candidate_key(&src.identity, &kind, &target, &legacy_name);
+            let sid8 = crate::ids::sha256_prefix(
+                format!("{}\0{rel}\0{target}", src.identity).as_bytes(),
+                8,
+            );
+            let name_new = format!("{}-{}-{sid8}", src.prefix, sanitize(&stem));
+            let (name, key) = if cp.imported.contains_key(&legacy_key) {
+                (legacy_name, legacy_key)
+            } else {
+                let k = candidate_key(&src.identity, &kind, &target, &name_new);
+                (name_new, k)
+            };
             current_names.insert(name.clone());
             if let Some(rec) = cp.imported.get(&key) {
                 if rec.digest == digest {

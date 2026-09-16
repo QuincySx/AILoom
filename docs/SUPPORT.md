@@ -1,16 +1,29 @@
 # 支持范围与能力矩阵
 
-更新日期：2026-09-09。规则：**未知标 unknown；待核实不能标 supported**（契约 §8）。
+更新日期：2026-09-16。规则：**未知标 unknown；待核实不能标 supported**（契约 §8）。
 
 ## 宿主工具
 
-| 工具 | 实测版本 | 项目级支持（初版） | 详细矩阵 |
+| 工具 | 实测版本 | 项目级支持 | 详细矩阵 |
 |---|---|---|---|
-| Claude Code | 2.1.266 | skills / rules / agents / MCP / hooks / 文档索引 | [claude-code.md](capabilities/claude-code.md) |
-| Codex CLI | 0.153.4 | rules（AGENTS.md 片段）✔ 实测；skills/MCP 项目级配置落盘 ✔ 但宿主**不加载**（实测降级，见矩阵）；文档索引 ✔ | [codex.md](capabilities/codex.md) |
+| Claude Code | 2.1.272 | skills（真机发现+调用 ✔）/ rules / agents / MCP（真机连接+工具调用 ✔）/ hooks / 文档索引 | [claude-code.md](capabilities/claude-code.md) |
+| Codex CLI | 0.154.0 | skills：`.agents/skills` **真机发现+调用 ✔（2026-09-16）**；rules（AGENTS.md 片段）；MCP 项目级配置落盘 ✔ 但宿主**仍不加载**（0.154.0 复测，见矩阵） | [codex.md](capabilities/codex.md) |
 
-宿主内真实加载/调用验收需要交互环境：文件落盘与官方发现路径一致性已自动化断言，
-宿主内行为在矩阵中逐行标注"未验证"。这些条目不作为 supported 证据。
+真机探测证据：[evidence/console/2026-09-16-host-probes.md](evidence/console/2026-09-16-host-probes.md)。
+宿主内行为逐行标注实测状态；unknown 条目不作为 supported 证据。
+
+## 个人模式（2026-09-16 起）
+
+- 个人配置/资源库/流程产物存放在机器数据区（仓外）；项目根无需 `.ailoom/project.toml`。
+- 公司已跟踪的 AGENTS.md/CLAUDE.md/宿主配置与暂存区在个人 apply/sync/uninstall 中保持原样；
+  不使用 skip-worktree/assume-unchanged/rm --cached。
+- 已知限制：AILoom 不部署 ≠ 宿主已禁用（宿主仍可能从全局/祖先目录加载能力，界面如实区分）；
+  Codex 项目级 MCP 在实测版本不加载。
+- 个人指令入口需要在工作树放置独立本地文件（如 `.claude/rules/ailoom-personal.md`、
+  Codex 个人视图），经 Git 本地 exclude 避免普通 add 收入；「严格零新增文件」模式
+  明确不支持（需宿主外部/启动注入能力，AILoom 不假装支持，也不使用
+  skip-worktree/assume-unchanged/rm --cached 隐藏修改）。exclude 对已跟踪文件无效，
+  强制 `git add -f` 不在产品承诺内。
 
 ## 平台
 

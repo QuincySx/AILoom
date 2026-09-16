@@ -1,0 +1,44 @@
+# RW-17 修复后 installer 套件复验（2026-09-15，代码版本见 git）
+环境：node 经 mise shim（PATH 含 ~/.local/share/mise/shims）；HOME/XDG/AILOOM 根由测试自隔离
+=== 第 1 次：cargo test --locked --offline --test installer ===
+     Running tests/installer.rs (target/debug/deps/installer-743cf15d5f9032bf)
+
+running 6 tests
+test installer_rejects_unsupported_platform ... ok
+test installer_uninstall_keeps_user_files ... ok
+test npm_wrapper_locates_local_artifact_and_passes_through ... ok
+test installer_installs_and_upgrades_verified_artifacts ... ok
+test installer_sha256_tool_fallback_and_fail_closed ... ok
+test installer_failed_upgrade_preserves_old_install ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+exit=0
+=== 第 2 次：cargo test --locked --offline --test installer ===
+     Running tests/installer.rs (target/debug/deps/installer-743cf15d5f9032bf)
+
+running 6 tests
+test installer_rejects_unsupported_platform ... ok
+test installer_uninstall_keeps_user_files ... ok
+test npm_wrapper_locates_local_artifact_and_passes_through ... ok
+test installer_installs_and_upgrades_verified_artifacts ... ok
+test installer_sha256_tool_fallback_and_fail_closed ... ok
+test installer_failed_upgrade_preserves_old_install ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+
+exit=0
+=== 第 3 次：cargo test --locked --offline --test installer ===
+     Running tests/installer.rs (target/debug/deps/installer-743cf15d5f9032bf)
+
+running 6 tests
+test installer_rejects_unsupported_platform ... ok
+test installer_uninstall_keeps_user_files ... ok
+test npm_wrapper_locates_local_artifact_and_passes_through ... ok
+test installer_installs_and_upgrades_verified_artifacts ... ok
+test installer_sha256_tool_fallback_and_fail_closed ... ok
+test installer_failed_upgrade_preserves_old_install ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.22s
+
+exit=0

@@ -6,9 +6,12 @@
 //! 3. 自有环境变量 `AILOOM_DATA_ROOT` / `AILOOM_STORE_ROOT`
 //! 4. XDG 规范默认：`$HOME/.local/state/ailoom`（数据）、`$HOME/.local/share/ailoom/store`（Store）
 //!
-//! 兼容迁移（v1.1）：旧默认 `~/.ailoom` 存在时，首次解析一次性把
+//! 兼容迁移（v1.1，v1.2 补充可达性）：旧默认 `~/.ailoom` 存在时，首次解析一次性把
 //! `store` → `~/.local/share/ailoom/store`、`ws`/`cache` → `~/.local/state/ailoom`
-//! 拆分迁移（其余内容如安装器的 `bin/` 不动）；任何一步失败则整体回退、
+//! 拆分迁移（其余内容如安装器的 `bin/` 不动）；`device-id` 复制到新数据根，
+//! 设备身份跨升级连续。迁移成功后在旧 `store` 位置留一个指向新位置的兼容符号链接，
+//! 使既有工作区里指向旧 store 的绝对 Skill 链接无需重新 sync 仍可达（RW-01/S01）。
+//! 任何一步失败则整体回滚（含清理本次新建的空目录，避免下次误选空新根）、
 //! 继续使用旧目录并告警——数据不可达优于静默孤儿。
 
 use crate::error::{code, Error, Result};
@@ -93,15 +96,23 @@ fn ensure_legacy_migrated(home: &Path) -> bool {
     }
     let state = home.join(".local").join("state").join("ailoom");
     let share = home.join(".local").join("share").join("ailoom");
+    // 上次迁移留下的兼容符号链接（RW-01）= 已迁移完成，静默采用新默认
+    if is_symlink(&legacy.join("store")) && (state.is_dir() || share.join("store").is_dir()) {
+        return true;
+    }
     if state.is_dir() || share.join("store").is_dir() {
+        // 真正的新旧并存：仍要保住设备身份（旧 device-id 尚未带到新根时补上）
+        copy_device_id(&legacy, &state);
         crate::logging::warn(format!(
             "检测到旧默认 {} 与新规范默认并存：继续使用新默认，旧目录未改动（可手动迁移后删除）",
             legacy.display()
         ));
         return true;
     }
-    // 逐个子目录移动，任何失败回滚全部已移动部分
+    // 逐个子目录移动，任何失败回滚全部已移动部分并清掉本次新建的空目录
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new(); // (目标, 来源)
+    let mut created: Vec<PathBuf> = Vec::new(); // 本次 create_dir_all 新建的根
+    let mut store_moved = false;
     let plan: Vec<(&str, &Path)> = vec![
         ("store", share.as_path()),
         ("ws", state.as_path()),
@@ -114,8 +125,8 @@ fn ensure_legacy_migrated(home: &Path) -> bool {
         }
         let dst_parent = target_base;
         let dst = dst_parent.join(sub);
-        if fs_create_dir_all(dst_parent).is_err() || fs_rename(&src, &dst).is_err() {
-            rollback(&moved);
+        if fs_create_dir_new(dst_parent, &mut created).is_err() || fs_rename(&src, &dst).is_err() {
+            rollback(&moved, &created);
             FALLBACK_TO_LEGACY.store(true, Ordering::SeqCst);
             crate::logging::warn(format!(
                 "旧默认目录 {} 迁移到 XDG 规范位置失败：继续使用旧目录（数据保持可达）",
@@ -123,25 +134,75 @@ fn ensure_legacy_migrated(home: &Path) -> bool {
             ));
             return false;
         }
+        if sub == "store" {
+            store_moved = true;
+        }
         moved.push((dst, src));
+    }
+    // 设备身份随迁：旧 device-id 复制到新数据根（目标已存在则不覆盖）
+    copy_device_id(&legacy, &state);
+    // 兼容符号链接：旧 store 位置 → 新位置，既有绝对链接无需重新 sync 仍可达
+    if store_moved {
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(share.join("store"), legacy.join("store")).is_err() {
+                rollback(&moved, &created);
+                FALLBACK_TO_LEGACY.store(true, Ordering::SeqCst);
+                crate::logging::warn(format!(
+                    "旧默认目录 {} 迁移后建立兼容链接失败：整体回退，继续使用旧目录",
+                    legacy.display()
+                ));
+                return false;
+            }
+        }
     }
     if moved.is_empty() {
         return true; // 旧目录存在但没有可迁移的契约数据（如只有 bin/）
     }
     crate::logging::info(format!(
-        "已把旧默认 {} 的 store/ws/cache 一次性迁移到 XDG 规范位置（~/.local/share/ailoom、~/.local/state/ailoom）",
+        "已把旧默认 {} 的 store/ws/cache 一次性迁移到 XDG 规范位置（~/.local/share/ailoom、~/.local/state/ailoom），旧 store 位置保留兼容链接",
         legacy.display()
     ));
     true
 }
 
-fn rollback(moved: &[(PathBuf, PathBuf)]) {
+fn is_symlink(p: &Path) -> bool {
+    std::fs::symlink_metadata(p)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// 设备身份跨升级连续（RW-01/S01）：`<legacy>/device-id` → `<state>/device-id`。
+/// 只在目标缺失时复制（copy 而非 move：迁移回退时旧根仍持有原身份）。
+fn copy_device_id(legacy: &Path, state: &Path) {
+    let src = legacy.join("device-id");
+    let dst = state.join("device-id");
+    if src.is_file() && !dst.exists() && fs_create_dir_all(state).is_ok() {
+        if let Ok(bytes) = std::fs::read(&src) {
+            let _ = std::fs::write(&dst, bytes);
+        }
+    }
+}
+
+fn rollback(moved: &[(PathBuf, PathBuf)], created: &[PathBuf]) {
     for (dst, src) in moved.iter().rev() {
         let _ = fs_rename(dst, src);
+    }
+    // 清掉本次迁移新建的（此时应为空的）目录，避免下次启动把空新根当成并存并采用
+    for dir in created.iter().rev() {
+        let _ = std::fs::remove_dir(dir);
     }
 }
 
 fn fs_create_dir_all(p: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(p)
+}
+
+/// create_dir_all，并记录本次新建的目录（回滚时清理，仅删空目录）。
+fn fs_create_dir_new(p: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    if !p.exists() {
+        created.push(p.to_path_buf());
+    }
     std::fs::create_dir_all(p)
 }
 
@@ -471,6 +532,127 @@ mod tests {
             resolve_store_root().unwrap(),
             legacy.join("store"),
             "Store 同样回退旧位置"
+        );
+    }
+
+    /// RW-01/S01：迁移后旧 store 位置的兼容链接保持既有绝对链接可达，设备身份随迁。
+    #[test]
+    fn migration_keeps_legacy_links_reachable_and_device_identity() {
+        let _lock = lock();
+        super::reset_migration_state_for_test();
+        let _guards: Vec<EnvGuard> = [
+            "XDG_STATE_HOME",
+            "XDG_DATA_HOME",
+            "AILOOM_DATA_ROOT",
+            "AILOOM_STORE_ROOT",
+        ]
+        .iter()
+        .map(|k| EnvGuard::set(k, None))
+        .collect();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let legacy = home.join(".ailoom");
+        for d in [
+            legacy.join("store/team/source"),
+            legacy.join("ws/abc/events"),
+            legacy.join("bin"),
+        ] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        std::fs::write(legacy.join("store/team/source/f.json"), b"{}").unwrap();
+        std::fs::write(legacy.join("device-id"), b"dev-identity-001").unwrap();
+        std::fs::write(legacy.join("bin/ailoom"), b"#!/bin/sh\n").unwrap();
+        let _h = EnvGuard::set("HOME", Some(home.to_str().unwrap()));
+
+        let _ = resolve_data_root(None).unwrap();
+        let _ = resolve_store_root().unwrap();
+
+        // 已部署工作区的旧绝对链接（经由 legacy/store/…）仍可达
+        let old_link_target = legacy.join("store/team/source/f.json");
+        assert!(old_link_target.is_file(), "旧绝对路径经兼容链接仍可达");
+        assert_eq!(
+            std::fs::read(&old_link_target).unwrap(),
+            b"{}",
+            "内容逐字节不变"
+        );
+        assert!(
+            super::is_symlink(&legacy.join("store")),
+            "旧 store 位置留兼容符号链接"
+        );
+        // 设备身份连续：新数据根的 device-id 与旧值一致
+        let migrated_id =
+            std::fs::read_to_string(home.join(".local/state/ailoom/device-id")).unwrap();
+        assert_eq!(migrated_id, "dev-identity-001", "device-id 随迁不变");
+        // bin 等非契约内容不被移动
+        assert!(legacy.join("bin/ailoom").is_file());
+        // 幂等：再次解析稳定在新默认
+        assert_eq!(
+            resolve_store_root().unwrap(),
+            home.join(".local/share/ailoom/store")
+        );
+    }
+
+    /// RW-01：迁移中段失败要清掉本次新建的空新根，下一个进程重试完整迁移，
+    /// 不会把空新根误判成并存并采用。
+    #[test]
+    fn partial_failure_cleans_empty_roots_and_retry_completes() {
+        let _lock = lock();
+        super::reset_migration_state_for_test();
+        let _guards: Vec<EnvGuard> = [
+            "XDG_STATE_HOME",
+            "XDG_DATA_HOME",
+            "AILOOM_DATA_ROOT",
+            "AILOOM_STORE_ROOT",
+        ]
+        .iter()
+        .map(|k| EnvGuard::set(k, None))
+        .collect();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let legacy = home.join(".ailoom");
+        for d in [
+            legacy.join("store/team"),
+            legacy.join("ws/abc"),
+            legacy.join("cache/ck"),
+        ] {
+            std::fs::create_dir_all(&d).unwrap();
+        }
+        std::fs::write(legacy.join("store/team/s.json"), b"{}").unwrap();
+        // share 可创建、state 被文件阻断 → store 已移动后 ws 步骤失败
+        std::fs::create_dir_all(home.join(".local/share")).unwrap();
+        std::fs::write(home.join(".local/state"), b"blocker").unwrap();
+        let _h = EnvGuard::set("HOME", Some(home.to_str().unwrap()));
+
+        // 进程 1：迁移失败 → 回退旧根，且不留半迁移状态
+        assert_eq!(resolve_data_root(None).unwrap(), legacy);
+        assert!(
+            legacy.join("store/team/s.json").is_file(),
+            "store 回滚回旧位置"
+        );
+        assert!(
+            !home.join(".local/share/ailoom/store").exists(),
+            "不残留已移动内容"
+        );
+        assert!(
+            !home.join(".local/share/ailoom").exists(),
+            "本次新建的空新根被清理"
+        );
+
+        // 进程 2：阻断解除后重试 → 完整迁移成功
+        super::reset_migration_state_for_test();
+        std::fs::remove_file(home.join(".local/state")).unwrap();
+        assert_eq!(
+            resolve_data_root(None).unwrap(),
+            home.join(".local/state/ailoom"),
+            "重试进程完成迁移，不误选空新根"
+        );
+        assert!(
+            home.join(".local/state/ailoom/ws/abc").is_dir(),
+            "ws 随重试迁移"
+        );
+        assert!(
+            home.join(".local/share/ailoom/store/team/s.json").is_file(),
+            "store 随重试迁移"
         );
     }
 }

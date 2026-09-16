@@ -122,19 +122,22 @@ fn render_draft(
 }
 
 /// 把同 PR 的其他 head 候选标记为过期（force-push 后旧候选可查询但不可当最新）。
-fn mark_stale_candidates(draft_dir: &std::path::Path, prefix: &str, current_head8: &str) -> usize {
+/// RW-14/R12：匹配带编号结束边界（`{prefix}-`），同 repo 的 #1 不再误伤 #10/#11；
+/// RW-14/R13：当前候选以完整 head SHA 结尾比对（截断旧文件按不同候选处理）。
+fn mark_stale_candidates(draft_dir: &std::path::Path, prefix: &str, current_head: &str) -> usize {
     let Ok(entries) = std::fs::read_dir(draft_dir) else {
         return 0;
     };
+    let with_sep = format!("{prefix}-");
+    let current_file = format!("{with_sep}{current_head}.md");
     let mut marked = 0;
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if !name.starts_with(prefix) || !name.ends_with(".md") {
+        if !name.starts_with(&with_sep) || !name.ends_with(".md") {
             continue;
         }
-        // 当前 head 的候选不标记
-        let stem = name.trim_end_matches(".md");
-        if stem.ends_with(current_head8) {
+        // 当前 head 的候选不标记（完整文件名精确比对，编号有结束边界）
+        if name == current_file {
             continue;
         }
         let path = e.path();
@@ -154,9 +157,12 @@ fn mark_stale_candidates(draft_dir: &std::path::Path, prefix: &str, current_head
     marked
 }
 
-/// 合并后推进代码图基线（幂等）：同一 (repo, PR, head) 只触发一次。
-/// 图对象是当前工作区扫描（与 `code --action build` 同一入口语义），
-/// 基线记录把合并事件（provider/repo/PR/head）与项目图谱推进关联起来。
+/// 合并后推进代码图基线（幂等）：同一 (repo, PR, head) 成功推进只记一次。
+/// RW-13/R10：目标项目取显式参数并校验绑定（不隐式选第一个绑定项目）；
+/// 图内容来自确认合并版本的受控 Git 快照（head 提交的 detached worktree），
+/// 不扫描可能落后的当前 checkout 冒充远端 head；快照不可得 → 显式 pending。
+/// RW-13/R11：加载/构建/保存全部成功后才写 state=success 标记，
+/// 任一失败错误上抛且不写标记（重试可完成）；成功后重复调用才幂等。
 fn advance_graph_baseline(
     ctx: &AppContext,
     repo: &str,
@@ -168,11 +174,109 @@ fn advance_graph_baseline(
     let identity = format!("{repo}#{number}@{head_sha}");
     if marker_path.is_file() {
         let text = std::fs::read_to_string(&marker_path)?;
-        if text.lines().any(|l| l.contains(&identity)) {
-            return Ok(json!({ "graph_baseline": "already-advanced", "identity": identity }));
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let same = v.get("identity").and_then(|x| x.as_str()) == Some(identity.as_str());
+            let state = v.get("state").and_then(|x| x.as_str()).unwrap_or("success");
+            // 旧版本标记无 state 字段：沿用其“已推进”语义
+            if same && state == "success" {
+                return Ok(json!({ "graph_baseline": "already-advanced", "identity": identity }));
+            }
         }
     }
-    // 幂等标记先行落盘（写入失败不推进，避免半状态）
+
+    // 目标项目显式化（R10）：不隐式选择第一个绑定项目
+    if project.is_empty() {
+        return Ok(json!({
+            "graph_baseline": "skipped",
+            "identity": identity,
+            "reason": "合并事件未指定目标项目（--project），不隐式选择第一个绑定项目",
+        }));
+    }
+    let declaration = ctx
+        .declaration_path()
+        .and_then(|p| crate::config::ProjectDeclaration::load(&p).ok().flatten());
+    let Some(declaration) = declaration else {
+        return Ok(
+            json!({ "graph_baseline": "skipped", "identity": identity, "reason": "工作区未绑定" }),
+        );
+    };
+    if !declaration.projects.iter().any(|p| p == project) {
+        return Ok(json!({
+            "graph_baseline": "skipped",
+            "identity": identity,
+            "reason": format!(
+                "目标项目 {project} 未在工作区绑定（绑定：{:?}）",
+                declaration.projects
+            ),
+        }));
+    }
+
+    // 受控快照（R10）：合并 head 必须在本仓对象库中（已 fetch/已合并到本地），
+    // 物化为 detached worktree 后扫描，图内容与记录的 revision 严格对应
+    let ws_root = ctx.workspace.workspace_root.clone();
+    if crate::gitx::git(
+        &ws_root,
+        &["cat-file", "-e", &format!("{head_sha}^{{commit}}")],
+    )
+    .is_err()
+    {
+        return Ok(json!({
+            "graph_baseline": "pending",
+            "identity": identity,
+            "reason": "合并 head 不在本仓对象库（未 fetch/未合并到本地），无法以快照证明图内容；待本地可得后重试",
+        }));
+    }
+    let snap = ctx
+        .layout
+        .ws_dir
+        .join(format!("merge-snapshot-{}", crate::ids::new_id()));
+    crate::gitx::git(
+        &ws_root,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            "-q",
+            snap.to_str().unwrap_or_default(),
+            head_sha,
+        ],
+    )?;
+    let graph_value = (|| -> Result<Value> {
+        let graph_path = ctx
+            .layout
+            .index_dir
+            .join(format!("codegraph-{project}.json"));
+        let mut g = crate::code_knowledge::graph::load(&graph_path)?.unwrap_or_default();
+        g.schema_version = crate::code_knowledge::graph::GRAPH_SCHEMA_VERSION;
+        crate::code_knowledge::graph::update_incremental(
+            &mut g,
+            &snap,
+            Some(head_sha.to_string()),
+        )?;
+        crate::code_knowledge::graph::save(&g, &graph_path)?;
+        Ok(json!({
+            "project": project,
+            "files": g.files.len(),
+            "revision": head_sha,
+            "snapshot_fingerprint": g.content_fingerprint,
+        }))
+    })();
+    let _ = crate::gitx::git(
+        &ws_root,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            snap.to_str().unwrap_or_default(),
+        ],
+    );
+    let _ = crate::gitx::git(&ws_root, &["worktree", "prune"]);
+    let graph_value = graph_value?;
+
+    // 成功标记：仅在图构建并保存成功后落盘（R11）
     if let Some(parent) = marker_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -189,34 +293,12 @@ fn advance_graph_baseline(
                 "identity": identity,
                 "project": project,
                 "merged_head": head_sha,
+                "state": "success",
                 "at": crate::ids::now_iso(),
             })
         )?;
         f.flush()?;
     }
-    // 推进项目图（与 code build 相同入口：增量扫描当前工作区）
-    let declaration = ctx
-        .declaration_path()
-        .and_then(|p| crate::config::ProjectDeclaration::load(&p).ok().flatten());
-    let graph_value = match declaration {
-        Some(d) if !d.projects.is_empty() => {
-            let project = d.projects.first().cloned().unwrap_or_default();
-            let graph_path = ctx
-                .layout
-                .index_dir
-                .join(format!("codegraph-{project}.json"));
-            let mut g = crate::code_knowledge::graph::load(&graph_path)?.unwrap_or_default();
-            g.schema_version = crate::code_knowledge::graph::GRAPH_SCHEMA_VERSION;
-            crate::code_knowledge::graph::update_incremental(
-                &mut g,
-                &ctx.workspace.workspace_root,
-                Some(head_sha.to_string()),
-            )?;
-            crate::code_knowledge::graph::save(&g, &graph_path)?;
-            json!({ "project": project, "files": g.files.len() })
-        }
-        _ => json!({ "project": project, "skipped": "workspace 无绑定项目" }),
-    };
     Ok(json!({ "graph_baseline": "advanced", "identity": identity, "graph": graph_value }))
 }
 
@@ -271,8 +353,23 @@ pub fn draft(args: &PrArgs, data_root: Option<&std::path::Path>) -> Result<Value
     std::fs::create_dir_all(&draft_dir)?;
 
     let prefix = candidate_prefix(&repo, number);
+    // RW-14/R13：候选文件名使用完整 head SHA——同前缀不同完整 SHA 得到不同
+    // 身份（不误去重），force-push 可更新；展示层截断仅用于日志/显示。
+    let draft_path = draft_dir.join(format!("{prefix}-{head_sha}.md"));
+
+    // 兼容旧截断文件名（{prefix}-<head8>.md）：仅当其 frontmatter 记录的
+    // head_sha 与当前完整 SHA 一致（即同一候选的旧命名）时迁移到新文件名；
+    // 前缀碰撞的不同 head 保持原样，由 mark_stale_candidates 按不同候选标记。
     let head8 = &head_sha[..8.min(head_sha.len())];
-    let draft_path = draft_dir.join(format!("{prefix}-{head8}.md"));
+    let legacy_path = draft_dir.join(format!("{prefix}-{head8}.md"));
+    if !draft_path.is_file() && legacy_path.is_file() {
+        if let Ok(old_text) = std::fs::read_to_string(&legacy_path) {
+            if old_text.contains(&format!("head_sha: {head_sha}")) {
+                crate::sync_common::atomic_write(&draft_path, old_text.as_bytes())?;
+                let _ = std::fs::remove_file(&legacy_path);
+            }
+        }
+    }
 
     // 候选状态：合并→candidate-merged；其余（open/closed 未合并）→candidate-unverified，
     // 关闭未合并永不进入正式知识（仅记录 pr_state=closed 供查询）
@@ -283,10 +380,22 @@ pub fn draft(args: &PrArgs, data_root: Option<&std::path::Path>) -> Result<Value
     };
 
     if draft_path.is_file() {
-        // 同 head：合并状态变化 → 刷新；无变化 → 幂等去重
+        // 同 head：合并状态变化 → 刷新；无变化 → 幂等去重。
+        // 已合并候选的去重路径仍要确保图基线推进完成（RW-13/R11：上次失败后
+        // 重试可在此完成；成功标记存在时 advance 幂等短路）。
         let existing = std::fs::read_to_string(&draft_path)?;
         let existing_merged = existing.contains("merged: true");
         if existing_merged == merged {
+            let mut baseline = json!({ "graph_baseline": "not-merged" });
+            if merged {
+                baseline = advance_graph_baseline(
+                    &ctx,
+                    &repo,
+                    number,
+                    &head_sha,
+                    args.project.as_deref().unwrap_or(""),
+                )?;
+            }
             return Ok(json!({
                 "deduplicated": true,
                 "updated": false,
@@ -294,6 +403,7 @@ pub fn draft(args: &PrArgs, data_root: Option<&std::path::Path>) -> Result<Value
                 "dedup_key": format!("{repo}#{number}@{head_sha}"),
                 "status": status,
                 "pr_state": pr_state,
+                "baseline": baseline,
             }));
         }
         let body_summary = body.chars().take(500).collect::<String>();
@@ -339,7 +449,7 @@ pub fn draft(args: &PrArgs, data_root: Option<&std::path::Path>) -> Result<Value
     }
 
     // 新 head：先失效同 PR 旧候选（force-push 语义），再写新候选
-    let stale_marked = mark_stale_candidates(&draft_dir, &prefix, head8);
+    let stale_marked = mark_stale_candidates(&draft_dir, &prefix, &head_sha);
 
     let body_summary = body.chars().take(500).collect::<String>();
     let review_block = if review_notes.is_empty() {

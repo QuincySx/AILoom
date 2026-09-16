@@ -385,3 +385,242 @@ fn code_query_reports_stale_graph_after_revision_change() {
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(v["result"]["graph_stale"], false, "重建后不过期: {v}");
 }
+
+/// RW-10/R07：同文件嵌套模块同名符号身份不碰撞（scope 进身份）；
+/// 限定调用解析到完整身份（ast-scoped）；跨模块同名调用保持名字层歧义；
+/// 嵌套模块链身份正确。
+#[test]
+fn same_file_nested_module_symbols_get_scoped_identities() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("proj");
+    write(
+        &root.join("src/lib.rs"),
+        r#"
+pub mod a {
+    /// A 侧 helper
+    pub fn helper() -> u32 {
+        1
+    }
+
+    pub fn caller_a() -> u32 {
+        helper()
+    }
+
+    pub mod inner {
+        pub fn deep() -> u32 {
+            3
+        }
+    }
+}
+
+pub mod b {
+    /// B 侧 helper
+    pub fn helper() -> u32 {
+        2
+    }
+
+    pub fn caller_b() -> u32 {
+        helper()
+    }
+}
+
+pub fn root_helper() -> u32 {
+    4
+}
+"#,
+    );
+    let g = graph::scan_project(&root, Some("r1".into())).unwrap();
+    let f = g.files.get("src/lib.rs").unwrap();
+
+    // 定义身份互不碰撞，且 line 正确
+    let ha = f
+        .symbols
+        .iter()
+        .find(|s| s.id == "fn:a::helper@src/lib.rs")
+        .expect("a::helper 应有作用域化身份");
+    let hb = f
+        .symbols
+        .iter()
+        .find(|s| s.id == "fn:b::helper@src/lib.rs")
+        .expect("b::helper 应有作用域化身份");
+    assert_ne!(ha.line, hb.line, "两个 helper 各有正确 file:line");
+    assert!(ha.line < hb.line);
+    // 嵌套模块链身份
+    assert!(
+        f.symbols
+            .iter()
+            .any(|s| s.id == "fn:a::inner::deep@src/lib.rs"),
+        "嵌套模块符号身份: {:?}",
+        f.symbols.iter().map(|s| s.id.clone()).collect::<Vec<_>>()
+    );
+    // 模块符号本身也作用域化
+    assert!(f.symbols.iter().any(|s| s.id == "mod:a::inner@src/lib.rs"));
+
+    // 限定调用：caller_a 内的 helper() 解析到 fn:a::helper@…（ast-scoped）
+    let ea = f
+        .edges
+        .iter()
+        .find(|e| e.kind == "call" && e.from == "fn:a::caller_a@src/lib.rs")
+        .expect("caller_a 应有调用边");
+    assert_eq!(ea.to, "fn:a::helper@src/lib.rs", "{ea:?}");
+    assert_eq!(ea.confidence, "ast-scoped", "{ea:?}");
+    let eb = f
+        .edges
+        .iter()
+        .find(|e| e.kind == "call" && e.from == "fn:b::caller_b@src/lib.rs")
+        .unwrap();
+    assert_eq!(eb.to, "fn:b::helper@src/lib.rs");
+    assert_eq!(eb.confidence, "ast-scoped");
+
+    // 包含关系指向内层模块：fn:a::helper 的 contains from=mod:a@…
+    let ca = f
+        .edges
+        .iter()
+        .find(|e| e.kind == "contains" && e.to == "fn:a::helper@src/lib.rs")
+        .unwrap();
+    assert_eq!(ca.from, "mod:a@src/lib.rs", "{ca:?}");
+
+    // 未定义调用的歧义保留：名字层目标 + 低置信（不静默选错）
+    write(
+        &root.join("src/lib.rs"),
+        r#"
+pub mod a {
+    pub fn caller() -> u32 {
+        mystery()
+    }
+}
+"#,
+    );
+    let g2 = graph::scan_project(&root, Some("r2".into())).unwrap();
+    let f2 = g2.files.get("src/lib.rs").unwrap();
+    let em = f2
+        .edges
+        .iter()
+        .find(|e| e.kind == "call")
+        .expect("mystery 调用应保留为边");
+    assert_eq!(em.to, "fn:mystery", "无法解析的目标保持名字层: {em:?}");
+    assert_eq!(
+        em.confidence, "name-based",
+        "解析不确实的边保留低置信: {em:?}"
+    );
+
+    // schema 升版：旧图（v2）在 build 时整体重建
+    const _: () = assert!(graph::GRAPH_SCHEMA_VERSION >= 3);
+}
+
+/// RW-11/R08：未提交的工作树内容变化（修改/删除/新增）必须让 query 报过期；
+/// 重建恢复新鲜；指纹只取内容（同内容重写不变化），不依赖 Git 或 mtime。
+#[test]
+fn uncommitted_worktree_changes_stale_query_and_rebuild_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("proj");
+    write(&root.join("src/lib.rs"), "pub fn warm() -> u32 { 1 }\n");
+
+    // 纯内容语义：同内容重写（mtime 变化）指纹不变；内容/文件集变化指纹变化；无需 Git
+    let fp1 = graph::worktree_fingerprint(&root).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    write(&root.join("src/lib.rs"), "pub fn warm() -> u32 { 1 }\n");
+    assert_eq!(
+        fp1,
+        graph::worktree_fingerprint(&root).unwrap(),
+        "同内容重写不应改变指纹"
+    );
+    write(&root.join("src/lib.rs"), "pub fn warm() -> u32 { 2 }\n");
+    assert_ne!(
+        fp1,
+        graph::worktree_fingerprint(&root).unwrap(),
+        "内容修改必须改变指纹"
+    );
+    write(&root.join("src/extra.rs"), "pub fn extra() {}\n");
+    let fp_extra = graph::worktree_fingerprint(&root).unwrap();
+    assert_ne!(
+        graph::worktree_fingerprint(&root).unwrap(),
+        fp1,
+        "新增文件改变指纹"
+    );
+    std::fs::remove_file(root.join("src/extra.rs")).unwrap();
+    assert_ne!(
+        graph::worktree_fingerprint(&root).unwrap(),
+        fp_extra,
+        "删除文件改变指纹"
+    );
+
+    // CLI 链路：未提交修改 → query 报过期；build 重建恢复新鲜
+    let bare = tmp.path().join("origin.git");
+    ailoom::gitx::git_init(&bare, true).unwrap();
+    let src = common::make_team_source(tmp.path());
+    ailoom::gitx::git(&src, &["branch", "-M", "main"]).unwrap();
+    ailoom::gitx::git(&src, &["remote", "add", "origin", bare.to_str().unwrap()]).unwrap();
+    ailoom::gitx::git(&src, &["push", "-q", "-u", "origin", "main"]).unwrap();
+    let ws = common::make_business_repo(tmp.path(), "biz2");
+    write(&ws.join("src/lib.rs"), "/// 缓存入口\npub fn warm() {}\n");
+    let dr = tmp.path().join("data");
+    let run = |args: &[&str]| {
+        let mut bin_path = std::env::current_exe().unwrap();
+        loop {
+            if bin_path.join("ailoom").exists() {
+                break;
+            }
+            if !bin_path.pop() {
+                panic!("未找到 ailoom 二进制");
+            }
+        }
+        let out = std::process::Command::new(bin_path.join("ailoom"))
+            .args(args)
+            .current_dir(&ws)
+            .envs(common::isolated_child_env(tmp.path()))
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let init_args = [
+        "--data-root".to_string(),
+        dr.to_str().unwrap().to_string(),
+        "init".to_string(),
+        "--url".to_string(),
+        src.to_str().unwrap().to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = init_args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = run(&refs);
+    assert_eq!(code, 0, "{stderr}");
+
+    fn query_json(run: &impl Fn(&[&str]) -> (i32, String, String)) -> serde_json::Value {
+        let (code, out, err) = run(&["--json", "code", "--action", "query", "--query", "warm"]);
+        assert_eq!(code, 0, "{err}");
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        v["result"].clone()
+    }
+    fn build(run: &impl Fn(&[&str]) -> (i32, String, String)) {
+        let (code, _, err) = run(&["--json", "code", "--action", "build"]);
+        assert_eq!(code, 0, "{err}");
+    }
+
+    build(&run);
+    let r = query_json(&run);
+    assert_eq!(r["graph_stale"], false, "构图后应新鲜: {r}");
+
+    // 未提交修改（HEAD 不变、源锁不变）→ 过期，且注明是工作树内容原因
+    write(
+        &ws.join("src/lib.rs"),
+        "/// 缓存入口\npub fn warm() {}\npub fn cold() {}\n",
+    );
+    let r = query_json(&run);
+    assert_eq!(r["graph_stale"], true, "未提交修改必须报过期: {r}");
+    assert_eq!(r["content_stale"], true, "{r}");
+
+    // 重建恢复新鲜
+    build(&run);
+    let r = query_json(&run);
+    assert_eq!(r["graph_stale"], false, "重建后应恢复新鲜: {r}");
+
+    // 未提交删除 → 过期
+    std::fs::remove_file(ws.join("src/lib.rs")).unwrap();
+    let r = query_json(&run);
+    assert_eq!(r["graph_stale"], true, "未提交删除必须报过期: {r}");
+}

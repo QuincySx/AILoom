@@ -4,7 +4,7 @@
 
 use crate::appctx::AppContext;
 use crate::error::{code, Error, Result};
-use crate::events::aggregate::{aggregate_all, HeuristicConfig};
+use crate::events::aggregate::HeuristicConfig;
 use crate::events::friction::{build_share_record, FrictionConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -226,7 +226,14 @@ pub fn run(args: &ReportArgs, json: bool, data_root: Option<&std::path::Path>) -
     let _cfg = FrictionConfig::load(&ctx.layout.ws_dir);
     let heuristic = HeuristicConfig::default();
     let (events, _) = crate::events::store::read_all_events(&ctx.layout.events_dir)?;
-    let sessions = aggregate_all(&ctx.workspace.workspace_id, &events, &heuristic)?;
+    // RW-09/R06：上报快照消费累计基线——清理后仍上报完整累计视图（digest 取
+    // 最大值语义下，远端累计不因本地清理回退）
+    let sessions = crate::events::aggregate::effective_all(
+        &ctx.layout.ws_dir,
+        &ctx.workspace.workspace_id,
+        &events,
+        &heuristic,
+    )?;
 
     match args.action.as_str() {
         "retry" => retry_action(data_root, args.root.as_deref()),
@@ -334,6 +341,16 @@ fn retry_action(
     if cp.pending.is_empty() {
         return Ok(json!({ "retried": 0, "pending_left": 0, "note": "没有待补传批次" }));
     }
+    // RW-08/R04：补传同样是远端写入，必须与 push 共用上报开关；
+    // 关闭时 pending 原样保留，重新开启后可补传。
+    if !reporting_enabled(&ctx) {
+        return Ok(json!({
+            "retried": 0,
+            "pending_left": cp.pending.len(),
+            "reporting_enabled": false,
+            "note": "reporting 已关闭：不发生任何远端写入；pending 保留待重新开启后补传",
+        }));
+    }
     let req = crate::contribution::prepare_contribution(data_root, explicit_root)?;
     let pending_ids: Vec<String> = cp.pending.keys().cloned().collect();
     let mut succeeded: Vec<String> = Vec::new();
@@ -424,7 +441,8 @@ fn team_digest(
     )?;
     let refs: Vec<&str> = refs_text.lines().filter(|l| !l.is_empty()).collect();
 
-    // 合并：key=(workspace_id, session_id_hash, date) → 字段最大值
+    // 合并（RW-08/R05）：记录是**累计快照**，key=(workspace_id, session_id_hash)
+    // → 字段最大值；同身份跨日重报合并为一条（不重复累计），上报日期仅作范围展示。
     #[derive(Default, Clone)]
     struct Merged {
         tool: String,
@@ -435,8 +453,9 @@ fn team_digest(
         tokens_input: Option<u64>,
         tokens_output: Option<u64>,
         devices: std::collections::BTreeSet<String>,
+        dates: std::collections::BTreeSet<String>,
     }
-    let mut merged: BTreeMap<(String, String, String), Merged> = BTreeMap::new();
+    let mut merged: BTreeMap<(String, String), Merged> = BTreeMap::new();
     let mut sources = 0usize;
     let mut min_date: Option<String> = None;
     let mut max_date: Option<String> = None;
@@ -479,8 +498,9 @@ fn team_digest(
                 .to_string();
             let get_u64 = |k: &str| record.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
             let entry = merged
-                .entry((wid.to_string(), sidh.to_string(), date.clone()))
+                .entry((wid.to_string(), sidh.to_string()))
                 .or_default();
+            entry.dates.insert(date.clone());
             entry.tool = record
                 .get("tool")
                 .and_then(|x| x.as_str())
@@ -504,11 +524,12 @@ fn team_digest(
 
     let sessions_list: Vec<Value> = merged
         .iter()
-        .map(|((wid, sidh, date), m)| {
+        .map(|((wid, sidh), m)| {
+            let dates: Vec<String> = m.dates.iter().cloned().collect();
             json!({
                 "workspace_id": wid,
                 "session_id_hash": sidh,
-                "date": date,
+                "dates": dates,
                 "tool": m.tool,
                 "prompt_count": m.prompt_count,
                 "tool_calls": m.tool_calls,
@@ -533,6 +554,7 @@ fn team_digest(
         "range": { "min": min_date, "max": max_date, "timezone": "UTC",
             "note": "日期取自上报文件名（成员本地日期），只用于范围展示" },
         "report_branches_merged": sources,
+        "merge_semantics": "累计快照：同会话身份跨日重报取最大值合并，不重复累计（RW-08/R05）",
         "session_count": sessions_list.len(),
         "totals": {
             "prompt_count": sessions_list.iter().map(|s| s["prompt_count"].as_u64().unwrap_or(0)).sum::<u64>(),

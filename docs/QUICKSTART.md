@@ -3,6 +3,45 @@
 本文覆盖最小可用链路：绑定团队源 → 同步资源 → 检索经验 → 贡献 → 卸载。
 术语见 [CONTEXT.md](../CONTEXT.md)；文件格式与错误码见 [CONTRACTS.md](CONTRACTS.md)。
 
+## 个人模式（默认，无需团队源/远端/TOML）
+
+适合「我在公司仓库里管理自己的 skills / 指令」的场景。全部个人数据存放在
+机器数据区（`~/.local/state/ailoom`），不改公司已跟踪文件，也不需要 Git 远端。
+
+```bash
+cd /path/to/公司仓库
+ailoom console            # 启动本地控制台（仅 loopback），自动打开浏览器
+```
+
+浏览器向导六步（每步可返回、草稿可恢复）：
+
+1. **选目录**：批准工作目录（服务只在批准的根内读文件）。
+2. **确认仓库/工作树**：同仓 worktree 自动归组；无远端仓库仍用 Git 身份。
+3. **选宿主与能力**：探测已安装宿主；从本地目录导入 skill（只复制不执行脚本）；
+   勾选宿主。
+4. **预览**：显示将写入哪个工作树的哪些文件；公司已跟踪文件会被明确跳过。
+5. **应用**：默认只影响当前工作树；支持一键撤销本次改动。
+6. **验证**：按提示在宿主**新开会话**调用技能——文件落盘 ≠ 宿主已加载，
+   真实调用通过才算完成。
+
+CLI 等价操作（个人模式）：
+
+```bash
+ailoom library --action import --dir /path/to/my-skill --execute   # 导入个人库
+ailoom personal --action effective                                  # 查看有效配置与来源
+ailoom personal --action select --host claude --state enable        # 启用宿主
+ailoom personal --action select --resource personal/skill/personal/my-skill --state enable
+ailoom personal --action plan                                       # 预览
+ailoom personal --action sync                                       # 应用
+```
+
+指令调整：`ailoom personal --action instructions --file ~/my.md` 保存个人偏好
+（Claude 走追加式 `.claude/rules/ailoom-personal.md`；Codex 生成包含公司
+AGENTS.md 全文的本地视图，不遮蔽公司基线）。
+
+日常管理（仓库/作用域/资源库/流程包）在控制台「仓库与作用域」「资源库与流程」页；
+个人文档与流程产物默认保存在仓外数据区。
+
 ## 前置
 
 - Rust 1.75+（`cargo build` 产出 `target/debug/ailoom`）

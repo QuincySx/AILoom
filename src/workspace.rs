@@ -60,7 +60,9 @@ pub fn discover(cwd: &Path, explicit_root: Option<&Path>) -> Result<Workspace> {
 }
 
 fn build_workspace(root: &Path, has_declaration: bool) -> Result<Workspace> {
-    let is_git = root.join(".git").exists();
+    // AIL-039：Git 身份与配置作用域分离。声明目录只是配置作用域（workspace_root），
+    // Git 身份由所在仓库决定——子目录没有自身 .git 也不降为非 Git。
+    let is_git = find_git_root_up(root).is_some();
     let anchor = repository_anchor(root, is_git)?;
     let anchor_key = sha256_prefix(anchor.as_bytes(), 16);
     Ok(Workspace {
@@ -104,6 +106,19 @@ fn repository_anchor(root: &Path, is_git: bool) -> Result<String> {
         common.trim().to_string()
     };
     Ok(format!("path+{}", sha256_prefix(base.as_bytes(), 32)))
+}
+
+/// 从 root 向上找最近的 `.git`（目录或 linked-worktree 文件）；声明目录本身无
+/// `.git` 时，其 Git 身份来自所在仓库（AIL-039）。
+pub fn find_git_root_up(root: &Path) -> Option<PathBuf> {
+    let mut dir = Some(root.to_path_buf());
+    while let Some(current) = dir {
+        if current.join(".git").exists() {
+            return Some(current);
+        }
+        dir = current.parent().map(Path::to_path_buf);
+    }
+    None
 }
 
 /// 规范化路径（解析符号链接）。平台大小写语义保持原样：不做大小写折叠。

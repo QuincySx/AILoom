@@ -24,7 +24,7 @@ pub struct Excluded {
     pub reason: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DesiredSet {
     pub source: String,
     pub identity: String,

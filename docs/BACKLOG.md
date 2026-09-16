@@ -1,36 +1,22 @@
 # AILoom 任务看板
 
-> 账本基准：2026-09-13 返工轮次完成。以 [cards.json](cards.json) 为状态唯一真相；卡头与 JSON 必须一致。
+> 状态基准：2026-09-15 第二轮 review 退回；[cards.json](cards.json) 是主卡状态真相。
 
-**当前：35 张 Done（含 9 张保留核心结论 + 返工/补验收通过 + AIL-038 新增），3 张 Blocked（AIL-009/012/014，均为外部授权或宿主能力阻塞，本地证据完整），0 张 Backlog。**
+**51 张主卡：0 Backlog、4 Blocked、47 Done。另有 18 张 RW 返工子卡，单独统计。**
 
-2026-09-14 追加：契约 v1.1（路径解析改 XDG 优先 + 规范默认 + 旧目录自动迁移）；AIL-038 团队源脚手架（`ailoom source`）与 release workflow 本地准备。
-
-本轮返工执行记录：逐卡「重新关卡记录」见各卡；真机与全量验证证据见 [evidence/](evidence/) 与 [evidence/logs/](evidence/logs/2026-09-13-full-validation.log)。
-
-直接派工：[REWORK.md](REWORK.md)。历史事实：[完成度与代码审查报告](reviews/2026-09-12-completion-review.md)、[2026-09-12 历史档案](reviews/2026-09-12-card-history.md)。
+[返工派工单](REWORK.md) · [18 张可领取子卡](rework/2026-09-15/README.md) · [本轮审查](reviews/2026-09-15-agent-implementation-review.md) · [退回前完整快照](reviews/2026-09-15-before-rework/README.md)
 
 ## 领取与关卡
 
-- Blocked 表示存在明确外部阻塞：AIL-009/012=Codex 项目级 skills/MCP 实机不加载（实测 0.153.4，矩阵已降级）；AIL-014=真实 GitHub PR 创建缺少授权测试仓。解除条件逐卡写在卡面「重新关卡记录」。
-- 必需验收缺失或依赖不可用时保持开放；不能用 Done + 缺口文字代替。
-- 可选能力未实现单列在卡面记录（如 AIL-034 组织枚举分页），不冒充必需项完成。
-- 真实发布、对外 PR/评论等动作按该次任务授权执行。
+- 本轮 18 张 RW 子卡全部完成；子卡完成且原始必需验收核对后主卡关卡。
+- 子卡完成不自动关闭主卡；必须同时满足原始必需验收。状态变化同步卡头、对应账本和看板/索引。
+- AIL-009/012 保留宿主必需验收阻塞；AIL-014 保留真实 GitHub PR 创建验收阻塞，解除条件见各卡。009 另需 RW-01 本地迁移回归。
+- 当前测试 286 passed / 0 failed / 1 ignored（真实 npm registry 用例按设计 ignored）+ fmt/Clippy 干净（[全量日志](evidence/logs/2026-09-15-rework-full-validation.log)）。新关卡不得引用旧全绿次数。
+- AIL-030 是设计完成，后端子卡仍 Open；真实发布是独立后置事项。
 
-## 本轮未关闭工作（Blocked）
+## 本地控制台与 Onboarding 新需求
 
-| 卡片 | 优先级 | 阻塞 |
-|---|---|---|
-| [AIL-009](cards/AIL-009.md) | P1 | 宿主/外部验收阻塞（本地证据完整，解除条件见卡面） |
-| [AIL-012](cards/AIL-012.md) | P2 | 宿主/外部验收阻塞（本地证据完整，解除条件见卡面） |
-| [AIL-014](cards/AIL-014.md) | P2 | 宿主/外部验收阻塞（本地证据完整，解除条件见卡面） |
-
-## 保留交付与后置边界
-
-- 9 张保留 Done：AIL-001、003、004、005、006、007、013、016、025（受返工影响的接口已在本轮回归）。
-- AIL-029 的实际发布与发布时包名复核是独立后置发布事项；本地安装/校验/卸载已验收。
-- AIL-030 为设计交付；实施子卡见 [backend/subcards/](backend/subcards/README.md)，全部 Open。
-- 本轮真机验收边界：Codex 项目级 skills/MCP 实测不加载（能力矩阵已降级）；Windows 未验证。
+[需求/回复审查](reviews/2026-09-15-onboarding-requirements-review.md) · [规格、阶段与派工](initiatives/local-console.md)。AIL-039～051（本地控制台与个人配置管理）本轮完成：**12 Done + 1 Blocked**（AIL-051 等待三名试用者人工验收，解除条件见卡）。契约新增 §11（v1.3）；真机/真浏览器证据见 [evidence/console/](evidence/console/)；当前测试 352 passed / 0 failed（[全量日志](evidence/logs/2026-09-16-local-console-final.log)）。
 
 ## 卡片总表
 
@@ -74,3 +60,16 @@
 | [AIL-036](cards/AIL-036.md) | 业务仓库同仓资源模式与迁移 | NEXT | XL | Done | AIL-003, AIL-004, AIL-008, AIL-014, AIL-022 |
 | [AIL-037](cards/AIL-037.md) | 事件留存、数据导出与清理 | NEXT | M | Done | AIL-003, AIL-018, AIL-019, AIL-022 |
 | [AIL-038](cards/AIL-038.md) | 团队源脚手架与发布链路本地准备 | NEXT | M | Done | AIL-001, AIL-005, AIL-029 |
+| [AIL-039](cards/AIL-039.md) | Git 仓库身份、工作树与子项目发现 | LOCAL | XL | Done | AIL-003 |
+| [AIL-040](cards/AIL-040.md) | 仓外个人配置、作用域继承与兼容迁移 | LOCAL | XL | Done | AIL-039, AIL-001 |
+| [AIL-041](cards/AIL-041.md) | 宿主能力探测与 Codex 项目加载复核 | LOCAL | L | Done | AIL-009, AIL-012 |
+| [AIL-042](cards/AIL-042.md) | 公司指令文件保护与个人本地调整 | LOCAL | XL | Done | AIL-040, AIL-041 |
+| [AIL-043](cards/AIL-043.md) | 个人资源库与已有 Skill 导入 | LOCAL | L | Done | AIL-038, AIL-040 |
+| [AIL-044](cards/AIL-044.md) | 按资源与宿主选择能力及解释有效配置 | LOCAL | L | Done | AIL-040, AIL-041 |
+| [AIL-045](cards/AIL-045.md) | Grill 到实现的流程包与文档产物关联 | LOCAL | L | Done | AIL-043, AIL-044, AIL-015 |
+| [AIL-046](cards/AIL-046.md) | 本地 Web 控制服务与受限 API | LOCAL | L | Done | AIL-039, AIL-040, AIL-021 |
+| [AIL-047](cards/AIL-047.md) | 个人模式 Onboarding 首次成功体验 | LOCAL | L | Done | AIL-042, AIL-043, AIL-044, AIL-046, AIL-050 |
+| [AIL-048](cards/AIL-048.md) | 仓库工作树与子项目日常配置界面 | LOCAL | L | Done | AIL-039, AIL-040, AIL-044, AIL-046, AIL-050, AIL-047 |
+| [AIL-049](cards/AIL-049.md) | 源、Skill、MCP 与流程文档可视化编辑 | LOCAL | L | Done | AIL-043, AIL-044, AIL-045, AIL-046, AIL-050, AIL-047 |
+| [AIL-050](cards/AIL-050.md) | 预览应用任务、宿主验证与可恢复撤销 | LOCAL | XL | Done | AIL-042, AIL-044, AIL-046, AIL-008, AIL-013 |
+| [AIL-051](cards/AIL-051.md) | Onboarding 与多工作树真实体验验收 | LOCAL | XL | Blocked | AIL-039, AIL-040, AIL-041, AIL-042, AIL-043, AIL-044, AIL-045, AIL-046, AIL-047, AIL-048, AIL-049, AIL-050 |

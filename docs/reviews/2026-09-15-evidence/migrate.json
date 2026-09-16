@@ -1,0 +1,7 @@
+{
+  "root": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review-migrate-pn5fu28y",
+  "code": 0,
+  "stdout": "{\"result\":{\"content_digest\":\"sha256:76f569fc4cfd4ae3f4233a07b62e2a97aa5be0cd3dd23239fdf91ffee78a3802\",\"copied_files\":1,\"declaration_backup\":\"/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review-migrate-pn5fu28y/xdg-state/ailoom/ws/3414f8979981c96f/migrate-backup/project-2026-09-14T151954Z.toml.bak\",\"mode\":\"migrate\",\"note\":\"\u673a\u5668\u6570\u636e\uff08\u7ed1\u5b9a/\u4e8b\u4ef6/\u7d22\u5f15\uff09\u4fdd\u7559\u5728\u5916\u7f6e\u6570\u636e\u6839\uff0c\u672a\u8fc1\u79fb\",\"recover_record\":\"/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review-migrate-pn5fu28y/xdg-state/ailoom/ws/3414f8979981c96f/migrate-record.json\",\"subtree\":\".ailoom-team\"},\"schema_version\":1}\n",
+  "stderr": "",
+  "outside_written": true
+}

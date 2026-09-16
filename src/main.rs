@@ -457,6 +457,101 @@ fn run(cli: &cli::Cli) -> Result<()> {
             }
             Ok(())
         }
+        Some(Command::Library {
+            action,
+            dir,
+            name,
+            execute,
+        }) => {
+            let value = ailoom::commands::library::run(
+                action,
+                dir.as_deref(),
+                name.as_deref(),
+                *execute,
+                cli.json,
+                cli.data_root.as_deref(),
+            )?;
+            if cli.json {
+                output::emit_json(&value);
+            }
+            Ok(())
+        }
+        Some(Command::Personal {
+            action,
+            resource,
+            host,
+            state,
+            subproject,
+            worktree,
+            file,
+            clear,
+            root,
+            scope,
+        }) => {
+            let data_root_resolved = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let value = match action.as_str() {
+                "effective" => ailoom::commands::personal::effective(
+                    root.as_deref(),
+                    scope.clone(),
+                    cli.data_root.as_deref(),
+                    &data_root_resolved,
+                )?,
+                "plan" => ailoom::commands::personal::plan(
+                    root.as_deref(),
+                    scope.clone(),
+                    cli.data_root.as_deref(),
+                    &data_root_resolved,
+                )?,
+                "sync" => ailoom::commands::personal::sync(
+                    root.as_deref(),
+                    scope.clone(),
+                    cli.data_root.as_deref(),
+                    &data_root_resolved,
+                )?,
+                "select" => {
+                    let args = ailoom::commands::personal::SelectArgs {
+                        resource: resource.clone(),
+                        host: host.clone(),
+                        state: state.clone().ok_or_else(|| {
+                            ailoom::error::Error::new(
+                                ailoom::error::code::USAGE,
+                                "select 需要 --state enable|disable|inherit",
+                            )
+                        })?,
+                        subproject: subproject.clone(),
+                        worktree: *worktree,
+                    };
+                    ailoom::commands::personal::select(&args, &data_root_resolved)?
+                }
+                "instructions" => ailoom::commands::personal::instructions(
+                    file.as_deref(),
+                    *clear,
+                    *worktree,
+                    &data_root_resolved,
+                )?,
+                other => {
+                    return Err(ailoom::error::Error::new(
+                        ailoom::error::code::USAGE,
+                        format!(
+                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync）"
+                        ),
+                    ))
+                }
+            };
+            if cli.json {
+                output::emit_json(&value);
+            }
+            Ok(())
+        }
+        Some(Command::Console { port, no_open }) => {
+            let data_root = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let opts = ailoom::console::ConsoleOptions {
+                port: *port,
+                data_root,
+                open_browser: !*no_open,
+            };
+            ailoom::console::run_blocking(&opts)
+        }
         Some(Command::Doctor { root }) => {
             let args = ailoom::commands::doctor::DoctorArgs { root: root.clone() };
             let value = ailoom::commands::doctor::run(&args, cli.json, cli.data_root.as_deref())?;

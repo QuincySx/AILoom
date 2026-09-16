@@ -80,6 +80,67 @@ pub fn validate_subtree(workspace_root: &Path, subtree: &str) -> Result<PathBuf>
     Ok(ws_canon.join(norm))
 }
 
+/// copy_tree 跳过的非资源组件（与物化行为保持一致，只校验会被写出的路径）。
+fn skipped_component(rel: &Path) -> bool {
+    rel.components()
+        .any(|c| c.as_os_str() == ".git" || c.as_os_str() == "machine")
+}
+
+/// RW-05/R01：任何物化之前的边界扫描（契约：目标或源含越界链接 → 迁移失败）。
+/// 1) 目标子树既有内容中任何符号链接：解析后必须仍在工作区内；悬空链接拒绝
+///    （无论其是否在本次物化路径上）；
+/// 2) 源树含符号链接一律拒绝：越界/悬空直接危害，源内链接复制后也必然断裂。
+///
+/// 遍历错误显式失败，不当作空树成功。
+fn scan_boundary(from: &Path, dest: &Path, ws_canon: &Path) -> Result<()> {
+    if dest.is_dir() {
+        for entry in walkdir::WalkDir::new(dest) {
+            let entry =
+                entry.map_err(|e| Error::new(code::INTERNAL, format!("遍历目标失败: {e}")))?;
+            if !entry.file_type().is_symlink() {
+                continue;
+            }
+            let resolved = entry.path().canonicalize().map_err(|e| {
+                out_of_scope(format!(
+                    "目标包含无法解析（悬空）的符号链接: {} : {e}",
+                    entry.path().display()
+                ))
+            })?;
+            if !resolved.starts_with(ws_canon) {
+                return Err(out_of_scope(format!(
+                    "目标包含越界符号链接: {} → {}",
+                    entry.path().display(),
+                    resolved.display()
+                )));
+            }
+        }
+    }
+    for entry in walkdir::WalkDir::new(from) {
+        let entry = entry.map_err(|e| Error::new(code::INTERNAL, format!("遍历源失败: {e}")))?;
+        if !entry.file_type().is_symlink() {
+            continue;
+        }
+        let resolved = entry.path().canonicalize().map_err(|e| {
+            out_of_scope(format!(
+                "源包含无法解析的符号链接: {} : {e}",
+                entry.path().display()
+            ))
+        })?;
+        if !resolved.starts_with(from) {
+            return Err(out_of_scope(format!(
+                "源包含越界符号链接: {} → {}",
+                entry.path().display(),
+                resolved.display()
+            )));
+        }
+        return Err(out_of_scope(format!(
+            "源包含符号链接 {}（复制后必然断裂），请改为实体文件后重试",
+            entry.path().display()
+        )));
+    }
+    Ok(())
+}
+
 /// 迁移：预检冲突 → 暂存（数据根，跨文件系统安全）→ 摘要校验 → 物化到子树 → 切换声明（保留备份与可恢复记录）。
 pub fn run_migrate(
     args: &MigrateArgs,
@@ -109,16 +170,24 @@ pub fn run_migrate(
             dest.display()
         )));
     }
+    // 1.5 任何写入之前：逐条目校验物化目标的每一级祖先与源内链接（RW-05/R01）
+    let ws_canon = ctx
+        .workspace
+        .workspace_root
+        .canonicalize()
+        .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("工作区根无法解析: {e}")))?;
+    scan_boundary(&from, &dest, &ws_canon)?;
 
     // 2. 预检已有文件冲突：已有业务文件不被隐式覆盖
-    for entry in walkdir::WalkDir::new(&from)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in walkdir::WalkDir::new(&from) {
+        let entry = entry.map_err(|e| Error::new(code::INTERNAL, format!("遍历源失败: {e}")))?;
         if !entry.file_type().is_file() {
             continue;
         }
         let rel = entry.path().strip_prefix(&from)?;
+        if skipped_component(rel) {
+            continue;
+        }
         let target = dest.join(rel);
         if target.is_file() {
             let same = std::fs::read(entry.path())? == std::fs::read(&target)?;
@@ -231,15 +300,10 @@ fn write_record(path: &Path, value: Value) -> Result<()> {
 }
 
 fn copy_tree(from: &Path, to: &Path, copied: &mut usize) -> Result<()> {
-    for entry in walkdir::WalkDir::new(from)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in walkdir::WalkDir::new(from) {
+        let entry = entry.map_err(|e| Error::new(code::INTERNAL, format!("遍历源失败: {e}")))?;
         let rel = entry.path().strip_prefix(from)?;
-        if rel
-            .components()
-            .any(|c| c.as_os_str() == ".git" || c.as_os_str() == "machine")
-        {
+        if skipped_component(rel) {
             continue;
         }
         let dest = to.join(rel);

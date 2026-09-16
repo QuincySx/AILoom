@@ -261,29 +261,59 @@ pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>)
     }
 }
 
-/// 精确 semver 校验：`[v]主.次[.补][-预发布][+构建]`；拒绝空值/范围
-/// （`^ ~ * x > < |` 与空格）/纯 tag。
+/// 精确 semver 校验：`[v]主.次.补[-预发布][+构建]`。
+/// RW-03/S03：核心必须恰好三段数字（`1.2` 这类不完整版本在启动安装器前拒绝，
+/// 避免 npm 解析为范围后安装-检查永远不一致）；范围/占位字符（`^ ~ * x X < > |`
+/// 与空格）只在核心段检查——`1.2.3-next.1` 等 prerelease 合法（其标识符里的
+/// `x` 不是占位符）；预发布/构建段为点分隔的 `[0-9A-Za-z-]` 标识符。
 fn validate_exact_version(name: &str, version: &str) -> Result<()> {
-    let v = version.trim();
-    let body = v.strip_prefix('v').unwrap_or(v);
-    let core = body.split(['-', '+']).next().unwrap_or(body);
-    let numeric: Vec<&str> = core.split('.').collect();
-    let ok = !body.is_empty()
-        && !body.contains(['*', '^', '~', '<', '>', '|', ' ', 'x', 'X'])
-        && numeric.len() >= 2
-        && numeric
-            .iter()
-            .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()));
-    if ok {
-        Ok(())
-    } else {
+    let reject = |why: String| {
         Err(Error::new(
             code::MANIFEST_MISSING_FIELD,
             format!(
-                "包 {name} 的 version 必须是精确版本（如 1.2.3），拒绝空值/范围/tag: `{version}`"
+                "包 {name} 的 version 必须是精确版本（如 1.2.3 或 1.2.3-next.1），{why}: `{version}`"
             ),
         ))
+    };
+    let v = version.trim();
+    let body = v.strip_prefix('v').unwrap_or(v);
+    if body.is_empty() {
+        return reject("为空".into());
     }
+    let (body, build) = match body.split_once('+') {
+        Some((b, build)) => (b, Some(build)),
+        None => (body, None),
+    };
+    let (core, pre) = match body.split_once('-') {
+        Some((c, pre)) => (c, Some(pre)),
+        None => (body, None),
+    };
+    let numeric: Vec<&str> = core.split('.').collect();
+    let core_ok = numeric.len() == 3
+        && !core.contains(['*', '^', '~', '<', '>', '|', ' ', 'x', 'X'])
+        && numeric
+            .iter()
+            .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()));
+    if !core_ok {
+        return reject("核心必须是三段数字（拒绝范围/tag/不完整版本）".into());
+    }
+    let ident_ok = |s: &str| {
+        !s.is_empty()
+            && s.split('.').all(|seg| {
+                !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+            })
+    };
+    if let Some(p) = pre {
+        if !ident_ok(p) {
+            return reject("预发布段非法".into());
+        }
+    }
+    if let Some(b) = build {
+        if !ident_ok(b) {
+            return reject("构建段非法".into());
+        }
+    }
+    Ok(())
 }
 
 /// 同名包多资源声明：版本一致 → 合并；不一致 → 可解释冲突。
@@ -333,4 +363,63 @@ fn check_npm(prefix: &std::path::Path, name: &str, version: &str) -> bool {
         .and_then(|x| x.as_str())
         .map(|x| x == version)
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn err_of(v: &str) -> String {
+        let spec = PkgSpec {
+            id: "test/pkg/common/p".into(),
+            name: "p".into(),
+            ecosystem: "npm".into(),
+            version: v.into(),
+        };
+        validate_exact_version(&spec.name, &spec.version)
+            .map_err(|e| format!("{e}"))
+            .err()
+            .unwrap_or_default()
+    }
+
+    /// RW-03/S03：不完整版本在启动安装器前拒绝，prerelease 合法。
+    #[test]
+    fn exact_version_validation_matrix() {
+        // 合法：完整精确版本 + prerelease + build + v 前缀
+        for v in [
+            "1.2.3",
+            "v1.2.3",
+            "0.0.1",
+            "1.2.3-next.1",
+            "1.2.3-rc.1+build.5",
+            "1.0.0-x.7.z.92",
+        ] {
+            assert!(validate_exact_version("p", v).is_ok(), "{v} 应合法");
+        }
+        // 非法：不完整版本（旧实现放行 1.2 并交给 npm 造成反复安装）
+        for v in ["1.2", "1", "1.2.", ".1.2", "v1.2"] {
+            assert!(validate_exact_version("p", v).is_err(), "{v} 应拒绝");
+        }
+        // 非法：范围 / tag / 占位 / 空格 / 空
+        for v in [
+            "^1.2.3",
+            "~1.2.3",
+            "*",
+            "1.x",
+            "1.2.x",
+            "latest",
+            "next",
+            ">=1.0.0",
+            "1.0.0 || 2.0.0",
+            "1 2",
+            "",
+        ] {
+            assert!(validate_exact_version("p", v).is_err(), "{v} 应拒绝");
+        }
+        // 非法：prerelease/build 段畸形
+        for v in ["1.2.3-", "1.2.3-next..1", "1.2.3+", "1.2.3+b@d"] {
+            assert!(validate_exact_version("p", v).is_err(), "{v} 应拒绝");
+        }
+        assert!(err_of("1.2").contains("精确版本"));
+    }
 }

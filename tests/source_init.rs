@@ -200,3 +200,191 @@ fn scaffold_minimal_has_no_examples() {
     );
     assert!(src_dir.join("resources/rules").is_dir(), "资源目录骨架仍在");
 }
+
+// ---------------------------------------------------------------------------
+// AIL-043：个人资源库 CLI（library init/import/list）
+// ---------------------------------------------------------------------------
+
+/// 空机器离线首次使用：`library init` 自动生成合法个人库（仓外、零输入）；
+/// import 预览→执行复制 skill；原目录不改写；同名重复导入拒绝。
+#[test]
+fn ail043_library_cli_init_import_list() {
+    let c = Ctx::new();
+    let data = c.tmp.path().join("data").to_string_lossy().to_string();
+
+    // init：无需 team_id/远端/TOML
+    let (code, out, stderr) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "init",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["result"]["created"], serde_json::json!(true));
+    let lib_path = v["result"]["path"].as_str().unwrap().to_string();
+
+    // 幂等
+    let (code, out, _) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "init",
+        ],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&out).unwrap()["result"]["created"],
+        serde_json::json!(false)
+    );
+
+    // 准备用户 skill 目录（无 frontmatter 元数据，脚本目录）
+    let skill_src = c.tmp.path().join("my-skills/hello-flow");
+    std::fs::create_dir_all(skill_src.join("references")).unwrap();
+    std::fs::create_dir_all(skill_src.join("scripts")).unwrap();
+    std::fs::write(
+        skill_src.join("SKILL.md"),
+        "# hello-flow\n\n[参考](references/a.md)\n[外部](https://example.com)\n",
+    )
+    .unwrap();
+    std::fs::write(skill_src.join("references/a.md"), "- 内容\n").unwrap();
+    std::fs::write(skill_src.join("scripts/run.sh"), "echo hi\n").unwrap();
+    let digest_before = {
+        let mut files: Vec<_> = walk_files(&skill_src);
+        files.sort();
+        files
+            .iter()
+            .map(|p| (p.clone(), std::fs::read(p).unwrap()))
+            .collect::<Vec<_>>()
+    };
+
+    let dir_arg = skill_src.to_string_lossy().to_string();
+
+    // 预览：不复制不执行
+    let (code, out, stderr) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            &dir_arg,
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["result"]["executed"], serde_json::json!(false));
+    assert_eq!(
+        v["result"]["preview"]["skill_name"],
+        serde_json::json!("hello-flow")
+    );
+    assert!(
+        lib_path_test(&lib_path, "resources/skills/hello-flow")
+            .map(|p| !p.exists())
+            .unwrap_or(true),
+        "预览不落盘"
+    );
+
+    // 执行导入
+    let (code, out, stderr) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            &dir_arg,
+            "--execute",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["result"]["executed"], serde_json::json!(true));
+    assert_eq!(
+        v["result"]["skill_id"],
+        serde_json::json!("personal/skill/personal/hello-flow")
+    );
+    assert_eq!(
+        v["result"]["scripts_executed"],
+        serde_json::json!(false),
+        "脚本仅复制"
+    );
+
+    // 副本元数据齐全；原目录逐字节未动
+    let copied =
+        std::fs::read_to_string(format!("{lib_path}/resources/skills/hello-flow/SKILL.md"))
+            .unwrap();
+    assert!(copied.contains("shared: true") && copied.contains("namespace: personal"));
+    let mut files: Vec<_> = walk_files(&skill_src);
+    files.sort();
+    let digest_after: Vec<(PathBuf, Vec<u8>)> = files
+        .iter()
+        .map(|p| (p.clone(), std::fs::read(p).unwrap()))
+        .collect();
+    assert_eq!(digest_before, digest_after, "源目录逐字节不变");
+
+    // list
+    let (code, out, stderr) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "list",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["result"]["skills"], serde_json::json!(["hello-flow"]));
+
+    // 重复导入同名 → 冲突退出码非 0
+    let (code, _, _) = c.run(
+        c.tmp.path(),
+        &[
+            "--json",
+            "--data-root",
+            &data,
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            &dir_arg,
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0, "同名重复导入必须拒绝");
+}
+
+fn walk_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk_files(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
+
+fn lib_path_test(lib: &str, rel: &str) -> Option<PathBuf> {
+    Some(PathBuf::from(lib).join(rel))
+}

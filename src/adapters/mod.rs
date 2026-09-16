@@ -4,6 +4,7 @@
 pub mod agents;
 pub mod alva_agents;
 pub mod builtin;
+pub mod capability;
 pub mod common;
 pub mod docs;
 pub mod env;

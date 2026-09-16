@@ -78,7 +78,7 @@ fn skills_deploy_to_both_tools_with_references() {
     init_and_sync(&c, &ws, &["--project", "a", "--role", "dev"]);
 
     let claude_skill = ws.join(".claude/skills/a-deploy/SKILL.md");
-    let codex_skill = ws.join(".ailoom/skills/a-deploy/SKILL.md");
+    let codex_skill = ws.join(".agents/skills/a-deploy/SKILL.md");
     assert!(claude_skill.is_file(), "Claude 落盘");
     assert!(codex_skill.is_file(), "Codex 落盘");
     // 引用目录随技能整体复制
@@ -92,7 +92,10 @@ fn skills_deploy_to_both_tools_with_references() {
     );
     // Codex skills.config 数组指向托管前缀
     let cfg = std::fs::read_to_string(ws.join(".codex/config.toml")).unwrap();
-    assert!(cfg.contains("path = \".ailoom/skills/a-deploy\""), "{cfg}");
+    assert!(
+        cfg.contains("path = \".agents/skills/a-deploy/SKILL.md\""),
+        "{cfg}"
+    );
     assert!(cfg.contains("enabled = true"));
     // shared 技能两工具都有
     assert!(ws.join(".claude/skills/common-greet/SKILL.md").is_file());
@@ -511,4 +514,122 @@ fn selected_env_kind_deploys_literal_vars_now_supported() {
         serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
             .unwrap();
     assert_eq!(settings["env"]["API"], "https://x");
+}
+
+// ---------------------------------------------------------------------------
+// AIL-041：Codex 原生 .agents/skills 部署与旧 .ailoom/skills 迁移
+// ---------------------------------------------------------------------------
+
+/// 新部署落在官方原生目录 `.agents/skills/<name>`；skills.config 条目 path 指向
+/// SKILL.md（官方示例形态）；capability 查询接口给出 native + 需新会话。
+#[test]
+fn ail041_codex_native_skill_path_and_capability_query() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_and_sync(&c, &ws, &["--project", "a", "--role", "dev"]);
+
+    let native = ws.join(".agents/skills/a-deploy");
+    assert!(
+        native.join("SKILL.md").is_file(),
+        "Codex 部署到 .agents/skills"
+    );
+    assert!(!ws.join(".ailoom/skills").exists(), "新部署不再使用旧前缀");
+    let cfg = std::fs::read_to_string(ws.join(".codex/config.toml")).unwrap();
+    assert!(
+        cfg.contains("path = \".agents/skills/a-deploy/SKILL.md\""),
+        "config 条目指向 SKILL.md（官方形态）: {cfg}"
+    );
+
+    // 能力查询接口：native、需新会话、带实测引用
+    let cap = ailoom::adapters::capability::query("codex", "skill", "project").unwrap();
+    assert_eq!(cap.support, ailoom::adapters::capability::Support::Native);
+    assert!(cap.requires_new_session);
+    assert!(cap.verified.is_some());
+}
+
+/// 旧版 `.ailoom/skills/<name>` 部署在再次 sync 时自动迁移：
+/// 旧链接按托管清单过期清理删除，新原生链接创建，config 条目更新。
+#[test]
+fn ail041_legacy_codex_path_migrates_on_resync() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    init_and_sync(&c, &ws, &["--project", "a", "--role", "dev"]);
+    // 模拟旧版部署（真实升级路径的形态）：旧链接指向同一实体、
+    // 旧 config 条目、托管清单中记录旧 item key（旧版 sync 写入的状态）
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(ws.join(".ailoom/skills")).unwrap();
+        std::os::unix::fs::symlink(
+            ".agents/skills/a-deploy",
+            ws.join(".ailoom/skills/a-deploy"),
+        )
+        .unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(
+            ws.join(".agents/skills/a-deploy"),
+            ws.join(".ailoom/skills/a-deploy"),
+        )
+        .unwrap();
+    }
+    let cfg_path = ws.join(".codex/config.toml");
+    let cfg = std::fs::read_to_string(&cfg_path).unwrap();
+    let legacy_cfg = cfg.replace(
+        "path = \".agents/skills/a-deploy/SKILL.md\"",
+        "path = \".ailoom/skills/a-deploy\"",
+    );
+    std::fs::write(&cfg_path, &legacy_cfg).unwrap();
+    // 托管清单：克隆原生 symlink 条目为旧路径 key（旧版清单状态）
+    let manifest_path = {
+        let wid = {
+            let ws_canon = ws.canonicalize().unwrap();
+            ailoom::ids::workspace_id_from_root(&ws_canon)
+        };
+        c.tmp
+            .path()
+            .join("data")
+            .join("ws")
+            .join(wid)
+            .join("managed-manifest.json")
+    };
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let native_key = ".agents/skills/a-deploy#symlink";
+    let legacy_item = manifest["items"][native_key].clone();
+    assert!(!legacy_item.is_null(), "原生条目应在清单中");
+    manifest["items"][".ailoom/skills/a-deploy#symlink"] = legacy_item;
+    // 旧版 sync 写入的 config 内容即 legacy_cfg：清单哈希与其一致（非用户篡改）
+    manifest["items"][".codex/config.toml"]["content_hash"] = serde_json::Value::String(format!(
+        "sha256:{}",
+        ailoom::ids::sha256_hex(legacy_cfg.as_bytes())
+    ));
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    // 再次 sync：旧前缀条目应被清除/迁移
+    let dr = c.dr();
+    let args = ["--data-root", dr.as_str(), "sync"];
+    let (code, _, stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "resync: {stderr}");
+    assert!(
+        !ws.join(".ailoom/skills/a-deploy").exists(),
+        "旧链接被迁移清理"
+    );
+    assert!(
+        ws.join(".agents/skills/a-deploy/SKILL.md").is_file(),
+        "新原生链接保留"
+    );
+    let cfg = std::fs::read_to_string(&cfg_path).unwrap();
+    assert!(
+        !cfg.contains(".ailoom/skills/a-deploy"),
+        "旧 config 条目被清除: {cfg}"
+    );
+    assert!(
+        cfg.contains("path = \".agents/skills/a-deploy/SKILL.md\""),
+        "config 条目更新为新形态: {cfg}"
+    );
 }

@@ -379,6 +379,63 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
+    /// 个人资源库：init | import | list（AIL-043）
+    Library {
+        /// 动作：init | import | list
+        #[arg(long)]
+        action: String,
+        /// import 的技能目录
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+        /// import 重命名
+        #[arg(long)]
+        name: Option<String>,
+        /// import 预览后确认执行（默认只预览）
+        #[arg(long)]
+        execute: bool,
+    },
+    /// 个人模式：effective | select | instructions | plan | sync（AIL-044）
+    Personal {
+        /// 动作：effective | select | instructions | plan | sync
+        #[arg(long)]
+        action: String,
+        /// 完整资源 ID（source/kind/namespace/name）
+        #[arg(long)]
+        resource: Option<String>,
+        /// 宿主名（claude/codex/…）
+        #[arg(long)]
+        host: Option<String>,
+        /// 三态：enable | disable | inherit
+        #[arg(long)]
+        state: Option<String>,
+        /// 子项目相对路径
+        #[arg(long)]
+        subproject: Option<String>,
+        /// 作用到当前工作树（默认仓库层）
+        #[arg(long)]
+        worktree: bool,
+        /// instructions：从文件读取个人指令
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// instructions：清除条目
+        #[arg(long)]
+        clear: bool,
+        /// plan/sync/effective 的显式工作区根
+        #[arg(long)]
+        root: Option<std::path::PathBuf>,
+        /// plan/sync/effective 的作用域相对路径
+        #[arg(long)]
+        scope: Option<String>,
+    },
+    /// 本地控制台（AIL-046，仅 loopback）
+    Console {
+        /// 监听端口（占用时自动向后寻找可用端口）
+        #[arg(long, default_value = "7800")]
+        port: u16,
+        /// 不自动打开浏览器
+        #[arg(long)]
+        no_open: bool,
+    },
     /// 工作区体检（AIL-013）
     Doctor {
         /// 显式工作区根

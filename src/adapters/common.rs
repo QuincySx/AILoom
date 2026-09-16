@@ -232,6 +232,13 @@ pub fn current_json_entry(file: &Path, pointer: &str) -> Result<Option<String>> 
     }))
 }
 
+/// 通用“目标处理结果”占位（导出等场景）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkippedLike {
+    pub path: String,
+    pub reason: String,
+}
+
 /// 从资源原文提取 `targets` 列表；未声明 → None（对所有启用工具发布）。
 pub fn resource_targets(raw: Option<&str>) -> Option<Vec<String>> {
     let text = raw?;
@@ -287,8 +294,21 @@ pub fn raw_string_field(raw: Option<&str>, field: &str) -> Option<String> {
     None
 }
 
-/// Codex skills.config 中 AILoom 托管条目的 path 前缀。
+/// Codex skills.config 中 AILoom 托管条目的旧 path 前缀（AIL-041 迁移前部署）。
 pub const CODEX_MANAGED_SKILL_PREFIX: &str = ".ailoom/skills/";
+
+/// Codex 项目技能原生发现目录（AIL-041 官方文档复核：learn.chatgpt.com/docs/build-skills，
+/// 2026-09-16；宿主从 CWD 向上扫描至仓库根，支持符号链接）。
+pub const CODEX_NATIVE_SKILLS_DIR: &str = ".agents/skills";
+
+/// 判断 skills.config 条目是否为 AILoom 托管（旧前缀或新原生路径形态）。
+pub fn is_codex_managed_config_path(path: &str) -> bool {
+    if path.starts_with(CODEX_MANAGED_SKILL_PREFIX) {
+        return true;
+    }
+    // 新形态：.agents/skills/<name>/SKILL.md（官方 skills.config path 指向 SKILL.md）
+    path.starts_with(&format!("{CODEX_NATIVE_SKILLS_DIR}/")) && path.ends_with("/SKILL.md")
+}
 
 #[cfg(test)]
 mod tests {

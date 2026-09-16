@@ -581,19 +581,28 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
 }
 
 /// 定位（必要时创建）JSON pointer 指向的数组；已存在但不是数组 → 冲突。
+/// 中间缺失节点一律创建对象，只有叶子创建数组（RW-02/S02：`/hooks/Stop`
+/// 首次写入时 hooks 应是对象、Stop 才是数组）。
 fn ensure_json_array_at<'a>(
     root: &'a mut serde_json::Value,
     pointer: &str,
 ) -> Result<&'a mut Vec<serde_json::Value>> {
+    let segments: Vec<&str> = pointer.split('/').filter(|s| !s.is_empty()).collect();
     if root.is_null() {
         *root = serde_json::json!({});
     }
-    let segments: Vec<&str> = pointer.split('/').filter(|s| !s.is_empty()).collect();
-    let mut cur = root;
-    for seg in &segments {
-        if cur.is_null() {
-            *cur = serde_json::json!({});
+    if segments.is_empty() {
+        if !root.is_array() {
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!("JSON pointer 目标不是数组: {pointer}"),
+            ));
         }
+        return Ok(root.as_array_mut().unwrap());
+    }
+    let mut cur = root;
+    // 中间段：缺失/显式 null 创建对象，已存在但不是对象 → 冲突（不写盘，原文件不变）
+    for seg in &segments[..segments.len() - 1] {
         if !cur.is_object() {
             return Err(Error::new(
                 code::USER_CONTENT_CONFLICT,
@@ -601,18 +610,35 @@ fn ensure_json_array_at<'a>(
             ));
         }
         let obj = cur.as_object_mut().unwrap();
-        let entry = obj
+        cur = obj
             .entry(seg.to_string())
-            .or_insert_with(|| serde_json::json!([]));
-        cur = entry;
+            .or_insert_with(|| serde_json::json!({}));
+        if cur.is_null() {
+            *cur = serde_json::json!({});
+        }
     }
-    if !cur.is_array() {
+    // 叶子段：缺失/显式 null 创建数组，已存在但不是数组 → 冲突
+    let last = segments.last().unwrap();
+    if !cur.is_object() {
+        return Err(Error::new(
+            code::USER_CONTENT_CONFLICT,
+            format!("JSON pointer 父节点不是对象: /{last}"),
+        ));
+    }
+    let obj = cur.as_object_mut().unwrap();
+    let entry = obj
+        .entry(last.to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if entry.is_null() {
+        *entry = serde_json::json!([]);
+    }
+    if !entry.is_array() {
         return Err(Error::new(
             code::USER_CONTENT_CONFLICT,
             format!("JSON pointer 目标不是数组: {pointer}"),
         ));
     }
-    Ok(cur.as_array_mut().unwrap())
+    Ok(entry.as_array_mut().unwrap())
 }
 
 /// 嵌套 hooks[].command 是否以托管签名开头（Claude settings hook 条目形态）。
@@ -796,4 +822,94 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
     }
     report.ok = report.broken_backups.is_empty();
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RW-02/S02：嵌套指针首次写入——中间节点创建对象、叶子创建数组。
+    #[test]
+    fn nested_pointer_creates_object_intermediate_and_array_leaf() {
+        let mut root = serde_json::json!({});
+        let arr = ensure_json_array_at(&mut root, "/hooks/Stop").unwrap();
+        arr.push(serde_json::json!({"matcher": ""}));
+        assert!(root["hooks"].is_object(), "第一层 hooks 应是对象: {root}");
+        assert!(
+            root["hooks"]["Stop"].is_array(),
+            "叶子 Stop 应是数组: {root}"
+        );
+        assert_eq!(root["hooks"]["Stop"][0]["matcher"], "");
+    }
+
+    /// RW-02：settings.json 不存在、`{}`、已有 hooks 对象三种输入均成功。
+    #[test]
+    fn accepts_missing_empty_and_existing_hooks_object() {
+        // 不存在：空根
+        let mut root = serde_json::json!({});
+        ensure_json_array_at(&mut root, "/hooks/Stop")
+            .unwrap()
+            .push(serde_json::json!(1));
+        assert_eq!(root["hooks"]["Stop"][0], 1);
+
+        // 已有 hooks 对象与其他事件：共存
+        let mut root = serde_json::json!({"hooks": {"PreToolUse": []}, "model": "opus"});
+        ensure_json_array_at(&mut root, "/hooks/Stop")
+            .unwrap()
+            .push(serde_json::json!(2));
+        assert_eq!(root["hooks"]["PreToolUse"], serde_json::json!([]));
+        assert_eq!(root["model"], "opus", "无关字段保留");
+        assert_eq!(root["hooks"]["Stop"][0], 2);
+    }
+
+    /// RW-02：已有用户值类型冲突（中间/叶子）显式失败。
+    #[test]
+    fn type_conflicts_fail_explicitly() {
+        // 中间节点是数组（旧缺陷产物或用户内容）→ 冲突
+        let mut root = serde_json::json!({"hooks": []});
+        let err = ensure_json_array_at(&mut root, "/hooks/Stop").unwrap_err();
+        assert!(format!("{err}").contains("父节点不是对象"), "{err}");
+        // 叶子不是数组 → 冲突
+        let mut root = serde_json::json!({"hooks": {"Stop": {"matcher": ""}}});
+        let err = ensure_json_array_at(&mut root, "/hooks/Stop").unwrap_err();
+        assert!(format!("{err}").contains("目标不是数组"), "{err}");
+    }
+
+    /// 显式 null 视为缺省：中间与叶子均可创建。
+    #[test]
+    fn null_values_treated_as_missing() {
+        let mut root = serde_json::json!({"hooks": {"Stop": null}});
+        ensure_json_array_at(&mut root, "/hooks/Stop")
+            .unwrap()
+            .push(serde_json::json!(1));
+        assert_eq!(root["hooks"]["Stop"][0], 1);
+
+        let mut root = serde_json::json!({"hooks": null});
+        ensure_json_array_at(&mut root, "/hooks/Stop")
+            .unwrap()
+            .push(serde_json::json!(2));
+        assert_eq!(root["hooks"]["Stop"][0], 2);
+    }
+
+    /// 一级指针（/Stop）与根指针（""）语义。
+    #[test]
+    fn shallow_and_root_pointers() {
+        let mut root = serde_json::json!({});
+        ensure_json_array_at(&mut root, "/Stop")
+            .unwrap()
+            .push(serde_json::json!(1));
+        assert_eq!(root["Stop"][0], 1);
+
+        // 根即数组
+        let mut root = serde_json::json!([]);
+        ensure_json_array_at(&mut root, "")
+            .unwrap()
+            .push(serde_json::json!(2));
+        assert_eq!(root[0], 2);
+
+        // 根为对象时根指针冲突
+        let mut root = serde_json::json!({});
+        let err = ensure_json_array_at(&mut root, "").unwrap_err();
+        assert!(format!("{err}").contains("目标不是数组"), "{err}");
+    }
 }

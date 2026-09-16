@@ -1,0 +1,5 @@
+# RW-04 修复后验证（2026-09-15）
+命令：cargo test --locked --offline --test installer（PATH 含 mise shims）
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+
+真实 CLI/shim 注入复现与恢复过程见 rw-04-s04-repro.md

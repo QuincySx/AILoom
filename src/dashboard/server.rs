@@ -170,22 +170,27 @@ fn build_state(layout: &crate::paths::WsLayout) -> serde_json::Value {
     let cfg = crate::events::friction::FrictionConfig::load(&layout.ws_dir);
     let (events, bad) =
         crate::events::store::read_all_events(&layout.events_dir).unwrap_or_default();
-    // workspace_id 由事件携带：按事件自身的工作区分组聚合（互不混淆）
-    let mut by_session: std::collections::BTreeMap<
-        (String, String),
-        Vec<crate::events::schema::Event>,
-    > = Default::default();
+    // workspace_id 由事件携带：按事件自身的工作区分组，组内用完整会话身份
+    // （device+tool+session，RW-06/R02）聚合——统一复用 aggregate_all，
+    // 不在看板层另行按 workspace/session 合并 provider/设备。
+    let mut by_wid: std::collections::BTreeMap<String, Vec<crate::events::schema::Event>> =
+        Default::default();
     for e in &events {
-        by_session
-            .entry((e.workspace_id.clone(), e.session_id.clone()))
+        by_wid
+            .entry(e.workspace_id.clone())
             .or_default()
             .push(e.clone());
     }
     let mut sessions: std::collections::BTreeMap<String, crate::events::aggregate::SessionMetrics> =
         Default::default();
-    for ((wid, sid), evs) in &by_session {
-        if let Ok(m) = crate::events::aggregate::aggregate_session(wid, sid, evs, &heuristic) {
-            sessions.insert(format!("{wid}/{sid}"), m);
+    for (wid, evs) in &by_wid {
+        // RW-09/R06：有效聚合（实时 + 清理前累计基线）；失败按空处理
+        if let Ok(all) =
+            crate::events::aggregate::effective_all(&layout.ws_dir, wid, evs, &heuristic)
+        {
+            for (k, m) in all {
+                sessions.insert(format!("{wid}/{k}"), m);
+            }
         }
     }
     let list: Vec<serde_json::Value> = sessions
@@ -219,16 +224,30 @@ fn build_state(layout: &crate::paths::WsLayout) -> serde_json::Value {
 }
 
 /// 会话状态：running（有 start 无 stop）/idle/unknown。区分回答结束与进程退出是不可能的（Stop≠退出），以事件推断。
+/// 状态按该会话（完整身份）**最新**生命周期事件判定（RW-07/R03）：
+/// stop → idle；prompt / session-start → running；无生命周期事件 → unknown。
+/// 不因“曾经 Stop”永久 idle：Stop 后新的 Prompt 使会话恢复 running。
 fn session_state(
     m: &crate::events::aggregate::SessionMetrics,
-    _events: &[crate::events::schema::Event],
+    events: &[crate::events::schema::Event],
 ) -> String {
-    if m.last_event_at.is_some() && m.stop_count > 0 {
-        "idle".into()
-    } else if m.started_at.is_some() {
-        "running".into()
-    } else {
-        "unknown".into()
+    let latest = events
+        .iter()
+        .filter(|e| {
+            e.workspace_id == m.workspace_id
+                && e.session_id == m.session_id
+                && e.tool == m.tool
+                && e.device_id == m.device_id
+                && matches!(e.kind.as_str(), "session-start" | "prompt" | "stop")
+        })
+        .max_by_key(|e| crate::events::aggregate::parse_time(e).unwrap_or(i64::MIN));
+    match latest {
+        Some(e) => match e.kind.as_str() {
+            "stop" => "idle".into(),
+            "session-start" | "prompt" => "running".into(),
+            _ => "unknown".into(),
+        },
+        None => "unknown".into(),
     }
 }
 

@@ -2,9 +2,8 @@
 
 use crate::appctx::AppContext;
 use crate::error::{code, Error, Result};
-use crate::events::aggregate::{
-    aggregate_all, aggregate_session, parse_claude_transcript, HeuristicConfig,
-};
+use crate::events::aggregate;
+use crate::events::aggregate::{parse_claude_transcript, session_identities, HeuristicConfig};
 use crate::events::friction::{
     build_local_summary, build_share_record, friction_score, should_prompt, was_prompted,
     FrictionConfig,
@@ -36,9 +35,25 @@ pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) 
             let mut out = json!({ "sessions": [] });
             match &args.session {
                 Some(sid) => {
-                    let m =
-                        aggregate_session(&ctx.workspace.workspace_id, sid, &events, &heuristic)?;
+                    // RW-09/R06：有效聚合 = 实时事件（剔除已清算）+ 累计基线
+                    let (m, mut identities) = aggregate::effective_session(
+                        &ctx.layout.ws_dir,
+                        &ctx.workspace.workspace_id,
+                        sid,
+                        &events,
+                        &heuristic,
+                    )?;
                     let mut v = json!(m);
+                    // RW-06/R02：同名 session 存在多个完整身份（tool/device）时
+                    // 显式呈现歧义，不静默合并
+                    if identities.len() < 2 {
+                        identities = session_identities(&ctx.workspace.workspace_id, sid, &events);
+                    }
+                    if identities.len() > 1 {
+                        v["identity_ambiguous"] = json!(true);
+                        v["identities"] = json!(identities);
+                        v["note"] = json!("同名 session 在本工作区存在多个完整身份（tool/device）；本结果为跨身份聚合，细分见 identities");
+                    }
                     if args.action == "summary" {
                         let prompted = was_prompted(&ctx.layout.summary_dir, sid);
                         v["friction"] = json!({
@@ -60,7 +75,13 @@ pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) 
                     out = v;
                 }
                 None => {
-                    let all = aggregate_all(&ctx.workspace.workspace_id, &events, &heuristic)?;
+                    // RW-09/R06：有效聚合 = 实时事件 + 清理前累计基线
+                    let all = aggregate::effective_all(
+                        &ctx.layout.ws_dir,
+                        &ctx.workspace.workspace_id,
+                        &events,
+                        &heuristic,
+                    )?;
                     out = json!({ "sessions": all.values().collect::<Vec<_>>() });
                 }
             }
@@ -70,7 +91,13 @@ pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) 
                     .session
                     .as_ref()
                     .ok_or_else(|| Error::new(code::USAGE, "--share 需要指定 --session <id>"))?;
-                let m = aggregate_session(&ctx.workspace.workspace_id, sid, &events, &heuristic)?;
+                let (m, _) = aggregate::effective_session(
+                    &ctx.layout.ws_dir,
+                    &ctx.workspace.workspace_id,
+                    sid,
+                    &events,
+                    &heuristic,
+                )?;
                 let record = build_share_record(&m);
                 crate::sync_common::atomic_write(
                     share_path.as_path(),
@@ -138,7 +165,15 @@ pub fn friction_check_for_session(ctx: &AppContext, session_id: &str) -> Result<
     let cfg = FrictionConfig::load(&ctx.layout.ws_dir);
     let heuristic = HeuristicConfig::load(&ctx.layout.ws_dir);
     let (events, _) = crate::events::store::read_all_events(&ctx.layout.events_dir)?;
-    let m = aggregate_session(&ctx.workspace.workspace_id, session_id, &events, &heuristic);
+    // RW-09/R06：摩擦统计同样消费累计基线（清理后仍可提示/统计）
+    let m = aggregate::effective_session(
+        &ctx.layout.ws_dir,
+        &ctx.workspace.workspace_id,
+        session_id,
+        &events,
+        &heuristic,
+    )
+    .map(|(m, _)| m);
     match m {
         Err(_) => Ok(json!({ "prompt": false, "note": "无事件数据" })),
         Ok(m) => {

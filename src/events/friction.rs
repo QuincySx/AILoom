@@ -149,9 +149,15 @@ pub fn build_local_summary(m: &SessionMetrics, cfg: &FrictionConfig) -> Value {
 /// 团队共享记录：白名单计数与工具名；**无 prompt、无摘要正文、无机器路径**。
 /// 由本地摘要重建计数版，而非复制本地文件。
 pub fn build_share_record(m: &SessionMetrics) -> Value {
+    // RW-06/R02：session_id_hash 以完整会话身份派生（workspace|device|tool|session），
+    // 不同设备/宿主/工作区的同名 session 不写同一上报文件、不被 digest 合并
+    let identity = format!(
+        "{}|{}|{}|{}",
+        m.workspace_id, m.device_id, m.tool, m.session_id
+    );
     json!({
         "schema_version": 1,
-        "session_id_hash": crate::ids::sha256_prefix(m.session_id.as_bytes(), 16),
+        "session_id_hash": crate::ids::sha256_prefix(identity.as_bytes(), 16),
         "workspace_id": m.workspace_id,
         "tool": m.tool,
         "prompt_count": m.prompt_count,

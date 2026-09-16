@@ -31,12 +31,21 @@ pub fn run_hook_cmd(
         args.root.as_deref(),
     )?;
 
+    // RW-15/R14：采集阶段已按「显式 --root > payload.cwd > 进程 cwd」解析工作区；
+    // 后续处理沿用该解析结果，仅在采集未产出（如捕获失败）时才退回进程 cwd。
+    let resolved_root: Option<PathBuf> = value
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    let discover_dir = || -> PathBuf {
+        resolved_root
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    };
+
     // 无感知自动同步：TTL 内跳过；到期则后台 spawn sync --refresh --from-auto
-    if let Ok(ctx) = AppContext::discover(
-        data_root,
-        &std::env::current_dir().unwrap_or_default(),
-        args.root.as_deref(),
-    ) {
+    if let Ok(ctx) = AppContext::discover(data_root, &discover_dir(), args.root.as_deref()) {
         let extra = crate::events::auto_sync::maybe_schedule(&ctx, &args.event);
         if let Some(obj) = value.as_object_mut() {
             if let Some(m) = extra.as_object() {
@@ -67,11 +76,8 @@ pub fn run_hook_cmd(
             .filter(|s| !s.is_empty())
             .map(str::to_string);
         if let Some(sid) = session_id {
-            if let Ok(ctx) = AppContext::discover(
-                data_root,
-                &std::env::current_dir().unwrap_or_default(),
-                args.root.as_deref(),
-            ) {
+            if let Ok(ctx) = AppContext::discover(data_root, &discover_dir(), args.root.as_deref())
+            {
                 match crate::commands::session::friction_check_for_session(&ctx, &sid) {
                     Ok(decision) => {
                         let should = decision.get("prompt").and_then(Value::as_bool) == Some(true);
@@ -256,47 +262,87 @@ pub fn run_hooks_cmd(
                     format!("hook 启动失败: {e}"),
                 )
             })?;
-            // 输出持续消费（避免管道容量阻塞子进程导致误超时）
+            // 输出持续消费（避免管道容量阻塞子进程导致误超时）；
+            // 读线程经通道回传结果，使截止时间能覆盖读取/join（RW-16/R15）
+            let (tx_out, rx_out) = std::sync::mpsc::channel::<String>();
+            let (tx_err, rx_err) = std::sync::mpsc::channel::<String>();
             let out_pipe = child.stdout.take();
             let err_pipe = child.stderr.take();
-            let out_thread = std::thread::spawn(move || {
+            let _out_thread = std::thread::spawn(move || {
                 let mut buf = String::new();
                 if let Some(mut p) = out_pipe {
                     use std::io::Read;
                     let _ = p.read_to_string(&mut buf);
                 }
-                buf
+                let _ = tx_out.send(buf);
             });
-            let err_thread = std::thread::spawn(move || {
+            let _err_thread = std::thread::spawn(move || {
                 let mut buf = String::new();
                 if let Some(mut p) = err_pipe {
                     use std::io::Read;
                     let _ = p.read_to_string(&mut buf);
                 }
-                buf
+                let _ = tx_err.send(buf);
             });
-            // 超时回收：轮询等待；到期 kill 整个进程组
+
+            // 排空等待：截止前持续等待读线程完成（管道写端全部关闭），
+            // 收到的输出写入 out_buf
+            fn drain_within(
+                rx: &std::sync::mpsc::Receiver<String>,
+                deadline: std::time::Instant,
+                out_buf: &mut String,
+            ) -> bool {
+                let budget = deadline.saturating_duration_since(std::time::Instant::now());
+                match rx.recv_timeout(budget) {
+                    Ok(buf) => {
+                        *out_buf = buf;
+                        true
+                    }
+                    Err(_) => false, // 超时（线程仍持管道）或异常关闭 → 视为未排空
+                }
+            }
+
+            // 超时回收：截止时间覆盖子进程退出与输出排空全过程（RW-16/R15）。
+            // 子进程退出但派生进程仍持有 stdout/stderr 超过截止 → 同样按超时回收。
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
-            let status = loop {
+            let mut exit_status: Option<std::process::ExitStatus> = None;
+            while exit_status.is_none() {
                 match child.try_wait() {
-                    Ok(Some(st)) => break Some(st),
+                    Ok(Some(st)) => exit_status = Some(st),
                     Ok(None) => {
-                        if std::time::Instant::now() > deadline {
-                            kill_process_group(child.id());
-                            let _ = child.wait();
-                            break None;
+                        if std::time::Instant::now() >= deadline {
+                            break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(20));
                     }
-                    Err(_) => break None,
+                    Err(_) => break,
                 }
-            };
-            let _stdout = out_thread.join().unwrap_or_default();
-            let stderr = err_thread.join().unwrap_or_default();
+            }
+            let mut out_buf = String::new();
+            let mut stderr = String::new();
+            let mut drained = false;
+            if exit_status.is_some() {
+                drained = drain_within(&rx_out, deadline, &mut out_buf)
+                    && drain_within(&rx_err, deadline, &mut stderr);
+                if !drained {
+                    exit_status = None; // 管道未在截止前排空 → 按超时处理
+                }
+            }
+            if exit_status.is_none() {
+                kill_process_group(child.id());
+                let _ = child.wait();
+                // 回收进程组后管道写端关闭；给一次有界排空用于诊断输出
+                let grace_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(200);
+                if !drained {
+                    drain_within(&rx_out, grace_deadline, &mut out_buf);
+                    drain_within(&rx_err, grace_deadline, &mut stderr);
+                }
+            }
             if !stderr.trim().is_empty() {
                 crate::logging::info(format!("hook {id} stderr: {}", stderr.trim_end()));
             }
-            match status {
+            match exit_status {
                 Some(st) if st.success() => {
                     Ok(json!({ "executed": true, "id": id, "timed_out": false }))
                 }

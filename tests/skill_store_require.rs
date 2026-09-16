@@ -326,3 +326,188 @@ fn xdg_data_home_store_layout_is_respected() {
         assert!(target.join("SKILL.md").is_file());
     }
 }
+
+/// RW-01 迁移用例的子进程环境：不设 XDG/AILOOM_*（空值视为未设），
+/// 使默认根解析走 `~/.ailoom` → XDG 规范默认的一次性迁移路径。
+fn legacy_env(home: &Path) -> Vec<(String, String)> {
+    vec![
+        ("HOME".into(), home.to_string_lossy().into_owned()),
+        ("USERPROFILE".into(), home.to_string_lossy().into_owned()),
+        ("XDG_DATA_HOME".into(), String::new()),
+        ("XDG_STATE_HOME".into(), String::new()),
+        ("AILOOM_LOG".into(), "error".into()),
+    ]
+}
+
+fn run_in(cwd: &Path, env: &[(String, String)], args: &[&str]) -> (i32, String, String) {
+    let out = Command::new(bin())
+        .args(args)
+        .current_dir(cwd)
+        .envs(env.to_vec())
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// 旧世界部署：AILOOM_* 指向 `~/.ailoom`（等价升级前版本的落盘布局），
+/// 返回（legacy 根, 部署时 device-id, SKILL.md 原始字节）。
+fn deploy_legacy_world(c: &Ctx, ws: &Path) -> (PathBuf, String, Vec<u8>) {
+    let home = c.tmp.path().join("home");
+    let legacy = home.join(".ailoom");
+    let src = common::make_team_source_full(&c.tmp.path().join("src"));
+    let url = common::file_url(&src);
+    let mut env = legacy_env(&home);
+    env.push((
+        "AILOOM_DATA_ROOT".into(),
+        legacy.to_string_lossy().into_owned(),
+    ));
+    env.push((
+        "AILOOM_STORE_ROOT".into(),
+        legacy.join("store").to_string_lossy().into_owned(),
+    ));
+    let (code, _, stderr) = run_in(
+        ws,
+        &env,
+        &["init", "--url", &url, "--target", "claude", "--no-builtin"],
+    );
+    assert_eq!(code, 0, "旧世界 init: {stderr}");
+    let (code, _, stderr) = run_in(ws, &env, &["sync"]);
+    assert_eq!(code, 0, "旧世界 sync: {stderr}");
+
+    let device = std::fs::read_to_string(legacy.join("device-id")).unwrap();
+    let skill_bytes = std::fs::read(ws.join(".claude/skills/common-greet/SKILL.md")).unwrap();
+    // 模拟安装器 bin 与既有绝对链接
+    std::fs::create_dir_all(legacy.join("bin")).unwrap();
+    std::fs::write(legacy.join("bin/ailoom"), b"#!/bin/sh\n").unwrap();
+    #[cfg(unix)]
+    {
+        let link = ws.join(".claude/skills/common-greet");
+        let target = std::fs::read_link(&link).unwrap();
+        assert!(
+            target.starts_with(&legacy),
+            "阶段1 链接应指向旧默认：{target:?}"
+        );
+    }
+    (legacy, device, skill_bytes)
+}
+
+/// RW-01/S01 回归：默认根迁移后，未重新 sync 的工作区绝对链接仍可达、
+/// 内容不变；device-id 连续；bin 等非契约内容原地保留；显式 XDG 优先级不回归。
+#[test]
+fn legacy_default_migration_keeps_links_and_device_identity() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let home = c.tmp.path().join("home");
+    let (legacy, old_device, skill_bytes) = deploy_legacy_world(&c, &ws);
+
+    // 升级：仅 HOME，运行只读 status 触发迁移
+    let up = legacy_env(&home);
+    let (code, out, stderr) = run_in(&ws, &up, &["status"]);
+    assert_eq!(code, 0, "status: {stderr}");
+    assert!(
+        !out.contains("store-target-missing") && !stderr.contains("store-target-missing"),
+        "迁移后链接不应断裂: {out}{stderr}"
+    );
+
+    // 既有绝对链接逐字节可读，且链接目标未被改写（未重新 sync）
+    assert_eq!(
+        std::fs::read(ws.join(".claude/skills/common-greet/SKILL.md")).unwrap(),
+        skill_bytes,
+        "SKILL.md 内容不变"
+    );
+    #[cfg(unix)]
+    {
+        let link = ws.join(".claude/skills/common-greet");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(
+            std::fs::read_link(&link).unwrap().starts_with(&legacy),
+            "旧链接目标不因迁移改写（未重新 sync）"
+        );
+        assert!(
+            c.tmp
+                .path()
+                .join("home/.ailoom/store")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "旧 store 位置留兼容链接"
+        );
+    }
+    // 设备身份连续
+    let new_device = std::fs::read_to_string(home.join(".local/state/ailoom/device-id")).unwrap();
+    assert_eq!(new_device, old_device, "迁移前后 device-id 不变");
+    // bin 原地保留；幂等：重复运行稳定
+    assert!(legacy.join("bin/ailoom").is_file(), "bin 不被移动");
+    let (code, _, stderr) = run_in(&ws, &up, &["status"]);
+    assert_eq!(code, 0, "幂等 status: {stderr}");
+    assert_eq!(
+        std::fs::read(ws.join(".claude/skills/common-greet/SKILL.md")).unwrap(),
+        skill_bytes
+    );
+
+    // 已设 XDG 优先级不回归：XDG_DATA_HOME 存储根优先，旧目录不再被触碰
+    let xdg_data = c.tmp.path().join("xdg-data");
+    let mut xdg_env = legacy_env(&home);
+    xdg_env.push((
+        "XDG_DATA_HOME".into(),
+        xdg_data.to_string_lossy().into_owned(),
+    ));
+    let (code, _, stderr) = run_in(&ws, &xdg_env, &["status"]);
+    assert_eq!(code, 0, "XDG 优先 status: {stderr}");
+    assert!(
+        !xdg_data.join("ailoom/store").exists(),
+        "只读 status 不应创建新 store"
+    );
+}
+
+/// RW-01：迁移中段失败 → 回退旧根且无半迁移残留；下一进程重试完整迁移；
+/// 不误选空新根。
+#[test]
+fn legacy_migration_midway_failure_rolls_back_and_retry_completes() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let home = c.tmp.path().join("home");
+    let (legacy, old_device, skill_bytes) = deploy_legacy_world(&c, &ws);
+
+    // 注入：~/.local/state 为文件 → store 移动后 ws 步骤必然失败
+    std::fs::create_dir_all(home.join(".local")).unwrap();
+    std::fs::write(home.join(".local/state"), b"blocker").unwrap();
+    let up = legacy_env(&home);
+    let (code, _, _) = run_in(&ws, &up, &["status"]);
+    assert_eq!(code, 0, "失败回退后 status 仍可用");
+    assert_eq!(
+        std::fs::read(ws.join(".claude/skills/common-greet/SKILL.md")).unwrap(),
+        skill_bytes,
+        "回退后旧链接可达"
+    );
+    let store_meta = std::fs::symlink_metadata(legacy.join("store")).unwrap();
+    assert!(
+        store_meta.is_dir(),
+        "store 完整回滚在旧位置（无兼容链接、无半迁移）"
+    );
+    assert!(
+        !home.join(".local/share/ailoom").exists(),
+        "本次新建的空新根已清理"
+    );
+    assert_eq!(
+        std::fs::read_to_string(legacy.join("device-id")).unwrap(),
+        old_device
+    );
+
+    // 阻断解除，第二个进程重试：完整迁移成功且身份连续
+    std::fs::remove_file(home.join(".local/state")).unwrap();
+    let (code, _, stderr) = run_in(&ws, &up, &["status"]);
+    assert_eq!(code, 0, "重试 status: {stderr}");
+    assert_eq!(
+        std::fs::read(ws.join(".claude/skills/common-greet/SKILL.md")).unwrap(),
+        skill_bytes,
+        "重试迁移后旧链接仍可达"
+    );
+    let new_device = std::fs::read_to_string(home.join(".local/state/ailoom/device-id")).unwrap();
+    assert_eq!(new_device, old_device, "重试迁移 device-id 连续");
+}

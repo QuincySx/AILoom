@@ -1,8 +1,10 @@
 # 实现 AI 工作说明
 
-当前处于 **2026-09-12 review 返工轮次**，先读 [REWORK.md](REWORK.md) 和目标卡的「退回依据 / 本轮必须交付 / 本轮重新验收」。28 张卡已退回 Backlog；历史完成记录不能作为本轮关卡证据。
+当前新增 **本地控制台与 Onboarding** 工作线：先读 [规格与派工](initiatives/local-console.md) 和 AIL-039～051。既有 RW 返工记录仍见 [REWORK.md](REWORK.md)；所有状态以 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md) 为准，不能从旧轮次文字推断当前状态。
 
 ## 领取一张卡
+
+RW 返工线领取单位是 RW 子卡；新控制台线直接领取 AIL-039～051。先同步子卡卡头、子账本和子卡索引；父卡进入实施时同步父卡与主账本/看板。子卡全完成也不免除父卡原始必需验收。
 
 1. 阅读 README、CONTEXT、SCOPE、CONTRACTS 和目标卡。用户最新指示优先。
 2. 看依赖完成记录和实际代码；Backlog 依赖不能当成已存在的 API。

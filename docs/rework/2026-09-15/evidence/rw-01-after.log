@@ -1,0 +1,14 @@
+# RW-01 修复后验证（2026-09-15，工作区基于 c4a56a4）
+== 单元：paths 迁移 12 项 ==
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 0.07s
+
+== 集成：skill_store_require 7 项（含 2 项新迁移回归） ==
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.55s
+
+== 真实 CLI 场景验证摘要 ==
+1) 旧世界（AILOOM_* 指向 ~/.ailoom）init+sync 部署 A/B 两工作区绝对链接 → 升级仅 HOME 跑只读 status 触发迁移：
+   SKILL.md 经旧绝对链接逐字节可读；旧 store 位置留兼容符号链接；device-id 迁移前后一致；bin/ 原地保留。
+2) 中段故障注入（~/.local/state 为文件）：store 回滚旧位置、无半迁移残留（空新根被清理）、旧链接可达；
+   阻断解除后第二进程重试完整迁移，device-id 连续。幂等：重复 status 稳定。
+3) 已设 XDG_DATA_HOME 优先级不回归：status 解析 XDG 存储根，旧目录不被触碰。
+   复现记录见 rw-01-s01-repro.md（修复前）。

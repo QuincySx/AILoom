@@ -2,11 +2,12 @@
 
 use crate::error::{code, Error, Result};
 use crate::events::schema::{Event, TokenSnapshot};
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TokenUsage {
     pub input: Option<u64>,
     pub output: Option<u64>,
@@ -14,11 +15,15 @@ pub struct TokenUsage {
     pub cache_creation: Option<u64>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionMetrics {
     pub session_id: String,
     pub workspace_id: String,
     pub tool: String,
+    /// 完整会话身份的设备维度（RW-06/R02）：workspace+device+tool+session
+    /// 四元组唯一确定一条会话；跨设备同名 session 不合并。
+    #[serde(default)]
+    pub device_id: String,
     pub prompt_count: u64,
     pub tool_calls: u64,
     /// 工具失败（exit_code 非 0 等）
@@ -36,7 +41,7 @@ pub struct SessionMetrics {
     pub last_event_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Coverage {
     pub prompts: String,
     pub tokens: String,
@@ -120,7 +125,163 @@ impl HeuristicConfig {
     }
 }
 
-fn parse_time(e: &Event) -> Option<i64> {
+/// RW-09/R06：累计基线文件（cleanup 前持久化，正常读入口消费）。
+/// identities 键 = aggregate_all 的完整身份键 `<tool>/<session>@<device>`；
+/// accounted_event_ids = 已计入基线的已清理事件 id（重投不重复计数）。
+pub type MetricsBaseline = (BTreeMap<String, SessionMetrics>, BTreeSet<String>);
+
+pub fn metrics_baseline_path(ws_dir: &Path) -> PathBuf {
+    ws_dir.join("metrics-baseline.json")
+}
+
+/// 读取基线：文件不存在 → None；存在但损坏 → Err（调用方拒绝破坏性操作）。
+pub fn load_metrics_baseline(ws_dir: &Path) -> Result<Option<MetricsBaseline>> {
+    let path = metrics_baseline_path(ws_dir);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| Error::new(code::INTERNAL, format!("累计基线不可读: {e}")))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| {
+        Error::new(code::INDEX_CORRUPT, format!("累计基线损坏: {e}"))
+            .fix("删除该文件将丢失已清理会话的累计视图；请先修复或人工确认")
+    })?;
+    let mut identities = BTreeMap::new();
+    if let Some(map) = v.get("identities").and_then(|x| x.as_object()) {
+        for (k, m) in map {
+            if let Ok(met) = serde_json::from_value::<SessionMetrics>(m.clone()) {
+                identities.insert(k.clone(), met);
+            }
+        }
+    }
+    let accounted: BTreeSet<String> = v
+        .get("accounted_event_ids")
+        .and_then(|x| x.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(Some((identities, accounted)))
+}
+
+/// 保存基线（原子写）。
+pub fn save_metrics_baseline(
+    ws_dir: &Path,
+    identities: &BTreeMap<String, SessionMetrics>,
+    accounted: &BTreeSet<String>,
+) -> Result<()> {
+    let v = serde_json::json!({
+        "schema_version": 1,
+        "identities": identities,
+        "accounted_event_ids": accounted,
+    });
+    crate::sync_common::atomic_write(
+        metrics_baseline_path(ws_dir).as_path(),
+        serde_json::to_vec_pretty(&v)?.as_slice(),
+    )
+}
+
+/// 逐字段把基线快照累加进实时聚合（计数相加；token 快照取最大值；
+/// started_at 取更早、last_event_at 取更晚）。
+pub fn add_metrics(dst: &mut SessionMetrics, src: &SessionMetrics) {
+    dst.prompt_count += src.prompt_count;
+    dst.tool_calls += src.tool_calls;
+    dst.tool_errors += src.tool_errors;
+    dst.stop_count += src.stop_count;
+    dst.interventions += src.interventions;
+    dst.corrections_heuristic += src.corrections_heuristic;
+    dst.tokens.input = dst.tokens.input.max(src.tokens.input);
+    dst.tokens.output = dst.tokens.output.max(src.tokens.output);
+    dst.tokens.cache_read = dst.tokens.cache_read.max(src.tokens.cache_read);
+    dst.tokens.cache_creation = dst.tokens.cache_creation.max(src.tokens.cache_creation);
+    if dst.started_at.is_none()
+        || src
+            .started_at
+            .as_deref()
+            .map(|s| dst.started_at.as_deref().map(|d| s < d).unwrap_or(true))
+            .unwrap_or(false)
+    {
+        dst.started_at = src.started_at.clone();
+    }
+    if src.last_event_at.is_some() {
+        dst.last_event_at = src.last_event_at.clone();
+    }
+}
+
+/// RW-09/R06：正常读入口的有效聚合 = 实时事件（剔除已清算 id，重投不重复计数）
+/// + 累计基线（清理前的会话累计）。
+pub fn effective_all(
+    ws_dir: &Path,
+    workspace_id: &str,
+    events: &[Event],
+    heuristic: &HeuristicConfig,
+) -> Result<BTreeMap<String, SessionMetrics>> {
+    let baseline = load_metrics_baseline(ws_dir)?;
+    let accounted: BTreeSet<String> = baseline
+        .as_ref()
+        .map(|(_, a)| a.clone())
+        .unwrap_or_default();
+    let live: Vec<Event> = events
+        .iter()
+        .filter(|e| !accounted.contains(&e.event_id))
+        .cloned()
+        .collect();
+    let mut all = aggregate_all(workspace_id, &live, heuristic)?;
+    if let Some((identities, _)) = baseline {
+        for (k, bm) in &identities {
+            let entry = all.entry(k.clone()).or_default();
+            if entry.session_id.is_empty() {
+                *entry = bm.clone();
+            } else {
+                add_metrics(entry, bm);
+            }
+        }
+    }
+    Ok(all)
+}
+
+/// 单 session 的有效聚合：实时（剔除已清算）+ 该 session 全部身份的基线累加；
+/// 返回 (聚合, 完整身份列表)——身份多于一个时由调用者呈现歧义。
+pub fn effective_session(
+    ws_dir: &Path,
+    workspace_id: &str,
+    session_id: &str,
+    events: &[Event],
+    heuristic: &HeuristicConfig,
+) -> Result<(SessionMetrics, Vec<String>)> {
+    let baseline = load_metrics_baseline(ws_dir)?;
+    let accounted: BTreeSet<String> = baseline
+        .as_ref()
+        .map(|(_, a)| a.clone())
+        .unwrap_or_default();
+    let live: Vec<Event> = events
+        .iter()
+        .filter(|e| !accounted.contains(&e.event_id))
+        .cloned()
+        .collect();
+    let mut m = aggregate_session(workspace_id, session_id, &live, heuristic)?;
+    let identities = session_identities(workspace_id, session_id, &live);
+    if let Some((identities, _)) = baseline {
+        for (k, bm) in &identities {
+            let in_baseline = k
+                .split('@')
+                .next()
+                .map(|head| head.ends_with(&format!("/{session_id}")))
+                .unwrap_or(false);
+            if in_baseline {
+                add_metrics(&mut m, bm);
+                m.session_id = session_id.to_string();
+                m.workspace_id = workspace_id.to_string();
+            }
+        }
+    }
+    Ok((m, identities))
+}
+
+/// 事件时间解析（RFC3339 → 秒时间戳）；供看板等按最新事件排序的消费者复用。
+pub fn parse_time(e: &Event) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(&e.time)
         .ok()
         .map(|t| t.timestamp())
@@ -137,7 +298,20 @@ pub fn aggregate_session(
     events: &[Event],
     heuristic: &HeuristicConfig,
 ) -> Result<SessionMetrics> {
-    aggregate_session_scoped(workspace_id, session_id, None, events, heuristic)
+    aggregate_session_scoped(workspace_id, session_id, None, None, events, heuristic)
+}
+
+/// RW-06/R02：列出同名 session 在该工作区下的完整身份（tool/device 组合）。
+/// 多于一个即“同名歧义”，单 session 查询应向调用者呈现而非静默合并。
+pub fn session_identities(workspace_id: &str, session_id: &str, events: &[Event]) -> Vec<String> {
+    let mut ids: BTreeMap<String, ()> = Default::default();
+    for e in events
+        .iter()
+        .filter(|e| e.session_id == session_id && e.workspace_id == workspace_id)
+    {
+        ids.insert(format!("{}/{}", e.tool, e.device_id), ());
+    }
+    ids.into_keys().collect()
 }
 
 /// 带 provider 过滤的聚合内部入口：`tool` 限定会话事件的宿主工具。
@@ -145,6 +319,7 @@ fn aggregate_session_scoped(
     workspace_id: &str,
     session_id: &str,
     tool: Option<&str>,
+    device: Option<&str>,
     events: &[Event],
     heuristic: &HeuristicConfig,
 ) -> Result<SessionMetrics> {
@@ -154,6 +329,7 @@ fn aggregate_session_scoped(
             e.session_id == session_id
                 && e.workspace_id == workspace_id
                 && tool.map(|t| e.tool == t).unwrap_or(true)
+                && device.map(|d| e.device_id == d).unwrap_or(true)
         })
         .collect();
     if relevant.is_empty() {
@@ -166,6 +342,7 @@ fn aggregate_session_scoped(
         session_id: session_id.to_string(),
         workspace_id: workspace_id.to_string(),
         tool: relevant[0].tool.clone(),
+        device_id: relevant[0].device_id.clone(),
         ..Default::default()
     };
     // 累计 token 快照：逐字段最大值
@@ -249,23 +426,34 @@ fn count_interventions(events: &[&Event]) -> u64 {
         .count() as u64
 }
 
-/// 聚合工作区全部会话。键为 `<tool>/<session_id>`：不同 provider（tool）的
-/// 同名字符串会话不合并（AIL-019 验收）；workspace 已按事件目录天然隔离。
+/// 聚合工作区全部会话。完整会话身份 = workspace+device+tool+session（RW-06/R02
+/// 冻结）：键为 `<tool>/<session_id>@<device_id>`——不同 provider **或不同设备**
+/// 的同名字符串会话互不合并；workspace 已按事件目录天然隔离。
 pub fn aggregate_all(
     workspace_id: &str,
     events: &[Event],
     heuristic: &HeuristicConfig,
 ) -> Result<BTreeMap<String, SessionMetrics>> {
     let mut out = BTreeMap::new();
-    let mut groups: BTreeMap<(String, String), ()> = Default::default();
+    let mut groups: BTreeMap<(String, String, String), ()> = Default::default();
     for e in events.iter().filter(|e| e.workspace_id == workspace_id) {
-        groups.insert((e.tool.clone(), e.session_id.clone()), ());
+        groups.insert(
+            (e.tool.clone(), e.session_id.clone(), e.device_id.clone()),
+            (),
+        );
     }
-    for (tool, sid) in groups.into_keys() {
-        let key = format!("{tool}/{sid}");
+    for (tool, sid, device) in groups.into_keys() {
+        let key = format!("{tool}/{sid}@{device}");
         out.insert(
-            key,
-            aggregate_session_scoped(workspace_id, &sid, Some(&tool), events, heuristic)?,
+            key.clone(),
+            aggregate_session_scoped(
+                workspace_id,
+                &sid,
+                Some(&tool),
+                Some(&device),
+                events,
+                heuristic,
+            )?,
         );
     }
     Ok(out)

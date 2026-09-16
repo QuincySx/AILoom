@@ -80,21 +80,31 @@ pub fn run(args: &CodeArgs, json: bool, data_root: Option<&std::path::Path>) -> 
                 Error::new(code::INDEX_CORRUPT, "代码图谱不存在")
                     .fix("先运行 ailoom code --action build")
             })?;
-            // 过期检查（AIL-027）：源码 revision 变化后旧图只做提示性返回，不冒充新事实
+            // 过期检查（AIL-027/RW-11）：源码 revision 变化或**工作树内容指纹**
+            // 变化（未提交的修改/删除/新增，覆盖非 Git 工作区）都只做提示性返回，
+            // 不冒充新事实。指纹只取文件内容，不使用 mtime 或单独 HEAD。
             let current = current_revision(&ctx, &declaration)?;
-            let stale = g.revision != current;
+            let worktree = graph::worktree_fingerprint(&ctx.workspace.workspace_root)?;
+            let revision_stale = g.revision != current;
+            let content_stale = g.content_fingerprint.as_deref() != Some(worktree.as_str());
+            let stale = revision_stale || content_stale;
             let results = crate::code_knowledge::recall::query(&g, query, args.hops, 10);
+            let note = if revision_stale {
+                "图已过期（源码/版本变化），结果可能含旧事实；请运行 ailoom code --action build 重建"
+            } else if content_stale {
+                "图已过期（工作树内容与构图时不一致，含未提交改动），结果可能含旧事实；请运行 ailoom code --action build 重建"
+            } else {
+                "图与当前 revision 及工作树内容一致"
+            };
             let value = json!({
                 "project": project,
                 "results": results,
                 "graph_stale": stale,
                 "graph_revision": g.revision,
                 "current_revision": current,
-                "note": if stale {
-                    "图已过期（源码/版本变化），结果可能含旧事实；请运行 ailoom code --action build 重建"
-                } else {
-                    "图与当前 revision 一致"
-                },
+                "content_stale": content_stale,
+                "worktree_fingerprint": worktree,
+                "note": note,
                 "dangling_call_edges": graph::dangling_call_edges(&g).len(),
             });
             if !json {

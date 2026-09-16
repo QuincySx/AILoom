@@ -190,6 +190,67 @@ fn cleanup(ctx: &AppContext, dry_run: bool) -> Result<Value> {
             "note": "仅列出本工作区缓存与已确认上传的归档；其他工作区数据不在范围内",
         }));
     }
+    // RW-09/R06：删除已确认归档前，把其中事件按完整会话身份累计进基线文件，
+    // 正常读入口（session/report/dashboard）消费基线，累计视图不因清理丢失。
+    // 幂等：已在基线 accounted 集合中的事件不再累加（写入中断后重试不翻倍）。
+    // 基线损坏 → 拒绝破坏性清理并可修复后重试。
+    let planned_archives: Vec<&String> = planned
+        .iter()
+        .filter(|p| {
+            Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("events-archive-"))
+                .unwrap_or(false)
+        })
+        .collect();
+    if !planned_archives.is_empty() {
+        let heuristic = crate::events::aggregate::HeuristicConfig::load(&ctx.layout.ws_dir);
+        let mut archived_events: Vec<crate::events::schema::Event> = Vec::new();
+        for p in &planned_archives {
+            let (mut evs, bad) = crate::events::store::read_events(Path::new(p))?;
+            if bad > 0 {
+                return Err(Error::new(
+                    code::INTERNAL,
+                    format!("归档 {p} 含 {bad} 个坏行，拒绝清理（先人工检查）"),
+                ));
+            }
+            archived_events.append(&mut evs);
+        }
+        let (mut identities, mut accounted) =
+            match crate::events::aggregate::load_metrics_baseline(&ctx.layout.ws_dir)? {
+                Some((i, a)) => (i, a),
+                None => (Default::default(), Default::default()),
+            };
+        // 只累计尚未入账的事件（崩溃后重试不翻倍）
+        let fresh: Vec<&crate::events::schema::Event> = archived_events
+            .iter()
+            .filter(|e| !accounted.contains(&e.event_id))
+            .collect();
+        let fresh_aggregate = crate::events::aggregate::aggregate_all(
+            &ctx.workspace.workspace_id,
+            &fresh.iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
+            &heuristic,
+        )?;
+        for (k, m) in fresh_aggregate {
+            let entry = identities.entry(k).or_default();
+            if entry.session_id.is_empty() {
+                entry.session_id = m.session_id.clone();
+                entry.workspace_id = m.workspace_id.clone();
+                entry.tool = m.tool.clone();
+                entry.device_id = m.device_id.clone();
+            }
+            crate::events::aggregate::add_metrics(entry, &m);
+        }
+        for e in &fresh {
+            accounted.insert(e.event_id.clone());
+        }
+        crate::events::aggregate::save_metrics_baseline(
+            &ctx.layout.ws_dir,
+            &identities,
+            &accounted,
+        )?;
+    }
     let mut removed = Vec::new();
     for p in &planned {
         let path = PathBuf::from(p);

@@ -1,0 +1,6 @@
+# RW-03 修复后验证（2026-09-15）
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 9 filtered out; finished in 6.66s
+
+真实 registry 用例 packages_real_npm_install 保持 ignored（既有设计，未重跑真实 npm；本地假体验证 missing→satisfied、零重装、冲突先拒绝）

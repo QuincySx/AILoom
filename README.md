@@ -2,8 +2,8 @@
 
 以 Rust 构建的项目与团队 AI 资源、知识和协作工具。
 
-**状态：2026-09-13 返工轮次完成：34 张 Done、3 张 Blocked（AIL-009/012/014，外部授权或宿主能力阻塞）、0 张 Backlog。**
-验证：253 测试全绿 + fmt/Clippy 干净（[全量日志](docs/evidence/logs/2026-09-13-full-validation.log)）；Claude Code/Codex 真机验收证据见 [宿主验收记录](docs/evidence/2026-09-13-host-acceptance.md)。执行者从 [任务看板](docs/BACKLOG.md) 领取未关闭项。
+**状态：2026-09-15 第二轮返工完成：35 张 Done、3 张 Blocked（AIL-009/012/014，外部授权或宿主能力阻塞）、0 张 Backlog；18 张返工子卡全部完成。**
+验证：286 测试通过 / 0 失败 / 1 ignored（真实 npm registry 用例按设计 ignored）+ fmt/Clippy 干净（[全量日志](docs/evidence/logs/2026-09-15-rework-full-validation.log)）；Claude Code/Codex 真机验收证据见 [宿主验收记录](docs/evidence/2026-09-13-host-acceptance.md)。执行者从 [任务看板](docs/BACKLOG.md) 领取未关闭项。
 
 ## 快速开始
 
@@ -25,8 +25,8 @@ target/release/ailoom --help
 
 ## 任务看板与文档
 
-- [任务看板与实施顺序](docs/BACKLOG.md)（3 张 Blocked，`cards.json` 为状态真相）
-- [返工派工单](docs/REWORK.md) · [完成度与代码审查报告](docs/reviews/2026-09-12-completion-review.md)
+- [任务看板与实施顺序](docs/BACKLOG.md)（当前状态以 cards.json 为准）
+- [返工派工单](docs/REWORK.md) · [完成度与代码审查报告](docs/reviews/2026-09-15-agent-implementation-review.md)
 - [公共契约 v1](docs/CONTRACTS.md)（文件格式/错误码/冲突矩阵）
 - [能力矩阵](docs/capabilities/)（官方来源与核实日期；未知标 unknown）
 - [快速上手](docs/QUICKSTART.md) · [支持范围](docs/SUPPORT.md) · [发布检查单](docs/RELEASE-CHECKLIST.md) · [安装](docs/INSTALL.md)
@@ -40,6 +40,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-features
 ```
 
-2026-09-13 返工轮次：253 个测试全部通过，fmt/Clippy 干净；Claude Code 2.1.266 与 Codex 0.153.4 真机验收完成（skill/规则/agent/MCP/hooks/SSE/召回），Codex 项目级 skills/MCP 实测不加载已降级记录。逐卡证据见各卡「重新关卡记录」。
+2026-09-15 第二轮返工：286 个测试通过 / 0 失败 / 1 ignored（真实 npm registry 用例），fmt/Clippy 干净；S01–S04、R01–R15 全部反例以真实入口修复并回归（[返工派工单](docs/REWORK.md)、[子卡索引](docs/rework/2026-09-15/README.md)）。2026-09-13 真机验收记录保留；Linux/Windows、真实 GitHub 写入仍未验证，边界见各卡。逐卡证据见各卡「重新关卡记录」。
 
 后续能力独立保留，不以同步器代替完整产品目标。
+
+- [本地控制台与 Onboarding 计划（待实现）](docs/initiatives/local-console.md)
+- [个人配置/Git 需求及回复审查](docs/reviews/2026-09-15-onboarding-requirements-review.md)

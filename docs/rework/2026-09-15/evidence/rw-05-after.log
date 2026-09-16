@@ -1,0 +1,8 @@
+# RW-05 修复后验证（2026-09-15）
+== self_repo 全套（8 项，含 2 项新边界回归） ==
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.19s
+
+== 真实 CLI：内部祖先链接越界拒绝（退出 17 / E8002，外部零写入，声明不变）；去除链接后重试成功 ==
+详见 rw-05-r01-repro.md（修复前复现）
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.73s
+

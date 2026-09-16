@@ -940,3 +940,345 @@ fn packages_real_npm_install() {
         "真实 npm 安装后 satisfied: {v}"
     );
 }
+
+// ---------- AIL-008/032 返工回归（RW-02/S02：首次同步创建嵌套 Hook 配置） ----------
+
+/// 添加一个团队 Stop hook 并推到 origin（返回 src 路径语义与 add_team_hook 一致）。
+fn push_team_hook(c: &Ctx, bare: &Path, name: &str) {
+    let src = c.tmp.path().join("team-src");
+    add_team_hook(&src, name, 3000);
+    common::commit_only(&src, "add hook");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    // 工作区刷新源锁到最新 commit
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&c.tmp.path().join("biz"), &refs);
+    assert_eq!(code, 0, "{stderr}");
+}
+
+fn stop_array(settings: &serde_json::Value) -> &Vec<serde_json::Value> {
+    settings["hooks"]["Stop"].as_array().unwrap()
+}
+
+/// S02 反例：空工作区（settings.json 不存在）首次 sync 团队 Stop hook 应成功，
+/// 且 hooks=对象、Stop=数组；`{}`、已有 hooks 对象两种输入同样成功；
+/// 类型冲突显式失败且原文件逐字节不变。
+#[test]
+fn team_hook_first_sync_creates_nested_config() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+
+    // 1) settings.json 不存在
+    push_team_hook(&c, &bare, "stop-a");
+    assert!(!ws.join(".claude/settings.json").exists());
+    let (code, _, stderr) = c.sync(&ws);
+    assert_eq!(code, 0, "空 settings 首次同步失败: {stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(settings["hooks"].is_object(), "hooks 应是对象: {settings}");
+    assert_eq!(stop_array(&settings).len(), 1);
+
+    // 2) settings.json 为 {}
+    let c2 = Ctx::new();
+    let (bare2, ws2) = c2.setup();
+    push_team_hook(&c2, &bare2, "stop-a");
+    std::fs::create_dir_all(ws2.join(".claude")).unwrap();
+    std::fs::write(ws2.join(".claude/settings.json"), "{}\n").unwrap();
+    let (code, _, stderr) = c2.sync(&ws2);
+    assert_eq!(code, 0, "空对象 settings 首次同步失败: {stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws2.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(settings["hooks"].is_object() && stop_array(&settings).len() == 1);
+
+    // 3) 已有 hooks 对象（用户条目）→ 共存；重复 sync Noop
+    let c3 = Ctx::new();
+    let (bare3, ws3) = c3.setup();
+    std::fs::create_dir_all(ws3.join(".claude")).unwrap();
+    std::fs::write(
+        ws3.join(".claude/settings.json"),
+        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"user-own"}]}]}}"#,
+    )
+    .unwrap();
+    push_team_hook(&c3, &bare3, "stop-a");
+    let (code, _, stderr) = c3.sync(&ws3);
+    assert_eq!(code, 0, "{stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws3.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert!(stop_array(&settings)
+        .iter()
+        .any(|e| e["hooks"][0]["command"] == "user-own"));
+    assert_eq!(stop_array(&settings).len(), 2, "用户+团队共存");
+    let before = std::fs::read(ws3.join(".claude/settings.json")).unwrap();
+    let (code, out, _) = c3.sync(&ws3);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("noop") || !out.contains("applied"),
+        "重复 sync 应 Noop: {out}"
+    );
+    assert_eq!(
+        std::fs::read(ws3.join(".claude/settings.json")).unwrap(),
+        before,
+        "Noop 不改写文件"
+    );
+
+    // 4) 类型冲突：hooks 是数组 → 显式失败且原文件逐字节不变
+    let c4 = Ctx::new();
+    let (bare4, ws4) = c4.setup();
+    push_team_hook(&c4, &bare4, "stop-a");
+    std::fs::create_dir_all(ws4.join(".claude")).unwrap();
+    let conflict = br#"{"hooks":[]}"#;
+    std::fs::write(ws4.join(".claude/settings.json"), conflict).unwrap();
+    let (code, _, stderr) = c4.sync(&ws4);
+    assert_ne!(code, 0, "类型冲突必须失败");
+    assert!(stderr.contains("E5004"), "冲突错误码: {stderr}");
+    assert_eq!(
+        std::fs::read(ws4.join(".claude/settings.json")).unwrap(),
+        &conflict[..],
+        "冲突时原文件逐字节不变"
+    );
+}
+
+/// 同事件两个团队 Hook 从空 settings 首次同步即共存（各签名独立）。
+#[test]
+fn team_hooks_same_event_first_sync_from_empty_settings() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    push_team_hook(&c, &bare, "stop-a");
+    push_team_hook(&c, &bare, "stop-b");
+    let (code, _, stderr) = c.sync(&ws);
+    assert_eq!(code, 0, "首次同步失败: {stderr}");
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".claude/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(stop_array(&settings).len(), 2, "两个团队 hook 共存");
+}
+
+/// RW-03/S03：不完整版本 `1.2` 在任何安装动作前拒绝；`1.2.3-next.1` 等
+/// prerelease 合法，且已满足判断与安装用同一版本语义（满足则零 npm 调用）。
+#[test]
+fn packages_exact_version_semantics_and_idempotent_satisfaction() {
+    // 1) 不完整版本：check 即拒绝（不启动安装器、不写 package.json）
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "shortver.toml", "short-pkg", "1.2");
+    common::commit_only(&src, "add short ver");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let args = [
+        "--data-root".to_string(),
+        c.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c.run(&ws, &refs);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = packages_json(&c, ws.as_path(), "check", &[]);
+    assert_ne!(code, 0, "不完整版本必须被拒绝");
+    assert!(
+        stderr.contains("精确版本") && stderr.contains("1.2"),
+        "{stderr}"
+    );
+
+    // 2) prerelease 合法：check 报告 missing（而非校验失败）
+    let c2 = Ctx::new();
+    let (bare2, ws2) = c2.setup();
+    let src2 = c2.tmp.path().join("team-src");
+    add_package(&src2, "pre.toml", "pre-pkg", "1.2.3-next.1");
+    common::commit_only(&src2, "add pre pkg");
+    ailoom::gitx::git(&src2, &["push", "-q", "origin", "main"]).unwrap();
+    let args2 = [
+        "--data-root".to_string(),
+        c2.dr(),
+        "init".to_string(),
+        "--url".to_string(),
+        bare2.to_str().unwrap().to_string(),
+        "--refresh".to_string(),
+        "--project".to_string(),
+        "a".to_string(),
+    ];
+    let refs2: Vec<&str> = args2.iter().map(String::as_str).collect();
+    let (code, _, stderr) = c2.run(&ws2, &refs2);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, v, stderr) = packages_json(&c2, ws2.as_path(), "check", &[]);
+    assert_eq!(code, 0, "prerelease 不应被拒绝: {stderr}");
+    assert!(
+        v["result"]["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["state"] == "missing"),
+        "prerelease 包应报告 missing: {v}"
+    );
+
+    // 3) 已满足判断一致：node_modules 版本与声明逐字相等 → install --yes 零 npm 调用
+    let prefix = c2
+        .tmp
+        .path()
+        .join("data")
+        .join("ws")
+        .join(ailoom::ids::workspace_id_from_root(
+            &ws2.canonicalize().unwrap(),
+        ))
+        .join("packages");
+    let mod_dir = prefix.join("node_modules").join("pre-pkg");
+    std::fs::create_dir_all(&mod_dir).unwrap();
+    std::fs::write(
+        mod_dir.join("package.json"),
+        r#"{"name":"pre-pkg","version":"1.2.3-next.1"}"#,
+    )
+    .unwrap();
+    let fake_bin = c2.tmp.path().join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let fake = fake_bin.join("npm");
+    std::fs::write(
+        &fake,
+        "#!/bin/sh\ntouch \"${NPM_CALLED_MARKER:?}\"\nexit 1\n",
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let marker = c2.tmp.path().join("npm-called");
+    let (code, stdout, stderr) = {
+        let out = Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                c2.dr().as_str(),
+                "packages",
+                "--action",
+                "install",
+                "--yes",
+            ])
+            .current_dir(ws2.as_path())
+            .envs(common::isolated_child_env(c2.tmp.path()))
+            .env(
+                "PATH",
+                format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .env("NPM_CALLED_MARKER", marker.to_str().unwrap())
+            .output()
+            .unwrap();
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    assert_eq!(code, 0, "已满足 install 应成功: {stderr}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["result"]["npm_ran"],
+        false,
+        "不应执行 npm: {stdout}"
+    );
+    assert!(!marker.exists(), "npm 被调用即失败：已满足的精确版本零安装");
+}
+
+// ---------- AIL-032 返工回归（RW-16/R15）：截止时间覆盖派生进程与管道排空 ----------
+
+/// 父进程立即退出但派生进程持有 stdout/stderr：截止时间内未排空 → 按超时回收
+/// （不再等待派生进程数秒且不误报成功）；回收无残留；大输出正常命令不误超时。
+#[test]
+fn team_hook_exec_timeout_covers_detached_pipe_holders() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup();
+    let specs = ws.join(".ailoom-hook-specs");
+    std::fs::create_dir_all(&specs).unwrap();
+    let exec = |id: &str| {
+        c.run(
+            ws.as_path(),
+            &[
+                "--json",
+                "--data-root",
+                c.dr().as_str(),
+                "hooks",
+                "--action",
+                "exec",
+                "--id",
+                id,
+            ],
+        )
+    };
+    let write_spec = |id: &str, command: &[&str], timeout_ms: u64| {
+        let spec = serde_json::json!({
+            "resource_id": id,
+            "command": command,
+            "timeout_ms": timeout_ms,
+        });
+        std::fs::write(
+            specs.join(format!("{}.json", id.replace('/', "__"))),
+            serde_json::to_string_pretty(&spec).unwrap(),
+        )
+        .unwrap();
+    };
+
+    // 1) 派生进程持有管道（sleep 标记 4.732）：100ms 截止 → 超时回收，
+    //    exec 总耗时必须有界（< 2s，而非等待 sleep 结束），且不报 executed=true
+    write_spec(
+        "team/hook/leak",
+        &["/bin/sh", "-c", "sh -c 'sleep 4.732' & exit 0"],
+        100,
+    );
+    let t0 = std::time::Instant::now();
+    let (code, stdout, stderr) = exec("team/hook/leak");
+    let elapsed = t0.elapsed();
+    assert_eq!(code, 0, "超时不得使宿主非零退出: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(v["result"]["timed_out"], true, "截止覆盖排空: {stdout}");
+    assert_eq!(v["result"]["executed"], false, "不得误报成功: {stdout}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "必须在截止时间附近返回（实际 {elapsed:?}）"
+    );
+    // 进程组回收：sleep 无残留
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let probe = std::process::Command::new("pgrep")
+        .args(["-f", "sleep 4.732"])
+        .output()
+        .unwrap();
+    assert!(
+        probe.stdout.is_empty(),
+        "派生进程应被回收: {:?}",
+        String::from_utf8_lossy(&probe.stdout)
+    );
+
+    // 2) 大输出（> 管道容量）快速退出：不误超时（管道持续消费）
+    write_spec(
+        "team/hook/big2",
+        &["/bin/sh", "-c", "yes big | head -c 512000; exit 0"],
+        5000,
+    );
+    let (code, stdout, _) = exec("team/hook/big2");
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(v["result"]["executed"], true, "{stdout}");
+    assert_eq!(v["result"]["timed_out"], false, "{stdout}");
+
+    // 3) 非零退出与启动失败：诊断语义不回归（宿主隔离）
+    write_spec("team/hook/fail2", &["/bin/sh", "-c", "exit 7"], 5000);
+    let (code, stdout, _) = exec("team/hook/fail2");
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_default();
+    assert_eq!(v["result"]["exit"], 7, "{stdout}");
+    assert_eq!(v["result"]["timed_out"], false);
+    write_spec("team/hook/missing", &["/nonexistent-binary-rw16"], 5000);
+    let (code, _, stderr) = exec("team/hook/missing");
+    assert_ne!(code, 0, "启动失败应有诊断");
+    assert!(stderr.contains("hook 启动失败"), "{stderr}");
+}

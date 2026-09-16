@@ -305,3 +305,23 @@ JSON envelope：`{"schema_version":1,"result":…}` 成功；失败输出 `{"sch
 
 - v1（2026-09-09，AIL-001）：由 v0 草案冻结；新增 ResourceId/文件格式/错误码/退出码/数据分区/最小验收集合的具体定义；MCP/Agent 项目选择标记为 AILoom 设计。
 - v1.1（2026-09-14，用户决定）：§3 路径解析优先级由「自有 `AILOOM_*` 高于 XDG」改为「已设 XDG 变量高于 `AILOOM_*`」；无任何覆盖时的默认根由 `~/.ailoom` 改为 XDG 规范默认（`~/.local/state/ailoom`、`~/.local/share/ailoom/store`），并提供旧默认 `~/.ailoom` 的一次性自动迁移（失败回退旧目录并告警）。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 8 项 + `test_isolation` 集成。
+- v1.2（2026-09-15，RW-01/S01）：§3 兼容迁移补充可达性与身份连续性要求——迁移时把 `<legacy>/device-id` 复制到新数据根（目标已存在则不覆盖），保证设备身份跨升级连续；迁移成功后在旧 `store` 位置保留指向新位置的兼容符号链接，使既有工作区指向旧 store 的绝对 Skill 链接无需重新 sync 仍可达；迁移中段失败回滚时一并清理本次新建的空目录，避免下一进程把空新根误判为新旧并存并采用。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 12 项 + `skill_store_require` 迁移集成 2 项。
+
+## 11. 仓库身份、个人配置层与本地控制台（v1.3，2026-09-16，AIL-039/040 新增）
+
+本节是**新增能力契约**，不修改 §1-§10 的 v1 冻结语义；冲突时以本节描述迁移关系。
+
+### 11.1 仓库身份与作用域模型（AIL-039）
+
+- **RepositoryId**：`repo-` + sha256(Git common-dir 绝对路径)[0..16]。common-dir 是主要发现证据；origin 规范化 URL 只作为关联证据记录，**不作为不可变主键**。同 common-dir 的主工作树与 linked worktree 自动归组；同 origin 的独立 clone 是不同 RepositoryId，只生成关联建议（用户确认后才 `linked_repos`）。
+- **WorktreeId**：仓库登记内的稳定随机 id（`sha256(登记时路径)[..12]` 起始），移动/重关联保持不变；登记路径失联标 `missing`，重关联需新路径仍是本仓库工作树。bare 根是仓库容器，不登记为可部署工作树。
+- **ScopeId**：配置作用域，取值为「仓库默认 / 仓库内相对路径子项目 / 工作树覆盖 / 工作树内相对路径子项目」之一。子项目不得穿越新的 Git 边界（子模块/嵌套独立仓库按独立仓库登记）。
+- **与 v1 字段关系**：`workspace_id = sha256(workspace_root)[0..16]` 不变（事件/锁/journal 分区键）；`repository_anchor` 语义修正——声明目录位于 Git 仓库内时（即使声明目录无自身 `.git`），anchor 用所在仓库的 Git 身份，不再退化为 `nongit+<路径哈希>`。影响：此类工作区的 `anchor_key`（缓存分区）变化，源快照需随下次 init/sync 重新锁定；事件、binding、journal 按 workspace_id 分区，不受影响。实现：`src/workspace.rs::find_git_root_up`、`src/repo_registry.rs`；登记文件 `<data_root>/repos/<repo_id>/registry.json`（JSON，schema_version=1，未知字段忽略）。
+
+### 11.2 仓外个人配置与作用域继承（AIL-040）
+
+- **PersonalProfile**：`<data_root>/profile/profile.toml`（TOML，`schema_version = 1`，仓外机器数据区；项目根不需要任何个人文件）。文件不存在 = 空个人层 = 纯 v1 行为。
+- **三态选择**：资源（完整 ResourceId `source/kind/namespace/name`）与宿主统一用 `inherit | enable | disable`。**未设置**（无条目）≠ **显式继承**（`inherit`，进 trace 不改值）≠ **显式禁用**（`disable`，显式值）。
+- **优先级（低 → 高）**：团队声明 → 个人仓库默认（`[repos."<repo_id>".default]`）→ 仓库子项目模板（`[[repos."<repo_id>".subprojects]]`，相对路径，浅→深依次生效）→ 当前工作树覆盖（`[repos."<repo_id>".worktrees."<wt_id>"]`）→ 当前工作树子项目覆盖（`[[repos."<repo_id>".wt_subprojects."<wt_id>"]]`，浅→深）。每个有效值必须能追溯到来源层；同层重复子项目路径是配置错误（`E3008`），不靠遍历顺序赢。
+- **与 v1 选择模型关系**：团队层（§2 角色∪项目 + require 门禁）语义不变；个人层叠加在团队层之上，只影响 **AILoom 期望部署集合**，不提升源读取权限、不重写团队声明、不阻止宿主从全局/祖先目录加载能力。
+- Git 探测错误（如 `.git` 文件损坏）必须显式报错（E2 段），不允许静默归类为非 Git。

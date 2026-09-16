@@ -4,6 +4,8 @@ pub mod contribute;
 pub mod doctor;
 pub mod hook_reg;
 pub mod init;
+pub mod library;
+pub mod personal;
 pub mod plan;
 pub mod recall;
 pub mod session;

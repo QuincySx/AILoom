@@ -7,15 +7,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const GRAPH_SCHEMA_VERSION: u32 = 2;
+/// v3（RW-10/R07）：符号身份加入模块作用域——`fn:<scope::name>@相对路径`
+/// （scope 为所在嵌套 mod 链，根为空）；同文件嵌套模块同名符号不再碰撞。
+/// 旧 schema（v2 及以前）身份不含作用域，build 时整体重建（schema 不符 → 全量）。
+pub const GRAPH_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Symbol {
-    /// 唯一符号身份：`fn:name@相对路径`（AIL-026：同名定义跨文件不碰撞）；
-    /// 调用边目标保持名字层（fn:name），查询期按名字解析到候选定义并保留歧义证据。
+    /// 唯一符号身份：`fn:<scope::name>@相对路径`（scope=嵌套 mod 链；AIL-026
+    /// 同名定义跨文件不碰撞，RW-10 同文件不同模块也不碰撞）；
+    /// 调用边目标：作用域可解析时为完整身份（ast-scoped），否则保持名字层
+    /// （fn:name）查询期按名字解析到候选定义并保留歧义证据。
     pub id: String,
     pub kind: String, // fn|struct|enum|trait|mod
-    pub name: String,
+    pub name: String, // 简名（不含作用域前缀）
     pub file: String, // 相对项目根
     pub line: usize,
     pub doc: Option<String>, // 可选 AI 描述与事实字段分离（v1 仅 doc comment）
@@ -45,6 +50,11 @@ pub struct FileFacts {
 pub struct Graph {
     pub schema_version: u32,
     pub revision: Option<String>,
+    /// 扫描内容指纹（RW-11/R08）：对本次扫描全部 .rs 文件的
+    /// `<相对路径>\0<内容 sha256>` 再做摘要。与 Git HEAD/源锁无关，
+    /// 未提交的修改/删除/新增都会改变它——查询据此判定工作树过期。
+    #[serde(default)]
+    pub content_fingerprint: Option<String>,
     pub files: BTreeMap<String, FileFacts>,
     /// 扫描范围说明：包含/排除与计数
     pub scan_stats: ScanStats,
@@ -84,12 +94,39 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
         symbols: &'a mut Vec<Symbol>,
         edges: &'a mut Vec<Edge>,
         fn_names: &'a mut Vec<String>,
+        /// 嵌套 mod 链（RW-10）：进入 `mod x` 压栈、离开弹栈；
+        /// 符号身份 = `<链>::<简名>@<文件>`。
+        mod_stack: Vec<String>,
+        /// 作用域化调用记录：(被调简名, 行, 调用方 id, 调用点 mod 链快照)
+        scoped_calls: Vec<(String, usize, String, Vec<String>)>,
+    }
+    impl<'a> V<'a> {
+        fn scope_prefix(&self) -> Option<String> {
+            if self.mod_stack.is_empty() {
+                None
+            } else {
+                Some(self.mod_stack.join("::"))
+            }
+        }
+        fn qual(&self, name: &str) -> String {
+            match self.scope_prefix() {
+                Some(s) => format!("{s}::{name}"),
+                None => name.to_string(),
+            }
+        }
+        /// 内层包含者（mod 符号身份）：根模块用 crate/目录名近似。
+        fn container_id(&self) -> String {
+            match self.scope_prefix() {
+                Some(s) => format!("mod:{s}@{}", self.rel),
+                None => format!("mod:{}@{}", mod_of(self.rel), self.rel),
+            }
+        }
     }
     impl<'a> Visit<'_> for V<'a> {
         fn visit_item_fn(&mut self, item: &syn::ItemFn) {
             let name = item.sig.ident.to_string();
             let line = item.sig.ident.span().start().line;
-            let id = format!("fn:{name}@{}", self.rel);
+            let id = format!("fn:{}@{}", self.qual(&name), self.rel);
             self.symbols.push(Symbol {
                 id: id.clone(),
                 kind: "fn".into(),
@@ -100,7 +137,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             });
             self.fn_names.push(name.clone());
             self.edges.push(Edge {
-                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
+                from: self.container_id(),
                 to: id.clone(),
                 kind: "contains".into(),
                 confidence: "ast".into(),
@@ -123,6 +160,8 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let mut calls = Calls(Vec::new());
             calls.visit_item_fn(item);
             for (callee, line) in calls.0 {
+                self.scoped_calls
+                    .push((callee.clone(), line, id.clone(), self.mod_stack.clone()));
                 self.edges.push(Edge {
                     from: id.clone(),
                     to: format!("fn:{callee}"),
@@ -138,7 +177,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("struct:{name}@{}", self.rel),
+                id: format!("struct:{}@{}", self.qual(&name), self.rel),
                 kind: "struct".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -151,7 +190,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("enum:{name}@{}", self.rel),
+                id: format!("enum:{}@{}", self.qual(&name), self.rel),
                 kind: "enum".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -164,7 +203,7 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
             self.symbols.push(Symbol {
-                id: format!("trait:{name}@{}", self.rel),
+                id: format!("trait:{}@{}", self.qual(&name), self.rel),
                 kind: "trait".into(),
                 name: name.clone(),
                 file: self.rel.into(),
@@ -176,29 +215,33 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
         fn visit_item_mod(&mut self, item: &syn::ItemMod) {
             let name = item.ident.to_string();
             let line = item.ident.span().start().line;
+            let parent = self.container_id();
+            let mod_id = format!("mod:{}@{}", self.qual(&name), self.rel);
             self.edges.push(Edge {
-                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
-                to: format!("mod:{name}@{}", self.rel),
+                from: parent,
+                to: mod_id.clone(),
                 kind: "contains".into(),
                 confidence: "ast".into(),
                 file: self.rel.into(),
                 line,
             });
             self.symbols.push(Symbol {
-                id: format!("mod:{name}@{}", self.rel),
+                id: mod_id,
                 kind: "mod".into(),
                 name: name.clone(),
                 file: self.rel.into(),
                 line,
                 doc: doc_of(&item.attrs),
             });
+            self.mod_stack.push(name);
             syn::visit::visit_item_mod(self, item);
+            self.mod_stack.pop();
         }
         fn visit_item_use(&mut self, item: &syn::ItemUse) {
             let line = item.use_token.span().start().line;
             let path_str = quote_use(&item.tree);
             self.edges.push(Edge {
-                from: format!("mod:{}@{}", mod_of(self.rel), self.rel),
+                from: self.container_id(),
                 to: format!("use:{path_str}"),
                 kind: "use-dep".into(),
                 confidence: "ast".into(),
@@ -213,14 +256,41 @@ pub fn extract_file(rel: &str, project_root: &Path) -> Result<FileFacts> {
         symbols: &mut symbols,
         edges: &mut edges,
         fn_names: &mut function_names,
+        mod_stack: Vec::new(),
+        scoped_calls: Vec::new(),
     };
     v.visit_file(&syntax);
+    let scoped_calls = v.scoped_calls;
 
-    // 调用边解析：to 若在项目内存在同名 fn → 指向之；否则保留 name-based 外部引用（gap 语义）
-    for edge in &mut edges {
-        if edge.kind == "call" {
-            let callee = edge.to.trim_start_matches("fn:");
-            if function_names.iter().any(|n| n == callee) {
+    // 调用边解析（RW-10）：
+    // 1) 作用域链可确定目标（同文件内从调用点最内层 mod 向外查同名 fn）
+    //    → to 改写为完整符号身份，confidence=ast-scoped（限定调用可追溯）；
+    // 2) 否则保持名字层目标：文件内有同名 fn → name-based-project（跨模块歧义
+    //    保留在名字层）；都没有 → name-based 外部引用（gap 语义，不静默选错）。
+    for (callee, line, from_id, stack) in &scoped_calls {
+        let raw = format!("fn:{callee}");
+        let mut resolved: Option<String> = None;
+        for i in (0..stack.len()).rev() {
+            let candidate = format!("fn:{}::{}@{}", stack[..=i].join("::"), callee, rel);
+            if symbols.iter().any(|s| s.id == candidate) {
+                resolved = Some(candidate);
+                break;
+            }
+        }
+        if resolved.is_none() {
+            let root_candidate = format!("fn:{callee}@{rel}");
+            if symbols.iter().any(|s| s.id == root_candidate) {
+                resolved = Some(root_candidate);
+            }
+        }
+        let edge = edges
+            .iter_mut()
+            .find(|e| e.kind == "call" && e.from == *from_id && e.line == *line && e.to == raw);
+        if let Some(edge) = edge {
+            if let Some(target) = resolved {
+                edge.to = target;
+                edge.confidence = "ast-scoped".into();
+            } else if function_names.iter().any(|n| n == callee) {
                 edge.confidence = "name-based-project".into();
             }
         }
@@ -282,10 +352,46 @@ fn quote_use(tree: &syn::UseTree) -> String {
 }
 
 /// 扫描项目源码树（v1 语言：Rust）。
+/// 工作树内容指纹（RW-11/R08）：按 scan_project 相同的遍历/过滤规则
+/// （跳过 `target`、`.` 开头目录，只看 `.rs`）对每个文件**内容字节**做
+/// sha256，再对 `<相对路径>\0<内容哈希>\n`（按路径排序）整体摘要。
+/// 只依赖内容本身，不使用 mtime；不要求 Git。
+pub fn worktree_fingerprint(project_root: &Path) -> Result<String> {
+    let mut stack = vec![project_root.to_path_buf()];
+    let mut rust_files: Vec<PathBuf> = Vec::new();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)?.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if name == "target" || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(p);
+            } else if name.ends_with(".rs") {
+                rust_files.push(p);
+            }
+        }
+    }
+    rust_files.sort();
+    let mut lines = String::new();
+    for f in &rust_files {
+        let rel = f.strip_prefix(project_root)?.to_string_lossy().to_string();
+        let bytes = std::fs::read(f)?;
+        lines.push_str(&format!("{}\0{}\n", rel, crate::ids::sha256_hex(&bytes)));
+    }
+    Ok(format!(
+        "sha256:{}",
+        crate::ids::sha256_hex(lines.as_bytes())
+    ))
+}
+
 pub fn scan_project(project_root: &Path, revision: Option<String>) -> Result<Graph> {
+    let fingerprint = worktree_fingerprint(project_root)?;
     let mut graph = Graph {
         schema_version: GRAPH_SCHEMA_VERSION,
         revision,
+        content_fingerprint: Some(fingerprint),
         files: BTreeMap::new(),
         scan_stats: ScanStats::default(),
     };
@@ -363,6 +469,7 @@ pub fn update_incremental(
     graph.files = fresh.files;
     graph.scan_stats = fresh.scan_stats;
     graph.revision = revision;
+    graph.content_fingerprint = fresh.content_fingerprint;
     Ok(())
 }
 

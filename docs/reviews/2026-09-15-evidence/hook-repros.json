@@ -1,0 +1,19 @@
+{
+  "root": "/var/folders/ct/65l3f8k577x1kjkbmw3rvc140000gn/T/ailoom-review-20260915-z8j74pf5",
+  "stop_from_A": {
+    "code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "stop_from_B": {
+    "code": 0,
+    "stdout": "{\"continue\":true,\"systemMessage\":\"会话 fr-1 摩擦较高（打断 2 / 工具错误 0 / 纠正 0）。可运行 `ailoom session summary --session fr-1` 沉淀经验（本提示每会话最多一次）\"}\n",
+    "stderr": ""
+  },
+  "hook_descendant": {
+    "timeout_ms": 100,
+    "elapsed_seconds": 2.05,
+    "stdout": "{\"result\":{\"executed\":true,\"id\":\"test\",\"timed_out\":false},\"schema_version\":1}\n",
+    "stderr": ""
+  }
+}

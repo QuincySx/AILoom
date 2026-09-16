@@ -109,10 +109,63 @@ if [ "$actual" != "$expected" ]; then
   die "sha256 校验失败：expected=$expected actual=${actual}，拒绝安装"
 fi
 
-# 校验通过后才原子替换：同目录 rename；失败不触碰旧文件
+# ---------------------------------------------------------------------------
+# 校验通过后事务化切换（RW-04/S04）：binary → 摘要 → 软链；
+# 任一步失败整体恢复旧安装：旧 binary/摘要回位、链接重新指向旧安装、退出非零。
+# 备份用 cp（不移动原文件），切换前先备份，失败时才能回滚。
+# AILOOM_INJECT_FAILURE=move-binary|move-sha|link 仅为安装器测试注入点，缺省不生效。
+# ---------------------------------------------------------------------------
 chmod +x "$TMP"
-mv -f "$TMP" "$FINAL"
-mv -f "$TMP_SHA" "$SHA_FILE"
-ln -sfn "$FINAL" "$LINK"
+
+FINAL_BAK="$BIN_DIR/.ailoom-$TRIPLE.bak.$$"
+SHA_BAK="$BIN_DIR/.ailoom-$TRIPLE.sha256.bak.$$"
+had_old=0
+if [ -f "$FINAL" ]; then
+  cp "$FINAL" "$FINAL_BAK" || die "备份旧安装失败，已保留原安装（未做任何修改）"
+  had_old=1
+fi
+if [ -f "$SHA_FILE" ]; then
+  cp "$SHA_FILE" "$SHA_BAK" || {
+    rm -f "$FINAL_BAK"
+    die "备份旧校验文件失败，已保留原安装（未做任何修改）"
+  }
+fi
+
+restore_old() {
+  if [ "$had_old" = "1" ]; then
+    mv -f "$FINAL_BAK" "$FINAL"
+    [ -f "$SHA_BAK" ] && mv -f "$SHA_BAK" "$SHA_FILE"
+    ln -sfn "$FINAL" "$LINK" 2>/dev/null || true
+  else
+    rm -f "$FINAL" "$SHA_FILE"
+    [ -L "$LINK" ] && rm -f "$LINK"
+  fi
+}
+
+if [ "${AILOOM_INJECT_FAILURE:-}" = "move-binary" ]; then
+  restore_old
+  die "注入失败（move-binary）：已恢复旧安装"
+fi
+mv -f "$TMP" "$FINAL" || {
+  restore_old
+  die "binary 替换失败，已恢复旧安装"
+}
+if [ "${AILOOM_INJECT_FAILURE:-}" = "move-sha" ]; then
+  restore_old
+  die "注入失败（move-sha）：已恢复旧安装"
+fi
+mv -f "$TMP_SHA" "$SHA_FILE" || {
+  restore_old
+  die "摘要切换失败，已恢复旧安装"
+}
+if [ "${AILOOM_INJECT_FAILURE:-}" = "link" ]; then
+  restore_old
+  die "注入失败（link）：已恢复旧安装"
+fi
+ln -sfn "$FINAL" "$LINK" || {
+  restore_old
+  die "链接切换失败，已恢复旧安装"
+}
+rm -f "$FINAL_BAK" "$SHA_BAK"
 say "安装完成：${LINK} → ${FINAL}（确保 $BIN_DIR 在 PATH 中）"
 say "验证：ailoom version"
