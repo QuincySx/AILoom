@@ -9,6 +9,9 @@
 | `regression-tests.log` | 逐卡回归 + 真实宿主（AIL-077）+ skills.sh 真实导入（AIL-065）+ 真实浏览器走查（AIL-078/098）证据 |
 | `full-gate.log` | fmt/clippy/全量测试输出（本轮最终 gate 见下） |
 | `browser-onboarding-applied.png` | 真实浏览器全页截图：六步向导应用成功后的验证面板（含「需新会话」状态与撤销入口） |
+| `browser-samples-1280.png` | 组件状态样例矩阵页（#/samples，fixture 驱动：Button/Field/TriState/StatusBadge/DataTable/DiffView/ConflictPanel 全状态） |
+| `browser-1024.png` / `browser-768.png` / `browser-390.png` | 三档真实视口截图（总览页，setViewportSize） |
+| `browser-conflict-resolved.png` | 双标签草稿冲突取证：采用服务器草稿后冲突条消失、页面恢复 |
 
 环境：macOS 26 (arm64)，Rust stable；全部测试使用临时目录 + 隔离 HOME/XDG/data-root + 本地 `git init` 夹具；未触碰真实用户宿主配置、未发起网络发布。
 

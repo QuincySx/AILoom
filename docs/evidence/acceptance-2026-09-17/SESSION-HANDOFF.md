@@ -1,8 +1,8 @@
 # 2026-09-17 会话交接（SESSION-HANDOFF）
 
-## 当前状态
+## 当前状态（2026-09-17 第二轮收尾后）
 
-- 账本（docs/cards.json 为准）：**57 Done / 2 In progress（AIL-078、AIL-098）/ 1 In progress（AIL-079 整理）/ 1 Blocked（AIL-051 人工试用）/ 41 Backlog（旧 RW 与早期卡）**；041 保留 Done；039/040/042-050 重开待最终复核。
+- 账本（docs/cards.json 为准）：**94 Done / 4 Blocked（AIL-009/012/014 历史外部验收 + AIL-051 三名人工试用者）**。本轮执行卡 052-098 全部 Done；原主卡 039/040/042-050 经 AIL-079 逐项复核重勾（引用新证据）；041 保留 Done。
 - 本轮完成：052-062（数据保护/目标/继承/宿主开关）、063-067（Skill 多来源/GitHub 导入/skills.sh/上游更新/部署闭环）、069/070/072/076、077（真实宿主）、080-097（Web 全部分层与页面）。
 - 代码版本：基线 edc48bd + 本工作区未提交修改（最终以本轮提交为准）。
 
@@ -19,13 +19,12 @@
 - skills.sh 真实导入：skills.sh/vercel-labs/skills/find-skills → GitHub d6b37f62… → 个人库（AIL-065）。
 - 真实浏览器完整闭环：批准→识别→宿主探测→能力保存→预览→应用→验证→撤销（AIL-078/098 主链路），并发现修复 3 个真实缺陷（query 解码/DataTable loading/模块导出）。
 
-## 未解决问题与下一步（按优先级）
+## 未解决问题与下一步
 
-1. AIL-098（In progress）：组件状态样例矩阵页（fixture）、1024/768/390 多宽度截图、键盘 Tab 焦点环断言。基础设施已具备（viewport API/焦点 token）。
-2. AIL-078（In progress）：浏览器级多 worktree/子项目切换、来源更新同步、流程文档全操作复跑；U01-U04 双上下文冲突取证。
-3. AIL-079（In progress）：078/098 完成后对原主卡 039/040/042-050 逐项复核重勾；补三名试用者操作脚本。
-4. AIL-051（Blocked）：三名独立试用者人工验收（外部条件，不可自动替代）。
-5. Codex 调用验证（077 内 Blocked 项）：需有 OpenAI 凭据的隔离配置重跑探针。
+1. AIL-051（Blocked）：三名独立试用者人工验收——外部条件，不可自动替代。试用脚本路径：启动控制台（ailoom console）→ 按 #/onboarding 六步向导走 首次路径；证据模板参考 docs/evidence/acceptance-2026-09-17/。
+2. Codex 调用验证（AIL-077 内 Blocked 项）：需有 OpenAI 凭据的隔离配置重跑探针（ailoom077-probe + codex exec）。
+3. 已知边界（如实记录，非阻塞）：包级批量导出未实现（单产物导出完整）；团队订阅启停 UI 属 v1 团队模式源管理（个人模式订阅=固定 commit 的 git 来源）；WebKit 合成焦点不触发 :focus-visible（真实键盘复核归人工）。
+4. 全部执行卡已 Done，无待领取卡。
 
 ## 操作提示（恢复执行）
 

@@ -7,6 +7,7 @@ import { currentTarget } from './state/target.js';
 import { notify } from './state/store.js';
 
 import * as pageOverview from './pages/overview.js';
+import * as pageSamples from './pages/samples.js';
 import * as pageOnboarding from './pages/onboarding.js';
 import * as pageScopes from './pages/scopes.js';
 import * as pageLibrary from './pages/library.js';
@@ -17,6 +18,7 @@ import * as pageInstructions from './pages/instructions.js';
 
 const ROUTES = {
   '#/overview': { title: '总览', mount: pageOverview.mount },
+  '#/samples': { title: '组件样例', mount: pageSamples.mount },
   '#/onboarding': { title: '首次设置', mount: pageOnboarding.mount },
   '#/scopes': { title: '仓库与作用域', mount: pageScopes.mount },
   '#/library': { title: '资源库', mount: pageLibrary.mount },

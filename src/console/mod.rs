@@ -577,6 +577,24 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
                 Err(e) => Response::json(409, json!({ "error": e.to_string() })),
             }
         }
+        ("GET", "/api/deploy-status") => {
+            // AIL-067/068：库版本 vs 各工作树已部署版本对照（目标须在授权根内）
+            let Some(root) = req
+                .query
+                .iter()
+                .find(|(k, _)| k == "root")
+                .map(|(_, v)| PathBuf::from(v))
+            else {
+                return Response::json(400, json!({ "error": "需要 root" }));
+            };
+            if let Err(e) = ensure_within_roots(state, &root) {
+                return Response::json(403, json!({ "error": e }));
+            }
+            match crate::commands::personal::deploy_status(Some(&root), None, &state.data_root) {
+                Ok(v) => Response::json(200, v),
+                Err(e) => Response::json(400, json!({ "error": e.to_string() })),
+            }
+        }
         ("GET", "/api/library/sources") => {
             // AIL-063：来源身份/版本清单
             let lib = crate::personal_library::library_root(&state.data_root);

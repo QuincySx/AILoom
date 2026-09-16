@@ -215,3 +215,32 @@ test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 #     剩余项：1024/768/390 截图、焦点环断言、组件状态样例矩阵（fixture 页）。
 #   - 浏览器内多 worktree/子项目切换、来源更新同步、流程文档全操作：后端回归已覆盖，
 #     浏览器级复跑留待 098 收尾（页面与 API 均已就绪）。
+
+## AIL-098 收尾（2026-09-17 第二轮浏览器会话）
+# 1. 组件状态样例矩阵页（#/samples，fixture 驱动，生产页面无假数据回退）：
+#    Button（正常/禁用/pending）、Field（正常/错误/hint/长内容/多行）、TriStateSelect
+#    （三态×生效来源/禁用）、StatusBadge（宿主 5 态+工作树 4 态）、DataTable（正常/空/
+#    加载/失败/长内容）、DiffView、ConflictPanel、计划/任务边界状态文案（stale/
+#    partial/offline/interrupted）。截图：browser-samples-1280.png
+# 2. 多宽度截图：browser-1024.png / browser-768.png / browser-390.png（总览页，
+#    setViewportSize 真实视口；1024 首次截图因捕获通道超时，重开标签后成功）
+# 3. 键盘可达性：CSSOM 断言 :focus-visible 焦点环规则存在
+#    （button/input/textarea/select → outline:none + box-shadow: var(--focus-ring)，
+#    --focus-ring=0 0 0 2px #5b6ee155）；焦点次序 DOM 序=视觉序（导航栏最先）；
+#    WebKit IAB 合成焦点不匹配 :focus-visible（引擎行为），真实键盘复核归 051 人工。
+#    注：真实 Tab 键合成事件不驱动浏览器焦点遍历（平台限制，非应用缺陷）。
+
+## AIL-078 收尾（2026-09-17 第二轮浏览器会话）
+# 1. 多 worktree 切换：scopes 页选择器列出 repo(main)+wt2(feature-b) 两工作树 →
+#    行点击设目标 → TargetBar 切换到 wt2（工作树 00142ba2f983）；
+#    wt2 worktree 层 select → effective origin=worktree_override（A/B 配置不串写，
+#    wt1 保持 repo default 值）。wt2 未批准时 effective 403（授权根边界正确）。
+# 2. 来源更新同步（浏览器页面 API 同款）：import-git probe-flow v1 → check
+#    up-to-date → 上游 commit v2 → check upstream-new → update execute
+#    （内容 v2 落库 + .updates-backup/ 备份存在）→ check up-to-date。
+# 3. 流程操作：新建流程 → 绑定真实资源（bound）→ 产物 v1→v2（base_version 前置）→
+#    过期版本拒绝 → record-input → reviewed 清除下游标记。全通过。
+# 4. 双上下文冲突（U03/075）：标签 A/B 同 revision 加载 → A 保存成功 rev 8 →
+#    B 旧 base 保存 → 409 冲突条显示「草稿已被其他会话修改（revision 8）。你的本地
+#    草稿已保留：采用服务器草稿/用本地覆盖」→ B 本地草稿未被覆盖 → 点「采用服务器
+#    草稿」→ 冲突条消失 + 页面采用服务器版本。截图：browser-conflict-resolved.png

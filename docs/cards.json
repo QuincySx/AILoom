@@ -515,7 +515,7 @@
  {
   "id": "AIL-039",
   "title": "Git 仓库身份、工作树与子项目发现",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "XL",
   "depends_on": [
@@ -529,12 +529,13 @@
    "AIL-057",
    "AIL-079",
    "AIL-088"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-040",
   "title": "仓外个人配置、作用域继承与兼容迁移",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "XL",
   "depends_on": [
@@ -553,7 +554,8 @@
    "AIL-060",
    "AIL-079",
    "AIL-086"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-041",
@@ -573,7 +575,7 @@
  {
   "id": "AIL-042",
   "title": "公司指令文件保护与个人本地调整",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "XL",
   "depends_on": [
@@ -589,12 +591,13 @@
    "AIL-076",
    "AIL-079",
    "AIL-097"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-043",
   "title": "个人资源库与已有 Skill 导入",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -614,12 +617,13 @@
    "AIL-079",
    "AIL-090",
    "AIL-095"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-044",
   "title": "按资源与宿主选择能力及解释有效配置",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -638,12 +642,13 @@
    "AIL-069",
    "AIL-079",
    "AIL-089"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-045",
   "title": "Grill 到实现的流程包与文档产物关联",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -662,12 +667,13 @@
    "AIL-084",
    "AIL-091",
    "AIL-096"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-046",
   "title": "本地 Web 控制服务与受限 API",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -690,12 +696,13 @@
    "AIL-080",
    "AIL-085",
    "AIL-086"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-047",
   "title": "个人模式 Onboarding 首次成功体验",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -725,12 +732,13 @@
    "AIL-087",
    "AIL-093",
    "AIL-098"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-048",
   "title": "仓库工作树与子项目日常配置界面",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -762,12 +770,13 @@
    "AIL-094",
    "AIL-097",
    "AIL-098"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-049",
   "title": "源、Skill、MCP 与流程文档可视化编辑",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "L",
   "depends_on": [
@@ -808,12 +817,13 @@
    "AIL-095",
    "AIL-096",
    "AIL-098"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-050",
   "title": "预览应用任务、宿主验证与可恢复撤销",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "LOCAL",
   "size": "XL",
   "depends_on": [
@@ -837,7 +847,8 @@
    "AIL-079",
    "AIL-084",
    "AIL-092"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-051",
@@ -1138,7 +1149,7 @@
  {
   "id": "AIL-068",
   "title": "网页来源管理、导入、更新与订阅影响预览",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "L",
   "depends_on": [
@@ -1153,7 +1164,8 @@
   "parent_cards": [
    "AIL-043",
    "AIL-049"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-069",
@@ -1194,7 +1206,7 @@
  {
   "id": "AIL-071",
   "title": "流程包实际 Skill 绑定与文档管理页面",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "M",
   "depends_on": [
@@ -1207,7 +1219,8 @@
   "parent_cards": [
    "AIL-045",
    "AIL-049"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-072",
@@ -1232,7 +1245,7 @@
  {
   "id": "AIL-073",
   "title": "真实仓库工作树选择器与目标切换失效",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "M",
   "depends_on": [
@@ -1247,12 +1260,13 @@
   "parent_cards": [
    "AIL-047",
    "AIL-048"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-074",
   "title": "六步 Onboarding 与能力保存真实闭环",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "L",
   "depends_on": [
@@ -1267,12 +1281,13 @@
   "file": "cards/AIL-074.md",
   "parent_cards": [
    "AIL-047"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-075",
   "title": "草稿冲突保留与页面错误恢复",
-  "status": "Backlog",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "M",
   "depends_on": [
@@ -1284,7 +1299,8 @@
    "AIL-046",
    "AIL-047",
    "AIL-049"
-  ]
+  ],
+  "owner": "ZCode（2026-09-17 领取）"
  },
  {
   "id": "AIL-076",
@@ -1325,7 +1341,7 @@
  {
   "id": "AIL-078",
   "title": "真实浏览器与破坏性反例端到端回归",
-  "status": "In progress",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "L",
   "depends_on": [
@@ -1369,7 +1385,7 @@
  {
   "id": "AIL-079",
   "title": "需求覆盖复审、文档与最终验收交接",
-  "status": "In progress",
+  "status": "Done",
   "milestone": "ALIGN",
   "size": "M",
   "depends_on": [
@@ -1743,7 +1759,7 @@
  {
   "id": "AIL-098",
   "title": "组件样例与所有页面浏览器质量关卡",
-  "status": "In progress",
+  "status": "Done",
   "milestone": "WEB",
   "size": "M",
   "depends_on": [

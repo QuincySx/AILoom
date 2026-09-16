@@ -36,6 +36,7 @@ pub const PAGE_WORKFLOWS_JS: &str = include_str!("ui/pages/workflows.js");
 pub const PAGE_TASKS_JS: &str = include_str!("ui/pages/tasks.js");
 pub const PAGE_INSTRUCTIONS_JS: &str = include_str!("ui/pages/instructions.js");
 pub const PAGE_OVERVIEW_JS: &str = include_str!("ui/pages/overview.js");
+pub const PAGE_SAMPLES_JS: &str = include_str!("ui/pages/samples.js");
 
 /// 固定资产表：路径 → (内容, MIME)。
 pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
@@ -154,6 +155,10 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
         (
             "/ui/pages/overview.js",
             (PAGE_OVERVIEW_JS, "text/javascript; charset=utf-8"),
+        ),
+        (
+            "/ui/pages/samples.js",
+            (PAGE_SAMPLES_JS, "text/javascript; charset=utf-8"),
         ),
     ];
     assets.iter().find(|(p, _)| *p == path).map(|(_, v)| *v)

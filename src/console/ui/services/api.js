@@ -63,6 +63,7 @@ export const api = {
   effective: (root) => request('GET', '/api/effective' + qs({ root })),
   previewRepoDefault: () => request('POST', '/api/preview/repo-default', {}),
   instructions: (body) => request('POST', '/api/profile/instructions', body),
+  deployStatus: (root) => request('GET', '/api/deploy-status' + qs({ root })),
   // 草稿
   getDraft: () => request('GET', '/api/draft'),
   putDraft: (baseRevision, draft) => request('PUT', '/api/draft', { base_revision: baseRevision, draft }),
