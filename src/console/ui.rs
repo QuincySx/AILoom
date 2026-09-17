@@ -43,6 +43,13 @@ pub const PAGE_SAMPLES_JS: &str = include_str!("ui/pages/samples.js");
 pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
     let assets: &[(&str, (&str, &str))] = &[
         (
+            "/ui/pages/projects.js",
+            (
+                include_str!("ui/pages/projects.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
             "/ui/theme.css",
             (include_str!("ui/theme.css"), "text/css; charset=utf-8"),
         ),

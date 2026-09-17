@@ -94,6 +94,117 @@ fn json_body(raw: &str) -> Value {
 }
 
 #[test]
+fn projects_persist_metadata_and_instructions_are_explicitly_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = tmp.path().join("project-a");
+    let b = tmp.path().join("project-b");
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    let options = opts(tmp.path(), 18721);
+    let server = ConsoleServer::start(&options).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    assert_eq!(
+        post(
+            server.port,
+            "/api/profile/instructions",
+            &auth,
+            json!({"content":"wrong target"})
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/profile/instructions",
+            &auth,
+            json!({"root":a,"content":"unapproved"})
+        )
+        .0,
+        403
+    );
+    let mut ids = Vec::new();
+    for root in [&a, &b] {
+        assert_eq!(
+            post(server.port, "/api/fs/approve", &auth, json!({"path":root})).0,
+            200
+        );
+        let (status, body) = post(
+            server.port,
+            "/api/repo/discover",
+            &auth,
+            json!({"path":root}),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(json_body(&body)["kind"], "nongit");
+        ids.push(json_body(&body)["repo_id"].as_str().unwrap().to_owned());
+    }
+    assert_ne!(ids[0], ids[1]);
+    let (_, body) = method(server.port, "GET", "/api/state", &auth, None);
+    assert!(json_body(&body)["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["common_dir"].as_str().is_some()));
+    assert_eq!(
+        post(
+            server.port,
+            "/api/projects/metadata",
+            &auth,
+            json!({"repo_id":"../../escape","name":"bad"})
+        )
+        .0,
+        404
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/projects/metadata",
+            &auth,
+            json!({"repo_id":ids[0],"name":"工作项目","category":"工作"})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/profile/instructions",
+            &auth,
+            json!({"root":a,"content":"仅项目 A"})
+        )
+        .0,
+        200
+    );
+    for (root, expected) in [(&a, "仅项目 A"), (&b, "")] {
+        let (status, body) = post(
+            server.port,
+            "/api/profile/instructions",
+            &auth,
+            json!({"root":root,"read":true}),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(json_body(&body)["content"], expected);
+    }
+    server.shutdown();
+    server.join();
+    let server = ConsoleServer::start(&options).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let (_, body) = method(server.port, "GET", "/api/state", &auth, None);
+    let body = json_body(&body);
+    let project = body["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["repo_id"] == ids[0])
+        .unwrap();
+    assert_eq!(project["project"]["name"], "工作项目");
+    assert_eq!(project["project"]["category"], "工作");
+    server.shutdown();
+    server.join();
+}
+
+#[test]
 fn collections_api_requires_session_and_approved_local_source() {
     let tmp = tempfile::tempdir().unwrap();
     let server = ConsoleServer::start(&opts(tmp.path(), 18080)).unwrap();

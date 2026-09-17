@@ -389,6 +389,8 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ("GET", "/api/state") => api_state(state),
         ("GET", "/api/events") => api_events_snapshot(state, req),
         ("POST", "/api/fs/approve") => api_fs_approve(state, req),
+        ("POST", "/api/fs/pick-directory") => api_pick_directory(),
+        ("POST", "/api/projects/metadata") => api_project_metadata(state, req),
         ("GET", "/api/fs/list") => api_fs_list(state, req),
         ("POST", "/api/repo/discover") => api_repo_discover(state, req),
         ("POST", "/api/profile/select") => api_profile_select(state, req),
@@ -1075,6 +1077,7 @@ fn api_state(state: &Arc<ServerState>) -> Response {
             "profile_path": profile_path,
             "has_profile": profile_path.is_file(),
             "approved_roots": &*state.approved_roots.lock().unwrap(),
+            "native_picker": cfg!(target_os = "macos"),
         }),
     )
 }
@@ -1086,13 +1089,79 @@ fn read_repos_summary(data_root: &Path) -> Value {
         for e in entries.flatten() {
             let reg_file = e.path().join("registry.json");
             if let Ok(text) = std::fs::read_to_string(&reg_file) {
-                if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                if let Ok(mut v) = serde_json::from_str::<Value>(&text) {
+                    let metadata = e.path().join("project.json");
+                    if let Ok(text) = std::fs::read_to_string(metadata) {
+                        if let Ok(meta) = serde_json::from_str::<Value>(&text) {
+                            v["project"] = meta;
+                        }
+                    }
                     out.push(v);
                 }
             }
         }
     }
     Value::Array(out)
+}
+
+fn api_project_metadata(state: &Arc<ServerState>, req: &Request) -> Response {
+    let id = req.body["repo_id"].as_str().unwrap_or("");
+    // Resolve against registered IDs, never accept a client path as a data filename.
+    if !read_repos_summary(&state.data_root)
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["repo_id"] == id)
+    {
+        return Response::json(404, json!({"error": "项目未登记"}));
+    }
+    let name = req.body["name"].as_str().unwrap_or("").trim();
+    let category = req.body["category"].as_str().unwrap_or("").trim();
+    if name.is_empty() || name.chars().count() > 120 || category.chars().count() > 80 {
+        return Response::json(
+            400,
+            json!({"error": "项目名称需为 1–120 字，分类最多 80 字"}),
+        );
+    }
+    let meta = json!({"name":name,"category":category});
+    let path = state.data_root.join("repos").join(id).join("project.json");
+    match crate::sync_common::atomic_write(&path, meta.to_string().as_bytes()) {
+        Ok(()) => Response::json(200, meta),
+        Err(e) => Response::json(500, json!({"error":e.to_string()})),
+    }
+}
+
+fn api_pick_directory() -> Response {
+    #[cfg(target_os = "macos")]
+    {
+        // Fixed AppleScript: no user data is interpolated into executable code.
+        match std::process::Command::new("/usr/bin/osascript")
+            .args([
+                "-e",
+                "POSIX path of (choose folder with prompt \"选择 AILoom 项目文件夹\")",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => Response::json(
+                200,
+                json!({"path":String::from_utf8_lossy(&out.stdout).trim()}),
+            ),
+            Ok(out) => {
+                let message = String::from_utf8_lossy(&out.stderr);
+                if message.contains("(-128)") {
+                    Response::json(200, json!({"cancelled":true}))
+                } else {
+                    Response::json(500, json!({"error":message.trim()}))
+                }
+            }
+            Err(e) => Response::json(500, json!({"error":e.to_string()})),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Response::json(
+        400,
+        json!({"error":"当前平台尚未接入原生文件夹选择器，请输入绝对路径"}),
+    )
 }
 
 fn api_events_snapshot(state: &Arc<ServerState>, req: &Request) -> Response {
@@ -1192,7 +1261,9 @@ fn api_repo_discover(state: &Arc<ServerState>, req: &Request) -> Response {
                     Err(e) => return Response::json(500, json!({ "error": e.to_string() })),
                 };
             reg.refresh_worktrees(&d, &crate::ids::now_iso());
-            let _ = reg.save(&state.data_root);
+            if let Err(e) = reg.save(&state.data_root) {
+                return Response::json(500, json!({"error":e.to_string()}));
+            }
             Response::json(
                 200,
                 json!({
@@ -1210,10 +1281,11 @@ fn api_repo_discover(state: &Arc<ServerState>, req: &Request) -> Response {
             // F06：非 Git 路径模式是合法一等作用域（nongit-<hash>），登记后
             // select/plan/sync 全链路可用（能力受限于无 Git exclude/工作树）。
             let ident = crate::commands::personal::nongit_identity(&root);
-            let mut reg =
-                crate::repo_registry::RepoRegistry::load_or_create(&state.data_root, &ident);
-            if let Ok(r) = reg.as_mut() {
-                let _ = r.save(&state.data_root);
+            if let Err(e) =
+                crate::repo_registry::RepoRegistry::load_or_create(&state.data_root, &ident)
+                    .and_then(|r| r.save(&state.data_root))
+            {
+                return Response::json(500, json!({"error":e.to_string()}));
             }
             Response::json(
                 200,
@@ -1298,12 +1370,30 @@ fn api_profile_instructions(state: &Arc<ServerState>, req: &Request) -> Response
         .get("clear")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let repo = match crate::repo_registry::discover_repo(&cwd) {
-        Ok(r) => r,
+    let Some(root) = req.body["root"].as_str() else {
+        return Response::json(
+            400,
+            json!({"error":"需要 root，不能用服务启动目录代替项目"}),
+        );
+    };
+    let root = match ensure_within_roots(state, Path::new(root)) {
+        Ok(root) => root,
+        Err(e) => return Response::json(403, json!({"error":e})),
+    };
+    let repo = match crate::repo_registry::classify_path(&root) {
+        Ok(crate::repo_registry::PathClass::Git(r)) => r,
+        Ok(crate::repo_registry::PathClass::NonGit { root }) => {
+            crate::commands::personal::nongit_identity(&root)
+        }
         Err(e) => return Response::json(400, json!({ "error": e.to_string() })),
     };
     let repo_id = repo.identity.repo_id.clone();
+    if req.body["read"].as_bool() == Some(true) {
+        return Response::json(
+            200,
+            json!({"repo_id":repo_id,"content":crate::personal_instructions::load_entry(&state.data_root,&repo_id,None).unwrap_or_default()}),
+        );
+    }
     let result = if clear {
         crate::personal_instructions::clear_entry(&state.data_root, &repo_id, None)
             .map(|_| json!({ "cleared": true }))

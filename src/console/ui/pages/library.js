@@ -11,6 +11,7 @@ export function mount(container, ctx) {
   const root = document.createElement('div');
   container.appendChild(root);
   root.innerHTML = `
+    <header><h1>全局资源中心</h1><p class="muted">统一管理来源、下载和更新。导入不会自动启用；到项目中选择具体引用，再预览部署。</p><p><a href="#/sources">检查与更新个人副本</a></p></header>
     <div data-collections></div>
     <div class="step"><h2>个人副本</h2><p class="muted">本地文件夹和 skills.sh 单项导入的资源。点击资源查看、编辑或删除；修改副本不会提交上游。</p>
       <div data-table></div>

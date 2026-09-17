@@ -26,29 +26,59 @@ export function InstructionsPanel(container, props) {
     placeholder: '- 个人：回答用中文',
   });
   let cur = props;
+  let saved = '';
+  let disposed = false;
+  let busy = true;
+  const saveButton = wrap.querySelector('[data-save]');
+  const clearButton = wrap.querySelector('[data-clear]');
+  saveButton.disabled = clearButton.disabled = true;
+  api.instructions({root:cur.target?.path, read:true}).then(result => {
+    if (disposed) return;
+    saved = result.content;
+    field.setValue(saved);
+    busy = false;
+    saveButton.disabled = clearButton.disabled = false;
+  }).catch(e => { busy = false; if (!disposed) msg.textContent = '读取失败：' + e.message; });
 
   wrap.querySelector('[data-save]').onclick = async () => {
+    if (busy) return;
+    const content = field.value();
+    busy = true;
+    saveButton.disabled = clearButton.disabled = true;
     try {
-      await api.instructions({ content: field.value() });
+      await api.instructions({root:cur.target?.path, content});
+      saved = content;
       msg.textContent = '已保存到机器数据区；应用走「预览 + 应用」（宿主新会话后生效）';
       cur.onChanged?.();
     } catch (e) {
       msg.textContent = '失败：' + e.message;
+    } finally {
+      busy = false;
+      saveButton.disabled = clearButton.disabled = false;
     }
   };
   wrap.querySelector('[data-clear]').onclick = async () => {
+    if (busy || !confirm('清除当前项目的个人指令？不会修改团队指令文件。')) return;
+    busy = true;
+    saveButton.disabled = clearButton.disabled = true;
     try {
-      await api.instructions({ clear: true });
+      await api.instructions({root:cur.target?.path, clear:true});
+      saved = '';
       field.setValue('');
       msg.textContent = '已清除';
+      cur.onChanged?.();
     } catch (e) {
       msg.textContent = '失败：' + e.message;
+    } finally {
+      busy = false;
+      saveButton.disabled = clearButton.disabled = false;
     }
   };
 
   function render(p) { cur = p; }
   render(props);
   return {
+    isDirty: () => busy || field.value() !== saved,
     update(next) { render({ ...cur, ...next }); },
     setBaseline(text) {
       baseline.textContent = text
@@ -56,6 +86,6 @@ export function InstructionsPanel(container, props) {
         : '';
     },
     setContent(v) { field.setValue(v); },
-    destroy() { wrap.remove(); },
+    destroy() { disposed = true; wrap.remove(); },
   };
 }

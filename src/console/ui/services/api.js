@@ -54,6 +54,8 @@ export const api = {
   shutdown: () => request('POST', '/api/shutdown', {}),
   // 文件系统（授权根内）
   approveDir: (path) => request('POST', '/api/fs/approve', { path }),
+  pickDirectory: () => request('POST', '/api/fs/pick-directory', {}),
+  projectMetadata: (body) => request('POST', '/api/projects/metadata', body),
   fsList: (path) => request('GET', '/api/fs/list' + qs({ path })),
   fsRead: (path) => request('GET', '/api/fs/read' + qs({ path })),
   // 仓库/作用域

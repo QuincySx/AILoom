@@ -36,6 +36,38 @@ await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 await waitFor('!!document.querySelector("#app")?.textContent.trim()');
 await screenshot(output + '-desktop.png');
+if (mode === 'projects') {
+  const [project] = process.argv.slice(5);
+  await waitFor("location.hash === '#/projects' && !!document.querySelector('[data-new]')");
+  await evaluate("document.querySelector('[data-new]').click()");
+  await evaluate(`document.querySelector('[data-path]').value=${JSON.stringify(project)}; document.querySelector('[data-name]').value='浏览器验收项目'; document.querySelector('[data-category]').value='验收'; document.querySelector('[data-create]').requestSubmit()`);
+  await waitFor("!!document.querySelector('[data-tab]') && document.querySelector('[data-content]').textContent.includes('claude')");
+  await evaluate("document.querySelector('[data-entries] select').value='enable'; document.querySelector('[data-entries] button').click()");
+  await waitFor("document.querySelector('[data-message]')?.textContent.includes('已保存') && document.querySelector('[data-entries]')?.textContent.includes('当前有效：启用')");
+  await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
+  await waitFor("!!document.querySelector('[data-save]') && !document.querySelector('[data-save]').disabled");
+  await evaluate("document.querySelector('textarea').value='仅当前项目的验收指令'; document.querySelector('textarea').dispatchEvent(new Event('input')); document.querySelector('[data-save]').click()");
+  await waitFor("document.querySelector('[data-msg]').textContent.includes('已保存')");
+  await evaluate("document.querySelector('[data-tab=\"0\"]').click()");
+  await waitFor("!!document.querySelector('[data-entries]')");
+  await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
+  await waitFor("document.querySelector('textarea')?.value === '仅当前项目的验收指令'");
+  await screenshot(output + '-instructions.png');
+  await evaluate("location.hash='#/projects'");
+  await waitFor("!!document.querySelector('[data-search]')");
+  await evaluate("document.querySelector('[data-search]').value='不存在的项目'; document.querySelector('[data-search]').dispatchEvent(new Event('input'))");
+  await waitFor("document.querySelector('[data-list]').textContent.includes('没有匹配')");
+  await evaluate("document.querySelector('[data-search]').value=''; document.querySelector('[data-search]').dispatchEvent(new Event('input')); document.querySelector('[data-filter]').value='验收'; document.querySelector('[data-filter]').dispatchEvent(new Event('change'))");
+  await waitFor("document.querySelector('[data-list]').textContent.includes('浏览器验收项目')");
+  await screenshot(output + '-projects.png');
+  await send('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:false });
+  await screenshot(output + '-projects-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Project list overflow');
+  await evaluate("document.querySelector('[data-list] a').click()");
+  await waitFor("!!document.querySelector('[data-entries]')");
+  await screenshot(output + '-detail-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Project detail overflow');
+}
 if (mode === 'onboarding') {
   const [project, skill] = process.argv.slice(5);
   const click = async text => evaluate(`[...document.querySelectorAll('#app button')].find(b => b.textContent === ${JSON.stringify(text)}).click()`);

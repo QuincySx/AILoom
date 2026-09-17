@@ -15,17 +15,19 @@ import * as pageSources from './pages/sources.js';
 import * as pageWorkflows from './pages/workflows.js';
 import * as pageTasks from './pages/tasks.js';
 import * as pageInstructions from './pages/instructions.js';
+import * as pageProjects from './pages/projects.js';
 
 const ROUTES = {
-  '#/overview': { title: '总览', mount: pageOverview.mount },
+  '#/projects': { title: '项目', mount: pageProjects.mount },
+  '#/overview': { title: '总览', mount: pageOverview.mount, hidden: true },
   '#/samples': { title: '组件样例', mount: pageSamples.mount, hidden: true },
-  '#/onboarding': { title: '首次设置', mount: pageOnboarding.mount },
-  '#/scopes': { title: '仓库与作用域', mount: pageScopes.mount },
-  '#/library': { title: '资源库', mount: pageLibrary.mount },
-  '#/sources': { title: '更新中心', mount: pageSources.mount },
+  '#/onboarding': { title: '首次设置', mount: pageOnboarding.mount, hidden: true },
+  '#/scopes': { title: '仓库与作用域', mount: pageScopes.mount, hidden: true },
+  '#/library': { title: '全局资源中心', mount: pageLibrary.mount },
+  '#/sources': { title: '更新中心', mount: pageSources.mount, hidden: true },
   '#/workflows': { title: '流程工作台', mount: pageWorkflows.mount },
   '#/tasks': { title: '任务', mount: pageTasks.mount },
-  '#/instructions': { title: '个人指令', mount: pageInstructions.mount },
+  '#/instructions': { title: '个人指令', mount: pageInstructions.mount, hidden: true },
 };
 
 let currentPage = null;
@@ -55,7 +57,7 @@ function renderNav() {
     if (def.hidden) continue;
     const b = document.createElement('button');
     b.textContent = def.title;
-    if (location.hash === route) { b.className = 'on'; b.setAttribute('aria-current', 'page'); }
+    if (location.hash === route || (route === '#/projects' && location.hash.startsWith('#/projects/'))) { b.className = 'on'; b.setAttribute('aria-current', 'page'); }
     b.onclick = () => { location.hash = route; };
     nav.appendChild(b);
   }
@@ -67,8 +69,8 @@ function renderTargetBar() {
   if (!bar) return;
   const t = currentTarget();
   bar.textContent = t
-    ? `操作目标：${t.repo_id} @ ${t.path}${t.wt_id ? `（工作树 ${t.wt_id}）` : ''}`
-    : '操作目标：未选择（在「首次设置」或「仓库与作用域」选择）';
+    ? `当前项目：${t.name || t.repo_id} · ${t.path}`
+    : '全局工作空间 · 项目配置与资源管理相互独立';
 }
 
 async function checkConnection() {
@@ -81,19 +83,20 @@ async function checkConnection() {
 }
 
 function route() {
-  if (!location.hash || !ROUTES[location.hash]) location.hash = draft().completed ? '#/library' : '#/onboarding';
+  const projectMatch = location.hash.match(/^#\/projects\/([^/]+)$/);
+  if (!projectMatch && (!location.hash || !ROUTES[location.hash])) { location.replace('#/projects'); return; }
   if (activeRoute === location.hash) return;
   if (currentPage?.isDirty?.() && !window.confirm('当前页面有未保存内容。确定放弃这些修改并离开？')) {
     history.replaceState(null, '', activeRoute);
     return;
   }
-  const def = ROUTES[location.hash];
+  const def = projectMatch ? {title:'项目配置', mount:pageProjects.mount} : ROUTES[location.hash];
   document.title = `AILoom 本地控制台 · ${def.title}`;
   const app = document.querySelector('#app');
   currentPage?.destroy?.();
   currentPage = null;
   app.innerHTML = '';
-  currentPage = def.mount(app, {});
+  currentPage = def.mount(app, projectMatch ? {projectId:decodeURIComponent(projectMatch[1])} : {});
   activeRoute = location.hash;
   renderNav();
 }

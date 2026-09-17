@@ -160,3 +160,17 @@ th { color: var(--c-ink-muted); font-size: 13px; font-weight: 600; }
   .step { padding: 20px 16px; }
   .wizard-steps button { padding: 8px; }
 }
+.project-heading,.project-toolbar,.project-row { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.project-heading { margin-bottom:24px; }
+.project-toolbar { justify-content:flex-start; flex-wrap:wrap; margin:16px 0; }
+.project-toolbar input { flex:1; min-width:180px; width:auto; }
+.project-toolbar select { flex:0 1 180px; width:auto; }
+.project-row { padding:24px 0; border-bottom:1px solid var(--c-border); }
+.project-row > div { min-width:0; }
+.project-row p,.project-row small { overflow-wrap:anywhere; }
+.project-row h2 { margin:0; }
+.project-tabs { display:flex; flex-wrap:wrap; gap:8px; padding:20px 0; border-bottom:1px solid var(--c-border); margin-bottom:20px; }
+.project-tabs .on { border-color:var(--vc-ink); font-weight:700; }
+form[data-create] label,form[data-meta] label { display:block; margin:16px 0; }
+form[data-create] input,form[data-meta] input { width:100%; box-sizing:border-box; }
+@media(max-width:600px) { .project-row { align-items:flex-start; flex-wrap:wrap; } .project-heading { align-items:flex-start; } .project-toolbar input { min-width:0; width:100%; flex-basis:100%; } }
