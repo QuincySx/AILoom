@@ -1,34 +1,41 @@
 // 资源来源管理：导入入口、真实更新检查、版本确认、引用影响和来源移除。
 import { api, esc } from '../services/api.js';
 import { setTarget, currentTarget } from '../state/target.js';
+import { Dialog, confirmAction } from '../components/dialog.js';
+let nextImportId = 0;
 
 export function CollectionsPanel(container, options = {}) {
   const root = document.createElement('section');
   container.appendChild(root);
   let alive = true, busy = false, sources = [], candidate = null;
+  const formId = `collection-import-${++nextImportId}`;
   root.innerHTML = `
-    <header class="page-head"><div><p class="kicker">RESOURCE WORKSPACE</p><h1>${options.updatesOnly ? '更新中心' : '资源库'}</h1>
-      <p>${options.updatesOnly ? '先检查上游，再确认资源库版本。哪些项目使用新版，由你决定。' : '把自己的合集与第三方资源放在一起管理，按需引用到项目。'}</p></div>
+    <header class="page-head"><div><h1>${esc(options.title || (options.updatesOnly ? '更新中心' : '资源库'))}</h1>
+      <p>${esc(options.description || (options.updatesOnly ? '先检查上游，再确认资源库版本。哪些项目使用新版，由你决定。' : '把自己的合集与第三方资源放在一起管理，按需引用到项目。'))}</p></div>
       <button data-add class="primary">导入资源</button></header>
-    <div data-import class="step hidden">
-      <h2>从哪里导入？</h2><p class="muted">远程仓库保留来源并支持检查更新。本地文件夹导入为个人副本。</p>
-      <form data-form>
+    <div data-import hidden>
+      <p class="muted">远程仓库保留来源并支持检查更新。本地文件夹导入为个人副本。</p>
+      <form data-form id="${formId}">
         <fieldset data-fields><div class="form-grid">
           <label>来源类型<select data-provider><option value="github">GitHub 仓库</option><option value="gitlab">GitLab / 自建 GitLab</option><option value="git">其他 Git 服务</option><option value="local">本地 Skill 文件夹</option><option value="entry">skills.sh 目录入口（个人副本）</option></select></label>
           <label data-name-label>显示名称<input data-name placeholder="例如：我的开发工具"></label>
           <label class="full"><span data-url-label>仓库地址</span><input data-url required placeholder="https://github.com/owner/skills.git"></label>
           <label data-ref-label>分支 / 标签（可选）<input data-ref placeholder="默认分支"></label>
         </div><p data-help class="muted">可直接识别 SKILL.md；包含 MCP 的合集需要 ailoom.toml。不会执行仓库内脚本。</p>
-        <div class="actions"><button type="submit" class="primary" data-preview>预览资源</button><button type="button" data-close>取消</button></div></fieldset>
-      </form><div data-candidate></div>
+        </fieldset>
+      </form><p data-import-msg class="inline-status muted" role="status"></p><div data-candidate></div>
+      <footer class="dialog-actions"><button type="button" data-close>取消</button><button type="submit" form="${formId}" class="primary" data-preview>预览资源</button></footer>
     </div>
     <div class="toolbar"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索来源、Skill 或 MCP…"><div><button data-check>检查全部更新</button><button data-update disabled>更新全部可用版本</button></div></div>
     <p data-msg class="inline-status muted" role="status" aria-live="polite"></p>
     <div data-sources><p class="muted">正在读取资源库…</p></div>`;
   const q = s => root.querySelector(s);
+  const importBody = q('[data-import]');
+  importBody.hidden = false;
+  const importDialog = Dialog(root, {title:'导入资源', content:importBody, open:false, keepMounted:true, canClose:() => !busy, onClose:() => invalidate()});
   function invalidate() { candidate = null; q('[data-candidate]').innerHTML = ''; }
   function changed() { const t = currentTarget(); if (t) setTarget(t); options.onChanged?.(); }
-  function message(text) { if (alive) q('[data-msg]').textContent = text; }
+  function message(text) { if (alive) { q('[data-msg]').textContent = text; if (importDialog.isOpen) q('[data-import-msg]').textContent = text; } }
   async function run(fn) {
     if (busy) return;
     busy = true; root.setAttribute('aria-busy', 'true');
@@ -50,8 +57,8 @@ export function CollectionsPanel(container, options = {}) {
   }
   q('[data-provider]').onchange = providerChanged;
   q('[data-form]').addEventListener('input', invalidate);
-  q('[data-add]').onclick = () => { q('[data-import]').classList.remove('hidden'); q('[data-provider]').focus(); };
-  q('[data-close]').onclick = () => { invalidate(); q('[data-import]').classList.add('hidden'); };
+  q('[data-add]').onclick = () => { q('[data-import-msg]').textContent = ''; importDialog.show(); };
+  q('[data-close]').onclick = () => importDialog.close();
   q('[data-form]').onsubmit = event => { event.preventDefault(); run(async () => {
     invalidate(); message('正在读取来源并检查资源…');
     const p = provider(), url = q('[data-url]').value.trim();
@@ -76,7 +83,7 @@ export function CollectionsPanel(container, options = {}) {
       else if (c.provider === 'entry') await api.libraryImportEntry(c.url, undefined, true);
       else await api.collectionApply(c.value.preview_id);
       if (!alive) return;
-      invalidate(); q('[data-import]').classList.add('hidden'); changed();
+      invalidate(); importDialog.close(); changed();
       message('已加入资源库。下一步：在项目中选择要使用的 Skill / MCP。');
       await refresh();
     });
@@ -86,7 +93,7 @@ export function CollectionsPanel(container, options = {}) {
   async function update(items) {
     const refs = items.flatMap(s => s.references || []);
     const removed = items.flatMap(s => s.update.preview.removed || []);
-    if (!confirm('更新 ' + items.length + ' 个合集的资源库版本？\n涉及 ' + refs.length + ' 条项目引用。不会自动修改项目。' + (removed.length ? '\n上游删除：' + removed.join('、') : '') + '\n旧版本保留。')) return;
+    if (!await confirmAction('更新 ' + items.length + ' 个合集的资源库版本？\n涉及 ' + refs.length + ' 条项目引用。不会自动修改项目。' + (removed.length ? '\n上游删除：' + removed.join('、') : '') + '\n旧版本保留。', {title:'更新资源库', confirmLabel:'确认更新'})) return;
     await api.collectionUpdate(items.map(s => s.update.preview.preview_id));
     changed(); message('资源库版本已更新。请到「仓库与作用域」预览并应用到需要升级的项目。'); await refresh();
   }
@@ -121,11 +128,11 @@ export function CollectionsPanel(container, options = {}) {
     root.querySelectorAll('[data-remove]').forEach(b => { b.onclick = () => run(async () => {
       const p = await api.collectionRemove(b.dataset.remove);
       if (p.references.length) { message('不能移除：还有 ' + p.references.length + ' 条启用引用。请先到「仓库与作用域」停用这些资源并应用。'); return; }
-      if (!confirm('移除来源“' + p.source.name + '”？\n' + p.note)) return;
+      if (!await confirmAction('移除来源“' + p.source.name + '”？\n' + p.note, {title:'移除来源', confirmLabel:'移除来源', destructive:true})) return;
       await api.collectionRemove(b.dataset.remove, true); changed(); await refresh(); message('来源已移除。已有项目文件和历史版本未删除。');
     }); });
   }
   async function refresh() { const v = await api.collections(); if (alive) { sources = v.sources; renderSources(); } }
   refresh().catch(e => message(e.message));
-  return { refresh, destroy() { alive = false; root.remove(); } };
+  return { refresh, destroy() { alive = false; importDialog.destroy(); root.remove(); } };
 }

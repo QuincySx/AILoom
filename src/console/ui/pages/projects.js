@@ -2,6 +2,7 @@ import { api, esc } from '../services/api.js';
 import { setTarget, currentGeneration, shouldApply } from '../state/target.js';
 import { PlanPreview, JobPanel } from '../features/planPreview.js';
 import { InstructionsPanel } from '../features/instructionsPanel.js';
+import { Dialog, confirmAction } from '../components/dialog.js';
 
 const projectName = r => r.project?.name || Object.values(r.worktrees || {})[0]?.path?.split('/').filter(Boolean).pop() || r.repo_id;
 
@@ -10,8 +11,9 @@ export function mount(container, ctx = {}) {
   container.append(root);
   let disposed = false;
   let children = [];
+  const dialogs = [];
   let dirty = () => false;
-  const error = e => { if (!disposed) root.querySelector('[data-message]').textContent = e.message; };
+  const error = e => { if (!disposed) (root.querySelector('dialog[open] [data-form-error]') || root.querySelector('[data-message]')).textContent = e.message; };
   root.innerHTML = '<p data-message role="status">正在读取项目…</p>';
   async function load() {
     try {
@@ -31,33 +33,39 @@ export function mount(container, ctx = {}) {
   function list(state) {
     setTarget(null);
     root.innerHTML = `<header class="project-heading"><div><h1>项目</h1><p class="muted">选择项目，再配置它要使用的 AI 资源。</p></div><button data-new class="primary">新建项目</button></header>
-      <form data-create class="step hidden"><h2>添加本地项目</h2>
-        <label>项目文件夹<div class="project-toolbar"><input data-path required placeholder="绝对路径，例如 /Users/me/work/my-project"><button type="button" data-pick ${state.native_picker ? '' : 'disabled'}>选择文件夹</button></div></label>
+      <form data-create hidden>
+        <label for="project-path">项目文件夹</label><div class="input-action"><input id="project-path" data-path required placeholder="选择文件夹或输入绝对路径"><button type="button" data-pick ${state.native_picker ? '' : 'disabled'}>浏览…</button></div>
         <p class="muted">${state.native_picker ? '打开 macOS 原生文件夹选择器。' : '当前平台请手动填写绝对路径。'}优先识别 Git；没有 Git 才按普通文件夹登记。不会克隆或修改项目文件。</p>
         <label>项目名称（可选）<input data-name maxlength="120"></label><label>分类（可选）<input data-category maxlength="80" placeholder="例如：工作 / 个人"></label>
-        <div class="project-toolbar"><button type="submit" class="primary">添加项目</button><button type="button" data-cancel>取消</button></div></form>
+        <p data-form-error class="field-error" role="alert"></p><footer class="dialog-actions"><button type="button" data-cancel>取消</button><button type="submit" class="primary">添加项目</button></footer></form>
       <p data-message role="status"></p><div class="project-toolbar"><input data-search type="search" aria-label="搜索项目" placeholder="搜索项目名称、路径或远端"><select data-filter aria-label="项目分类"><option value="">全部分类</option></select><select data-kind aria-label="项目类型"><option value="">全部类型</option><option value="git">Git 项目</option><option value="nongit">文件夹项目</option></select></div><div data-list></div>`;
     const form = root.querySelector('[data-create]');
-    root.querySelector('[data-new]').onclick = () => { form.classList.remove('hidden'); form.querySelector('input').focus(); };
-    root.querySelector('[data-cancel]').onclick = () => { form.classList.add('hidden'); };
+    form.hidden = false;
+    const modal = Dialog(root, {title:'新建项目', content:form, open:false, keepMounted:true,
+      canClose:() => !form.querySelector('[type=submit]').disabled && !form.querySelector('[data-pick]').dataset.pending});
+    dialogs.push(modal);
+    root.querySelector('[data-new]').onclick = () => { form.reset(); form.querySelector('[data-form-error]').textContent = ''; modal.show(); };
+    root.querySelector('[data-cancel]').onclick = () => { if (!form.querySelector('[data-pick]').dataset.pending) modal.close(); };
     root.querySelector('[data-pick]').onclick = async event => {
       event.target.disabled = true;
+      event.target.dataset.pending = 'true';
       try { const result = await api.pickDirectory(); if (!disposed && result.path) form.querySelector('[data-path]').value = result.path; }
-      catch (e) { error(e); } finally { event.target.disabled = false; }
+      catch (e) { error(e); } finally { event.target.disabled = false; delete event.target.dataset.pending; }
     };
     form.onsubmit = async event => {
       event.preventDefault();
       const submit = form.querySelector('[type=submit]');
       if (submit.disabled) return;
       submit.disabled = true;
+      form.querySelector('[data-cancel]').disabled = true;
       try {
         const path = form.querySelector('[data-path]').value.trim();
         await api.approveDir(path);
         const r = await api.repoDiscover(path);
         const name = form.querySelector('[data-name]').value.trim() || (r.repo_root || r.root || path).split('/').filter(Boolean).pop();
         await api.projectMetadata({ repo_id: r.repo_id, name, category: form.querySelector('[data-category]').value });
-        if (!disposed) location.hash = '#/projects/' + encodeURIComponent(r.repo_id);
-      } catch (e) { error(e); } finally { submit.disabled = false; }
+        if (!disposed) { modal.close(); location.hash = '#/projects/' + encodeURIComponent(r.repo_id); }
+      } catch (e) { error(e); } finally { submit.disabled = false; form.querySelector('[data-cancel]').disabled = false; }
     };
     const filter = root.querySelector('[data-filter]');
     const categories = [...new Set(state.repos.map(r => r.project?.category || '未分类'))].sort();
@@ -77,13 +85,33 @@ export function mount(container, ctx = {}) {
   }
   function detail(repo) {
     const worktrees = Object.entries(repo.worktrees || {});
-    root.innerHTML = `<a href="#/projects">返回项目列表</a><header class="project-heading"><div><h1>${esc(projectName(repo))}</h1><p class="muted">${esc(repo.origin_normalized || '本地项目')} · ${esc(repo.project?.category || '未分类')}</p></div></header>
-      <details class="step"><summary>项目名称与分类</summary><form data-meta><label>名称<input name="name" required maxlength="120" value="${esc(projectName(repo))}"></label><label>分类<input name="category" maxlength="80" value="${esc(repo.project?.category || '')}"></label><button>保存项目资料</button></form></details>
+    root.innerHTML = `<a href="#/projects">返回项目列表</a><header class="project-heading"><div><h1>${esc(projectName(repo))}</h1><p data-project-description class="muted">${esc(repo.origin_normalized || '本地项目')} · ${esc(repo.project?.category || '未分类')}</p></div><button data-settings>项目设置</button></header>
+      <form data-meta hidden><label>名称<input name="name" required maxlength="120" value="${esc(projectName(repo))}"></label><label>分类<input name="category" maxlength="80" value="${esc(repo.project?.category || '')}"></label><p data-form-error class="field-error" role="alert"></p><footer class="dialog-actions"><button type="button" data-meta-cancel>取消</button><button type="submit" class="primary">保存项目资料</button></footer></form>
       <label>当前工作目录<select data-worktree aria-label="当前工作目录">${worktrees.map(([id,w]) => `<option value="${esc(id)}">${esc(w.path)}${w.status === 'missing' ? '（失联）' : ''}</option>`).join('')}</select></label>
       <p data-message role="status"></p><nav class="project-tabs" aria-label="项目配置">${['宿主','Skill','MCP','Agent','Markdown 指令','预览与应用','其他资源'].map((t,i) => `<button data-tab="${i}">${t}</button>`).join('')}</nav><div data-content></div>`;
-    root.querySelector('[data-meta]').onsubmit = async event => {
+    const metaForm = root.querySelector('[data-meta]');
+    metaForm.hidden = false;
+    const settings = Dialog(root, {title:'项目设置', content:metaForm, open:false, keepMounted:true, canClose:() => !metaForm.querySelector('[type=submit]').disabled});
+    dialogs.push(settings);
+    root.querySelector('[data-settings]').onclick = () => {
+      metaForm.elements.name.value = projectName(repo);
+      metaForm.elements.category.value = repo.project?.category || '';
+      metaForm.querySelector('[data-form-error]').textContent = '';
+      settings.show();
+    };
+    metaForm.querySelector('[data-meta-cancel]').onclick = () => settings.close();
+    metaForm.onsubmit = async event => {
       event.preventDefault();
-      try { await api.projectMetadata({ repo_id:repo.repo_id, name:event.target.elements.name.value, category:event.target.elements.category.value }); root.querySelector('h1').textContent = event.target.elements.name.value; root.querySelector('[data-message]').textContent = '项目资料已保存'; } catch(e) { error(e); }
+      const submit = metaForm.querySelector('[type=submit]'), cancel = metaForm.querySelector('[data-meta-cancel]');
+      if (submit.disabled) return;
+      submit.disabled = cancel.disabled = true;
+      try {
+        repo.project = await api.projectMetadata({ repo_id:repo.repo_id, name:metaForm.elements.name.value, category:metaForm.elements.category.value });
+        if (disposed) return;
+        root.querySelector('h1').textContent = projectName(repo);
+        root.querySelector('[data-project-description]').textContent = `${repo.origin_normalized || '本地项目'} · ${repo.project.category || '未分类'}`;
+        settings.close(); root.querySelector('[data-message]').textContent = '项目资料已保存';
+      } catch(e) { error(e); } finally {submit.disabled = cancel.disabled = false;}
     };
     let tab = 0;
     let renderVersion = 0;
@@ -136,16 +164,16 @@ export function mount(container, ctx = {}) {
         if (resources.source_errors?.length) root.querySelector('[data-message]').textContent = resources.source_errors.map(e => `${e.source}: ${e.error}`).join('；');
       } catch(e) { if (!disposed && version === renderVersion) { slot.textContent = '无法打开该工作目录，请确认路径存在且可访问。'; error(e); } }
     }
-    root.querySelector('[data-worktree]').onchange = event => {
-      if (dirty() && !confirm('放弃未保存的指令修改？')) { event.target.value = selectedWt; return; }
+    root.querySelector('[data-worktree]').onchange = async event => {
+      if (dirty() && !await confirmAction('放弃未保存的指令修改？', {title:'切换工作目录', confirmLabel:'放弃并切换'})) { event.target.value = selectedWt; return; }
       selectedWt = event.target.value; activate();
     };
-    root.querySelectorAll('[data-tab]').forEach(button => { button.onclick = () => {
-      if (dirty() && !confirm('放弃未保存的指令修改？')) return;
+    root.querySelectorAll('[data-tab]').forEach(button => { button.onclick = async () => {
+      if (dirty() && !await confirmAction('放弃未保存的指令修改？', {title:'离开当前设置', confirmLabel:'放弃并离开'})) return;
       tab = Number(button.dataset.tab); render();
     }; });
     activate();
   }
   load();
-  return {isDirty:() => dirty(), destroy() {disposed = true; children.forEach(c => c.destroy?.()); setTarget(null); root.remove();}};
+  return {isDirty:() => dirty(), destroy() {disposed = true; dialogs.forEach(c => c.destroy()); children.forEach(c => c.destroy?.()); setTarget(null); root.remove();}};
 }

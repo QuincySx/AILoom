@@ -1,0 +1,73 @@
+/* Shared native controls: the same variants for factories and static HTML. */
+button,input,select,textarea { font: inherit; font-size: var(--fs-small); }
+button { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: var(--control-height); padding: var(--sp-2) var(--sp-4); margin: 0; border: 1px solid var(--input); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-weight: 500; cursor: pointer; transition: background-color var(--duration-feedback), border-color var(--duration-feedback); }
+button.primary,button[data-variant=default] { background: var(--primary); border-color: var(--primary); color: var(--primary-foreground); }
+button[data-variant=secondary] { background: var(--secondary); border-color: var(--secondary); color: var(--secondary-foreground); }
+button[data-variant=ghost] { background: transparent; border-color: transparent; }
+button.danger,button[data-variant=destructive] { color: var(--destructive); border-color: var(--destructive); }
+button[data-size=sm] { padding-inline: var(--sp-3); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+:where(button,input,select,textarea,a,summary,[tabindex]):focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; box-shadow: var(--focus-ring); }
+input,select,textarea { display: inline-block; width: 100%; max-width: 100%; min-width: 0; min-height: var(--control-height); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--input); border-radius: var(--radius); color: var(--foreground); background: var(--background); }
+input:not([type=checkbox]):not([type=radio]),select { appearance: none; -webkit-appearance: none; height: var(--control-height); line-height: normal; }
+input[type=search]::-webkit-search-decoration { -webkit-appearance: none; }
+select { padding-right: var(--sp-6); background-image: var(--select-chevron); background-repeat: no-repeat; background-position: right var(--sp-3) center; background-size: var(--sp-4); }
+input::placeholder,textarea::placeholder { color: var(--muted-foreground); }
+textarea { min-height: 160px; resize: vertical; font-family: var(--font-mono); }
+input:disabled,select:disabled,textarea:disabled { background: var(--muted); opacity: .65; }
+[aria-invalid=true] { border-color: var(--destructive); }
+input[type=checkbox],input[type=radio] { width: 18px; min-height: 18px; height: 18px; vertical-align: middle; margin: 0 var(--sp-2) 0 0; accent-color: var(--primary); }
+label { display: block; font-size: var(--fs-small); font-weight: 500; margin: var(--sp-3) 0 var(--sp-2); }
+label:has(input[type=checkbox]),label:has(input[type=radio]) { min-height: var(--control-height); display: flex; align-items: center; }
+fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.field { min-width: 0; }
+.field-error { color: var(--destructive); font-size: var(--fs-small); margin-top: var(--sp-1); }
+.field-hint { color: var(--muted-foreground); font-size: var(--fs-small); margin-top: var(--sp-1); }
+.field-hint:empty { display: none; }
+.step { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--sp-5); margin: 0 0 var(--sp-5); background: var(--card); color: var(--card-foreground); }
+.step .step { padding: var(--sp-4) 0; border-width: 1px 0 0; border-radius: 0; margin: var(--sp-4) 0 0; }
+.step.active { border-color: var(--ring); }
+.step.stale { border-style: dashed; }
+.badge { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px var(--sp-2); background: var(--secondary); color: var(--secondary-foreground); font-size: var(--fs-tiny); font-weight: 500; overflow-wrap: anywhere; }
+.badge.ok { color: var(--success); background: var(--success-muted); border-color: transparent; }
+.badge.warn { color: var(--warning); background: var(--warning-muted); border-color: transparent; }
+.badge.bad { color: var(--destructive); background: var(--destructive-muted); border-color: transparent; }
+.nav,.project-tabs,.wizard-steps { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: var(--sp-4) 0 var(--sp-5); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--border); }
+.nav button,.project-tabs button,.wizard-steps button { background: transparent; border-color: transparent; color: var(--muted-foreground); }
+.nav button.on,.project-tabs button.on,.wizard-steps button.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
+.sidebar button { justify-content: flex-start; text-align: left; border-color: transparent; background: transparent; padding-inline: var(--sp-3); }
+.sidebar button.on { background: var(--accent); color: var(--accent-foreground); font-weight: 600; }
+details { margin: var(--sp-4) 0; }
+summary { min-height: var(--control-height); cursor: pointer; padding: var(--sp-2) 0; font-size: var(--fs-small); }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--fs-small); }
+th,td { padding: var(--sp-3); text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+th { color: var(--muted-foreground); font-weight: 500; background: var(--muted); }
+.table-row-action { justify-content: flex-start; border: 0; padding: 0; background: transparent; text-align: left; overflow-wrap: anywhere; width: 100%; color: inherit; }
+.empty-state { padding: var(--sp-7) var(--sp-5); text-align: center; border: 1px dashed var(--border); border-radius: var(--radius-lg); }
+.empty-state p { max-width: 520px; margin: var(--sp-2) auto var(--sp-4); color: var(--muted-foreground); }
+.log { padding: var(--sp-3); background: var(--code-background); color: var(--code-foreground); border-radius: var(--radius); font-family: var(--font-mono); font-size: var(--fs-tiny); white-space: pre-wrap; max-height: 280px; overflow: auto; }
+.dialog-content { width: min(600px,calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 48px); overflow: auto; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); color: var(--card-foreground); margin: auto; }
+.dialog-content::backdrop { background: var(--overlay); }
+.dialog-header { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); }
+.dialog-header h2 { margin: 0; }
+.dialog-dismiss { margin-right: calc(-1 * var(--sp-3)); }
+.dialog-body { padding: var(--sp-5); }
+.dialog-body > form > label:first-child { margin-top: 0; }
+.dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-2); margin: 0; padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--border); }
+.dialog-body .dialog-actions { margin: var(--sp-5) calc(-1 * var(--sp-5)) calc(-1 * var(--sp-5)); }
+.dialog-actions[hidden] { display: none; }
+.confirmation-message { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.input-action { display: flex; align-items: center; gap: var(--sp-2); }
+.input-action input { flex: 1; }
+.input-action button { flex-shrink: 0; }
+#toast { position: fixed; right: var(--sp-4); bottom: var(--sp-4); z-index: 200; padding: var(--sp-3) var(--sp-4); border-radius: var(--radius); background: var(--primary); color: var(--primary-foreground); font-size: var(--fs-small); opacity: 0; pointer-events: none; max-width: min(480px,90vw); transition: opacity var(--duration-feedback); }
+#toast.show { opacity: 1; }
+#conflictBar { position: fixed; left: var(--sp-4); bottom: var(--sp-4); z-index: 200; max-width: min(600px,90vw); background: var(--warning-muted); color: var(--warning); border: 1px solid var(--warning); border-radius: var(--radius); padding: var(--sp-3); display: none; }
+@media (hover:hover) and (pointer:fine) {
+  button:not(:disabled):hover { background: var(--accent); color: var(--accent-foreground); }
+  button.primary:not(:disabled):hover,button[data-variant=default]:not(:disabled):hover { background: color-mix(in srgb, var(--primary) 88%, var(--background)); color: var(--primary-foreground); }
+  button.danger:not(:disabled):hover,button[data-variant=destructive]:not(:disabled):hover { background: var(--destructive-muted); color: var(--destructive); }
+  .project-row h2 a:hover { text-decoration: underline; }
+}
+@media (max-width:600px) { .step { padding: var(--sp-4); } }
+@media (prefers-reduced-motion:reduce) { button,#toast { transition: none; } }

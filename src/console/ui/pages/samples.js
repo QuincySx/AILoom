@@ -27,13 +27,12 @@ function section(title) {
 }
 
 function row(parent, label, mountFn) {
-  const line = document.createElement('p');
+  const line = document.createElement('div');
+  line.className = 'sample-row';
   const tag = document.createElement('span');
   tag.className = 'badge';
   tag.textContent = label;
-  const slot = document.createElement('span');
-  slot.style.display = 'inline-block';
-  slot.style.minWidth = '55%';
+  const slot = document.createElement('div');
   line.append(tag, slot);
   parent.appendChild(line);
   mounted.push(mountFn(slot));
@@ -54,6 +53,9 @@ export function mount(container, ctx) {
 
   // Button：正常/禁用/pending
   const sBtn = section('Button');
+  for (const variant of ['default', 'outline', 'secondary', 'ghost', 'destructive']) {
+    row(sBtn, variant, slot => Button(slot, {label: variant, variant}));
+  }
   row(sBtn, '正常', (slot) => Button(slot, { label: '正常按钮', onPress: () => {} }));
   row(sBtn, '禁用', (slot) => Button(slot, { label: '禁用按钮', disabled: true, onPress: () => {} }));
   row(sBtn, 'pending（点击后 2 秒）', (slot) =>

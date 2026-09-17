@@ -3,6 +3,7 @@
 
 import { api, esc } from '../services/api.js';
 import { WorkflowStageList } from '../features/workflowStageList.js';
+import { confirmAction } from '../components/dialog.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
@@ -27,7 +28,7 @@ export function mount(container, ctx) {
   }
 
   async function open() {
-    if (stageList?.isDirty() && !confirm('当前流程有未保存内容，确定放弃并切换？')) return;
+    if (stageList?.isDirty() && !await confirmAction('当前流程有未保存内容，确定放弃并切换？', {title:'切换流程', confirmLabel:'放弃并切换'})) return;
     const id = sel.value;
     if (!id) return;
     const [run, lib] = await Promise.all([api.workflowShow(id), api.libraryList()]);
@@ -41,7 +42,7 @@ export function mount(container, ctx) {
   }
 
   root.querySelector('[data-new]').onclick = async () => {
-    if (stageList?.isDirty() && !confirm('当前流程有未保存内容，确定放弃并新建？')) return;
+    if (stageList?.isDirty() && !await confirmAction('当前流程有未保存内容，确定放弃并新建？', {title:'新建流程', confirmLabel:'放弃并新建'})) return;
     const name = root.querySelector('[data-name]').value.trim() || '未命名流程';
     await api.workflowNew(name);
     await refreshRuns();

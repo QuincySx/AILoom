@@ -56,7 +56,7 @@ export function WorkflowStageList(container, props) {
       b.onclick = async () => {
         const act = b.dataset.do;
         const q = (sel) => wrap.querySelector(sel);
-        if (dirty && !['put', 'open', 'export'].includes(act) && !confirm('当前产物有未保存修改，确定放弃后继续？')) return;
+        if (dirty && !['put', 'open', 'export'].includes(act) && !await confirmAction('当前产物有未保存修改，确定放弃后继续？', {title:'放弃修改', confirmLabel:'继续'})) return;
         try {
           if (act === 'bind') {
             const stage = b.dataset.stage;
@@ -106,7 +106,7 @@ export function WorkflowStageList(container, props) {
             if (!target) return;
             const pv = await api.exportPreview(run.id, b.dataset.art, target);
             const note = pv.exists ? (pv.same_content ? '（内容一致）' : '（将覆盖现有文件）') : '（新文件）';
-            if (!confirm('写入 ' + pv.target + '？' + note)) return;
+            if (!await confirmAction('写入 ' + pv.target + '？' + note, {title:'导出文件', confirmLabel:'确认写入'})) return;
             await api.exportExecute(run.id, b.dataset.art, target, pv.target_fingerprint);
             notify('已导出（旧版本已备份；未提交 Git）');
             return; // 导出已有版本不丢弃正在编辑的正文。
@@ -123,3 +123,4 @@ export function WorkflowStageList(container, props) {
   render(props);
   return { isDirty: () => dirty, update(next) { if (!dirty) render({ ...cur, ...next }); }, destroy() { wrap.remove(); } };
 }
+import { confirmAction } from '../components/dialog.js';

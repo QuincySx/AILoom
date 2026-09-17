@@ -3,6 +3,7 @@
 
 import { api, esc } from '../services/api.js';
 import { Field } from '../components/field.js';
+import { confirmAction } from '../components/dialog.js';
 
 export function InstructionsPanel(container, props) {
   const wrap = document.createElement('div');
@@ -58,7 +59,7 @@ export function InstructionsPanel(container, props) {
     }
   };
   wrap.querySelector('[data-clear]').onclick = async () => {
-    if (busy || !confirm('清除当前项目的个人指令？不会修改团队指令文件。')) return;
+    if (busy || !await confirmAction('清除当前项目的个人指令？不会修改团队指令文件。', {title:'清除个人指令', confirmLabel:'清除', destructive:true})) return;
     busy = true;
     saveButton.disabled = clearButton.disabled = true;
     try {

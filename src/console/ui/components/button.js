@@ -10,6 +10,10 @@ export function Button(container, props) {
 
   function render(p) {
     cur = p;
+    if (!el) return;
+    el.setAttribute('data-variant', p.variant ?? 'outline');
+    el.setAttribute('data-size', p.size ?? 'default');
+    el.setAttribute('aria-busy', String(pending));
     el.textContent = pending ? (p.pendingLabel ?? '处理中…') : (p.label ?? '按钮');
     el.disabled = !!p.disabled || (pending && !p.allowWhilePending);
     el.title = p.title ?? '';
@@ -26,6 +30,6 @@ export function Button(container, props) {
   render(props);
   return {
     update(next) { render({ ...cur, ...next }); },
-    destroy() { el.remove(); el = null; },
+    destroy() { el?.remove(); el = null; },
   };
 }

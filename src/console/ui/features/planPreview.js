@@ -21,6 +21,7 @@ export function PlanPreview(container, props) {
 
   const btn = Button(btnSlot, {
     label: '生成预览',
+    variant: 'default',
     disabled: !cur.target?.path,
     onPress: async () => {
       const target = cur.target;
@@ -69,6 +70,7 @@ export function JobPanel(container, props) {
 
   const btn = Button(btnSlot, {
     label: '应用',
+    variant: 'default',
     disabled: !cur.planJob,
     onPress: async () => {
       try {

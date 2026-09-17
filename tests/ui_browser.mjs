@@ -36,12 +36,30 @@ await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 await waitFor('!!document.querySelector("#app")?.textContent.trim()');
 await screenshot(output + '-desktop.png');
-if (mode === 'projects') {
+if (mode === 'projects' || mode === 'design') {
   const [project] = process.argv.slice(5);
   await waitFor("location.hash === '#/projects' && !!document.querySelector('[data-new]')");
+  if (mode === 'design') {
+    const fields = await evaluate("[document.querySelector('[data-search]'), document.querySelector('[data-filter]'), document.querySelector('[data-kind]')].map(e=>{const s=getComputedStyle(e);return [e.getBoundingClientRect().height,s.borderRadius,s.borderColor,s.backgroundColor,s.paddingLeft,s.fontSize,s.appearance]})");
+    if (fields.some(f => JSON.stringify(f)!==JSON.stringify(fields[0]))) throw new Error('Search and select styles differ: '+JSON.stringify(fields));
+    await screenshot(output + '-toolbar.png');
+  }
+  await evaluate("document.querySelector('[data-new]').focus(); document.querySelector('[data-new]').click()");
+  await waitFor("document.querySelector('[data-create]')?.closest('dialog')?.matches(':modal')");
+  await screenshot(output + '-new-project-dialog.png');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await waitFor("!document.querySelector('dialog:modal')");
+  if (!await evaluate("document.activeElement === document.querySelector('[data-new]')")) throw new Error('New-project focus not restored');
   await evaluate("document.querySelector('[data-new]').click()");
   await evaluate(`document.querySelector('[data-path]').value=${JSON.stringify(project)}; document.querySelector('[data-name]').value='浏览器验收项目'; document.querySelector('[data-category]').value='验收'; document.querySelector('[data-create]').requestSubmit()`);
   await waitFor("!!document.querySelector('[data-tab]') && document.querySelector('[data-content]').textContent.includes('claude')");
+  if (mode === 'design') {
+    await evaluate("document.querySelector('[data-settings]').click()");
+    await waitFor("document.querySelector('[data-meta]').closest('dialog').matches(':modal')");
+    await screenshot(output + '-settings-dialog.png');
+    await evaluate("document.querySelector('[data-meta-cancel]').click()");
+    await waitFor("!document.querySelector('dialog:modal')");
+  }
   await evaluate("document.querySelector('[data-entries] select').value='enable'; document.querySelector('[data-entries] button').click()");
   await waitFor("document.querySelector('[data-message]')?.textContent.includes('已保存') && document.querySelector('[data-entries]')?.textContent.includes('当前有效：启用')");
   await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
@@ -106,7 +124,7 @@ if (mode !== 'before') {
   await evaluate('location.hash = "#/library"');
   await waitFor('!!document.querySelector("[data-add]")');
   await evaluate('document.querySelector("[data-add]").click()');
-  await waitFor('!document.querySelector("[data-import]").classList.contains("hidden")');
+  await waitFor('document.querySelector("[data-import]")?.closest("dialog")?.matches(":modal")');
   const providers = await evaluate('[...document.querySelector("[data-provider]").options].map(o=>o.value)');
   if (providers.join(',') !== 'github,gitlab,git,local,entry') throw new Error('Missing source choices');
   for (const p of providers) {
@@ -118,6 +136,54 @@ if (mode !== 'before') {
   await screenshot(output + '-mobile.png');
   const overflow = await evaluate('({width:innerWidth, scroll:document.documentElement.scrollWidth})');
   if (overflow.scroll > overflow.width + 1) throw new Error('Horizontal overflow: ' + JSON.stringify(overflow));
+  if (mode === 'design' && process.argv[6]) {
+    await evaluate("document.querySelector('[data-provider]').value='local'; document.querySelector('[data-provider]').dispatchEvent(new Event('change'))");
+    await evaluate(`document.querySelector('[data-url]').value=${JSON.stringify(process.argv[6])}; document.querySelector('[data-form]').requestSubmit()`);
+    await waitFor("!!document.querySelector('[data-confirm]') && !document.querySelector('[data-confirm]').disabled");
+    await evaluate("document.querySelector('[data-confirm]').click()");
+    await waitFor("!document.querySelector('dialog:modal') && document.querySelector('[data-msg]').textContent.includes('已加入资源库')");
+  }
+}
+if (mode === 'design') {
+  await evaluate("location.hash='#/samples'");
+  await waitFor("document.querySelector('#app')?.textContent.includes('Field/Input')");
+  await send('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  await screenshot(output + '-components.png');
+  const style = await evaluate(`({
+    styles:[...document.styleSheets].map(s=>s.href),
+    invalid:document.querySelector('input[aria-invalid=true]')?.getAttribute('aria-describedby'),
+    small:[...document.querySelectorAll('#app button,#app label,#app .badge')].filter(e=>parseFloat(getComputedStyle(e).fontSize)<13).length,
+    short:[...document.querySelectorAll('#app button')].filter(e=>e.getBoundingClientRect().height<44).length
+  })`);
+  if (style.styles.some(s=>s?.endsWith('/theme.css')) || !style.invalid || style.small || style.short) throw new Error(JSON.stringify(style));
+  await evaluate(`(async()=>{
+    const {DataTable}=await import('/ui/components/dataTable.js');
+    const slot=document.createElement('div'); slot.id='keyboard-fixture'; document.querySelector('#app').prepend(slot);
+    window.tableTest=DataTable(slot,{rows:[{id:'a&"b'}],rowKey:r=>r.id,columns:[{key:'id',label:'名称'}],onSelect:r=>{window.selectedTestRow=r.id;}});
+    slot.querySelector('button').focus();
+  })()`);
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+  await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  if (await evaluate('window.selectedTestRow') !== 'a&"b') throw new Error('Table keyboard activation failed: ' + JSON.stringify(await evaluate("({selected:window.selectedTestRow,active:document.activeElement.outerHTML,fixture:document.querySelector('#keyboard-fixture').innerHTML})")));
+  await evaluate(`(async()=>{
+    const {Dialog}=await import('/ui/components/dialog.js');
+    window.testDialog=Dialog(document.body,{title:'弹窗样式验收',content:'<p>只验证组件，不修改业务数据。</p>',actions:[{label:'关闭'}]});
+  })()`);
+  await waitFor("!!document.querySelector('[role=dialog]')");
+  const focus = await evaluate("document.querySelector('[role=dialog]').contains(document.activeElement)");
+  if (!focus) throw new Error('Dialog did not receive focus');
+  await screenshot(output + '-dialog.png');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await waitFor("!document.querySelector('[role=dialog]')");
+  if (!await evaluate("document.querySelector('#keyboard-fixture').contains(document.activeElement)")) throw new Error('Dialog did not restore focus');
+  await evaluate("window.tableTest.destroy(); document.querySelector('#keyboard-fixture').remove()");
+  await evaluate("void import('/ui/components/dialog.js').then(({confirmAction}) => { window.confirmResult='pending'; confirmAction('仅测试取消，不执行任何删除', {title:'删除确认验收',destructive:true}).then(v=>window.confirmResult=v); })");
+  await waitFor("!!document.querySelector('dialog:modal')");
+  await evaluate("document.querySelector('dialog:modal .dialog-actions button').click()");
+  await waitFor("window.confirmResult === false && !document.querySelector('dialog:modal')");
+  await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+  await screenshot(output + '-components-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth>innerWidth+1')) throw new Error('Component sample overflow');
 }
 console.log(JSON.stringify({ title: await evaluate('document.title'), errors, screenshots:output }));
 socket.close();

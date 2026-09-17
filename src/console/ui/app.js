@@ -5,6 +5,7 @@ import { api, esc } from './services/api.js';
 import { loadDraft, draft } from './state/draft.js';
 import { currentTarget, setTarget } from './state/target.js';
 import { notify, subscribe } from './state/store.js';
+import { confirmAction } from './components/dialog.js';
 
 import * as pageOverview from './pages/overview.js';
 import * as pageSamples from './pages/samples.js';
@@ -32,6 +33,7 @@ const ROUTES = {
 
 let currentPage = null;
 let activeRoute = null;
+let routeVersion = 0;
 
 function shell() {
   const nav = document.createElement('nav');
@@ -82,13 +84,15 @@ async function checkConnection() {
   }
 }
 
-function route() {
+async function route() {
+  const version = ++routeVersion;
   const projectMatch = location.hash.match(/^#\/projects\/([^/]+)$/);
   if (!projectMatch && (!location.hash || !ROUTES[location.hash])) { location.replace('#/projects'); return; }
   if (activeRoute === location.hash) return;
-  if (currentPage?.isDirty?.() && !window.confirm('当前页面有未保存内容。确定放弃这些修改并离开？')) {
-    history.replaceState(null, '', activeRoute);
-    return;
+  if (currentPage?.isDirty?.()) {
+    const proceed = await confirmAction('当前页面有未保存内容。确定放弃这些修改并离开？', {title:'离开当前页面', confirmLabel:'放弃并离开'});
+    if (version !== routeVersion) return;
+    if (!proceed) { history.replaceState(null, '', activeRoute); return; }
   }
   const def = projectMatch ? {title:'项目配置', mount:pageProjects.mount} : ROUTES[location.hash];
   document.title = `AILoom 本地控制台 · ${def.title}`;

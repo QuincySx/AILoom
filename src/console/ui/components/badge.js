@@ -1,6 +1,5 @@
 // AIL-083：StatusBadge —— 领域化状态展示；部署不等于调用成功（文案映射统一在此）。
 
-import { esc } from '../services/api.js';
 
 const MAPS = {
   worktree: {
@@ -27,7 +26,7 @@ export function StatusBadge(container, props) {
     const map = MAPS[p.domain ?? 'generic'] ?? {};
     const [cls, label] = map[p.status] ?? (p.status ? ['', p.status] : ['', '']);
     el.className = `badge ${cls}`;
-    el.textContent = p.label ?? esc(label);
+    el.textContent = p.label ?? label;
   }
   render(props);
   return {

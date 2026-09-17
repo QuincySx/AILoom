@@ -24,22 +24,24 @@ export function DataTable(container, props) {
       return;
     }
     const cols = p.columns ?? [];
-    const thead = cols.map((c) => `<th>${esc(c.label)}</th>`).join('');
+    const thead = cols.map((c) => `<th scope="col">${esc(c.label)}</th>`).join('');
     const tbody = rows
-      .map((row) => {
+      .map((row, index) => {
         const key = esc(p.rowKey ? p.rowKey(row) : JSON.stringify(row));
         const tds = cols
-          .map((c) => `<td>${c.render ? c.render(row) : esc(row[c.key])}</td>`)
+          .map((c, column) => {
+            const content = c.render ? c.render(row) : esc(row[c.key]);
+            return `<td>${p.onSelect && column === 0 ? `<button type="button" class="table-row-action">${content}</button>` : content}</td>`;
+          })
           .join('');
-        return `<tr data-key="${key}">${tds}</tr>`;
+        return `<tr data-key="${key}" data-index="${index}">${tds}</tr>`;
       })
       .join('');
     wrap.innerHTML = `<table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>`;
     if (p.onSelect) {
       wrap.querySelectorAll('tbody tr').forEach((tr) => {
-        tr.style.cursor = 'pointer';
         tr.onclick = () => {
-          const row = rows.find((r) => esc(p.rowKey ? p.rowKey(r) : '') === tr.dataset.key);
+          const row = rows[Number(tr.dataset.index)];
           if (row) p.onSelect(row);
         };
       });

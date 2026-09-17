@@ -6,15 +6,15 @@ import { DataTable } from '../components/dataTable.js';
 import { Editor } from '../components/editor.js';
 import { CollectionsPanel } from '../features/collectionsPanel.js';
 import { notify } from '../state/store.js';
+import { confirmAction } from '../components/dialog.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
   container.appendChild(root);
   root.innerHTML = `
-    <header><h1>全局资源中心</h1><p class="muted">统一管理来源、下载和更新。导入不会自动启用；到项目中选择具体引用，再预览部署。</p><p><a href="#/sources">检查与更新个人副本</a></p></header>
     <div data-collections></div>
     <div class="step"><h2>个人副本</h2><p class="muted">本地文件夹和 skills.sh 单项导入的资源。点击资源查看、编辑或删除；修改副本不会提交上游。</p>
-      <div data-table></div>
+      <p><a href="#/sources">检查与更新个人副本</a></p><div data-table></div>
       <div data-issues></div>
       <div data-editor class="hidden">
         <h2>编辑 <span data-id></span></h2>
@@ -63,7 +63,7 @@ export function mount(container, ctx) {
   }
 
   async function openResource(id) {
-    if (editor.isDirty() && !confirm('当前资源有未保存修改，确定放弃并打开另一项？')) return;
+    if (editor.isDirty() && !await confirmAction('当前资源有未保存修改，确定放弃并打开另一项？', {title:'切换资源', confirmLabel:'放弃并切换'})) return;
     const generation = ++loadGeneration;
     try {
       const v = await api.libraryResource(id);
@@ -105,14 +105,18 @@ export function mount(container, ctx) {
     try {
       const p = await api.libraryDelete(id, false);
       const preview = p.preview ?? p;
-      if (!confirm('删除个人副本 ' + id + '？\n涉及作用域：' + (preview.affected_scopes || []).join('、') + '\n副本会移入本机 library-archive，不删除上游或项目文件。仍启用时会阻止删除。')) return;
+      if (!await confirmAction('删除个人副本 ' + id + '？\n涉及作用域：' + (preview.affected_scopes || []).join('、') + '\n副本会移入本机 library-archive，不删除上游或项目文件。仍启用时会阻止删除。', {title:'删除个人副本', confirmLabel:'移入归档', destructive:true})) return;
       await api.libraryDelete(id, true);
       if (currentId === id) { currentId = null; editor.setValue(''); editorBox.classList.add('hidden'); }
       notify('个人副本已移入本机归档，可恢复。'); await refresh();
     } catch (e) { notify(e.message); }
   };
   // 导入区
-  const collections = CollectionsPanel(root.querySelector('[data-collections]'), { onChanged: refresh });
+  const collections = CollectionsPanel(root.querySelector('[data-collections]'), {
+    title: '全局资源中心',
+    description: '统一管理来源、下载和更新。项目按需引用，导入不会自动启用。',
+    onChanged: refresh,
+  });
 
   refresh();
   return {

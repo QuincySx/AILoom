@@ -3,6 +3,7 @@
 let nextFieldId = 0;
 export function Field(container, props) {
   const wrap = document.createElement('div');
+  wrap.className = 'field';
   const label = document.createElement('label');
   const input = document.createElement(props.multi ? 'textarea' : 'input');
   const err = document.createElement('div');
@@ -13,13 +14,13 @@ export function Field(container, props) {
   hint.id = input.id + '-hint';
   input.setAttribute('aria-describedby', `${hint.id} ${err.id}`);
   label.textContent = props.label ?? '';
-  label.className = 'muted';
   if (!props.multi) input.type = props.type ?? 'text';
   input.value = props.value ?? '';
   input.style.width = props.width ?? '100%';
   input.placeholder = props.placeholder ?? '';
-  err.className = 'badge bad hidden';
-  hint.className = 'muted';
+  err.className = 'field-error hidden';
+  err.setAttribute('role', 'alert');
+  hint.className = 'field-hint';
   hint.textContent = props.hint ?? '';
   wrap.append(label, input, err, hint);
   container.appendChild(wrap);
@@ -33,6 +34,8 @@ export function Field(container, props) {
 
   function render(p) {
     cur = p;
+    input.setAttribute('aria-invalid', String(!!p.error));
+    input.disabled = !!p.disabled;
     label.textContent = p.label ?? '';
     input.placeholder = p.placeholder ?? '';
     if (document.activeElement !== input && input.value !== (p.value ?? '')) {

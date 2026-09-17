@@ -1,44 +1,70 @@
-/* AIL-081：设计 Token（semantic CSS variables）——所有组件/页面只消费这些变量，
-   不允许页面自行配色/间距。 */
+/* Single source of design values. shadcn-style semantic roles, native CSS.
+   Colors are paired with foregrounds; pages must not invent their own palette. */
 :root {
-  /* 色彩：语义层 */
-  --c-bg: var(--vc-paper);
-  --c-surface: #ffffff;
-  --c-ink: var(--vc-ink);
-  --c-ink-muted: var(--vc-muted);
-  --c-border: var(--vc-line);
-  --c-border-soft: var(--vc-line);
-  --c-accent: var(--vc-primary);
-  --c-accent-soft: var(--vc-primary-soft);
-  --c-accent-hover: var(--vc-primary-soft);
-  --c-accent-ink: var(--vc-primary-strong);
-  --c-ok-bg: #d1f2d8;
-  --c-warn-bg: #fdeeca;
-  --c-warn-border: #d9a441;
-  --c-bad-bg: #f8d3d3;
-  --c-code-bg: #11131f;
-  --c-code-ink: #c9d1e8;
-
-  /* 字号 */
-  --fs-h1: 2rem;
-  --fs-h2: 1.2rem;
-  --fs-body: 1rem;
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #64646f;
+  --accent: #ededf0;
+  --accent-foreground: var(--foreground);
+  --destructive: #b42332;
+  --destructive-foreground: #ffffff;
+  --destructive-muted: #fff0f1;
+  --success: #236544;
+  --success-muted: #edf7f0;
+  --warning: #84520e;
+  --warning-muted: #fff6e4;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #71717a;
+  --sidebar: #fafafa;
+  --overlay: #18181b66;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364646f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --code-background: #202024;
+  --code-foreground: #f4f4f5;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  --fs-h1: 26px;
+  --fs-h2: 18px;
+  --fs-body: 15px;
   --fs-small: 14px;
   --fs-tiny: 13px;
-
-  /* 间距 */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 24px;
-  --sp-page: 1.5rem;
-
-  /* 形状 */
-  --radius: 8px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --radius: 6px;
   --radius-lg: 10px;
   --border-width: 1px;
-
-  /* 焦点（键盘可达） */
-  --focus-ring: 0 0 0 3px #2c7f5e33;
+  --control-height: 44px;
+  --sidebar-width: 208px;
+  --duration-feedback: 140ms;
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
+  /* Compatibility aliases, not a second palette. */
+  --c-bg: var(--background);
+  --c-surface: var(--card);
+  --c-ink: var(--foreground);
+  --c-ink-muted: var(--muted-foreground);
+  --c-border: var(--border);
+  --c-border-soft: var(--border);
+  --c-accent: var(--primary);
+  --c-accent-soft: var(--accent);
+  --c-accent-hover: var(--accent);
+  --c-accent-ink: var(--accent-foreground);
+  --c-ok-bg: var(--success-muted);
+  --c-warn-bg: var(--warning-muted);
+  --c-warn-border: var(--warning);
+  --c-bad-bg: var(--destructive-muted);
+  --c-code-bg: var(--code-background);
+  --c-code-ink: var(--code-foreground);
 }
