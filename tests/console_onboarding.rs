@@ -114,8 +114,8 @@ fn ail047_onboarding_first_run_closed_loop() {
         );
     }
     assert!(
-        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择工作目录")
-            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择宿主与能力")
+        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择一个要使用 Skill / MCP 的项目")
+            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择宿主和要使用的资源")
             && ailoom::console::ui::PLAN_PREVIEW_JS.contains("预览将要做的改动")
             && ailoom::console::ui::PLAN_PREVIEW_JS.contains("在宿主里真实验证")
             && ailoom::console::ui::APP_JS.contains("hashchange"),

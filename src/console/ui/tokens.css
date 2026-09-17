@@ -2,16 +2,16 @@
    不允许页面自行配色/间距。 */
 :root {
   /* 色彩：语义层 */
-  --c-bg: #f7f7fb;
+  --c-bg: var(--vc-paper);
   --c-surface: #ffffff;
-  --c-ink: #1a1a2e;
-  --c-ink-muted: #6b6b80;
-  --c-border: #d8d8e4;
-  --c-border-soft: #e2e2ec;
-  --c-accent: #5b6ee1;
-  --c-accent-soft: #eef0ff;
-  --c-accent-hover: #dfe3ff;
-  --c-accent-ink: #2c3a9e;
+  --c-ink: var(--vc-ink);
+  --c-ink-muted: var(--vc-muted);
+  --c-border: var(--vc-line);
+  --c-border-soft: var(--vc-line);
+  --c-accent: var(--vc-primary);
+  --c-accent-soft: var(--vc-primary-soft);
+  --c-accent-hover: var(--vc-primary-soft);
+  --c-accent-ink: var(--vc-primary-strong);
   --c-ok-bg: #d1f2d8;
   --c-warn-bg: #fdeeca;
   --c-warn-border: #d9a441;
@@ -20,11 +20,11 @@
   --c-code-ink: #c9d1e8;
 
   /* 字号 */
-  --fs-h1: 1.3rem;
-  --fs-h2: 1.05rem;
+  --fs-h1: 2rem;
+  --fs-h2: 1.2rem;
   --fs-body: 1rem;
-  --fs-small: 0.85rem;
-  --fs-tiny: 0.78rem;
+  --fs-small: 14px;
+  --fs-tiny: 13px;
 
   /* 间距 */
   --sp-1: 4px;
@@ -40,5 +40,5 @@
   --border-width: 1px;
 
   /* 焦点（键盘可达） */
-  --focus-ring: 0 0 0 2px #5b6ee155;
+  --focus-ring: 0 0 0 3px #2c7f5e33;
 }

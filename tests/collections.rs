@@ -425,3 +425,206 @@ fn invalid_mcp_collection_does_not_replace_registered_snapshot() {
     );
     assert_eq!(list["sources"][0]["resources"].as_array().unwrap().len(), 3);
 }
+
+#[test]
+fn checking_all_persists_status_and_batch_update_is_version_bound() {
+    let f = Fixture::new();
+    let a = f.source("batch-a", "v1", false);
+    let b = f.source("batch-b", "v1", false);
+    f.add(&a, "a");
+    f.add(&b, "b");
+    let before = ailoom::collections::load(&f.data()).unwrap();
+    for source in [&a, &b] {
+        let file = source.join("skills/chosen/SKILL.md");
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(file, text.replace("v1", "v2")).unwrap();
+        f.commit(source);
+    }
+    let checked = f.ok(f.tmp.path(), &["collection", "--action", "check"]);
+    let items = checked["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|i| i["state"] == "available"));
+    assert_eq!(
+        ailoom::collections::load(&f.data()).unwrap().revision,
+        before.revision
+    );
+    let listed = f.ok(f.tmp.path(), &["collection", "--action", "list"]);
+    assert!(listed["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["update"]["state"] == "available"));
+    let tokens: Vec<String> = items
+        .iter()
+        .map(|i| i["preview"]["preview_id"].as_str().unwrap().to_string())
+        .collect();
+    let applied = ailoom::collections::apply_previews(&f.data(), &tokens).unwrap();
+    assert_eq!(applied["updated"], 2);
+    assert_eq!(
+        ailoom::collections::load(&f.data()).unwrap().revision,
+        before.revision + 1
+    );
+    assert!(
+        ailoom::collections::apply_previews(&f.data(), &tokens).is_err(),
+        "旧预览不能重复应用"
+    );
+    let rechecked = f.ok(f.tmp.path(), &["collection", "--action", "check"]);
+    assert!(rechecked["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| i["state"] == "current"));
+}
+
+#[test]
+fn removing_collection_blocks_references_and_preserves_store_after_unlink() {
+    let f = Fixture::new();
+    let source = f.source("removable", "v1", false);
+    let p = f.add(&source, "removable");
+    let id = p["source"]["id"].as_str().unwrap();
+    let ws = common::make_business_repo(f.tmp.path(), "consumer");
+    f.host(&ws);
+    let resource = format!("{id}/skill/common/chosen");
+    f.select(&ws, &resource, "enable");
+    f.sync(&ws);
+    let link = ws.join(".claude/skills/chosen");
+    let entity = std::fs::read_link(&link).unwrap();
+    let preview = f.ok(&ws, &["collection", "--action", "remove", "--source", id]);
+    assert_eq!(preview["references"].as_array().unwrap().len(), 1);
+    assert!(
+        !f.run(
+            &ws,
+            &[
+                "collection",
+                "--action",
+                "remove",
+                "--source",
+                id,
+                "--execute"
+            ]
+        )
+        .0
+    );
+    assert!(entity.join("SKILL.md").is_file());
+    f.select(&ws, &resource, "disable");
+    f.sync(&ws);
+    f.ok(
+        &ws,
+        &[
+            "collection",
+            "--action",
+            "remove",
+            "--source",
+            id,
+            "--execute",
+        ],
+    );
+    assert!(
+        entity.join("SKILL.md").is_file(),
+        "移除来源不能清空历史实体"
+    );
+    assert!(!link.exists());
+    assert!(ailoom::collections::load(&f.data())
+        .unwrap()
+        .sources
+        .is_empty());
+    assert_eq!(
+        std::fs::read_dir(f.data().join("collections/archive"))
+            .unwrap()
+            .count(),
+        1
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn legacy_base64_links_switch_individually_without_removing_old_entities() {
+    let f = Fixture::new();
+    let source = f.source("legacy", "v1", false);
+    let p = f.add(&source, "legacy");
+    let id = p["source"]["id"].as_str().unwrap();
+    let ws = common::make_business_repo(f.tmp.path(), "legacy-consumer");
+    f.host(&ws);
+    f.select(&ws, &format!("{id}/skill/common/chosen"), "enable");
+    f.sync(&ws);
+    let link = ws.join(".claude/skills/chosen");
+    let readable = std::fs::read_link(&link).unwrap();
+    let bucket = readable
+        .ancestors()
+        .find(|p| p.join(".meta/SOURCE.json").is_file())
+        .unwrap()
+        .to_path_buf();
+    let meta: Value =
+        serde_json::from_slice(&std::fs::read(bucket.join(".meta/SOURCE.json")).unwrap()).unwrap();
+    let legacy = common::isolated_store_root(f.tmp.path()).join(meta["key"].as_str().unwrap());
+    std::fs::rename(&bucket, &legacy).unwrap();
+    let legacy_skill = legacy.join(readable.strip_prefix(&bucket).unwrap());
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&legacy_skill, &link).unwrap();
+    let digest = ailoom::store::dir_digest(&legacy_skill).unwrap();
+    let hash = format!(
+        "sha256:{}",
+        ailoom::ids::sha256_hex(format!("{}|{digest}", legacy_skill.display()).as_bytes())
+    );
+    for file in walkdir::WalkDir::new(f.data())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|f| f.file_name() == "managed-manifest.json")
+    {
+        let mut m: Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+        for item in m["items"].as_object_mut().unwrap().values_mut() {
+            if item["resource_id"] == format!("{id}/skill/common/chosen") {
+                item["content_hash"] = serde_json::json!(hash);
+            }
+        }
+        std::fs::write(file.path(), serde_json::to_vec_pretty(&m).unwrap()).unwrap();
+    }
+    f.sync(&ws);
+    assert_eq!(std::fs::read_link(&link).unwrap(), readable);
+    assert!(readable.join("SKILL.md").is_file());
+    assert!(
+        legacy_skill.join("SKILL.md").is_file(),
+        "旧实体保留，其他工作树的旧链接不受影响"
+    );
+}
+
+#[test]
+fn personal_copy_delete_is_guarded_and_recoverably_archived() {
+    let f = Fixture::new();
+    let source = f.source("personal-copy", "preserve-me", false);
+    let file = source.join("skills/chosen/SKILL.md");
+    let text = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("namespace: common", "namespace: personal");
+    std::fs::write(&file, text).unwrap();
+    f.ok(
+        f.tmp.path(),
+        &[
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            source.join("skills/chosen").to_str().unwrap(),
+            "--execute",
+        ],
+    );
+    let (entries, _) = ailoom::personal_library::list_tolerant(&f.data());
+    let id = &entries[0].id;
+    let ws = common::make_business_repo(f.tmp.path(), "copy-consumer");
+    f.select(&ws, id, "enable");
+    assert!(ailoom::personal_library::delete_execute(&f.data(), id).is_err());
+    f.select(&ws, id, "disable");
+    ailoom::personal_library::delete_execute(&f.data(), id).unwrap();
+    assert!(ailoom::personal_library::list_tolerant(&f.data())
+        .0
+        .is_empty());
+    let archived = walkdir::WalkDir::new(f.data().join("library-archive"))
+        .into_iter()
+        .filter_map(Result::ok)
+        .find(|f| f.file_name() == "SKILL.md")
+        .unwrap();
+    assert!(std::fs::read_to_string(archived.path())
+        .unwrap()
+        .contains("preserve-me"));
+    assert!(source.join("skills/chosen/SKILL.md").is_file());
+}

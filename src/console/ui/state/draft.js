@@ -45,6 +45,7 @@ export async function saveDraft() {
     const r = await api.putDraft(rev, draft());
     set('draftRev', r.revision);
     hideConflictBar();
+    return true;
   } catch (e) {
     if (e.kind === 'conflict') {
       // U03：冲突显式呈现；本地草稿保留；用户显式选择
@@ -54,6 +55,7 @@ export async function saveDraft() {
     } else {
       notify('草稿保存失败：' + e.message);
     }
+    return false;
   }
 }
 

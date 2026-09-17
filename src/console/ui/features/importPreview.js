@@ -130,8 +130,13 @@ export function UpdatePanel(container, props) {
         const v = await api.librarySources();
         const items = (v.items ?? []).filter((i) => !i.legacy);
         if (!items.length) { view.innerHTML = '<span class="muted">没有可检查上游的 skill（全部为本地/未知来源）</span>'; return; }
-        view.innerHTML = '<table><tr><th>skill</th><th>来源</th><th>commit</th></tr>' +
-          items.map((i) => `<tr><td>${esc(i.skill)}</td><td>${esc(i.source?.repo_url ?? '')}</td><td>${esc((i.source?.resolved_commit ?? '').slice(0, 12))}</td></tr>`).join('') + '</table>';
+        const results = [];
+        for (const item of items) {
+          try { const r = await api.checkUpdate(item.skill); results.push({ skill: item.skill, ...r.status }); }
+          catch (e) { results.push({ skill: item.skill, state: '检查失败', note: e.message }); }
+          view.innerHTML = '<table><tr><th>Skill 副本</th><th>检查结果</th><th>说明</th></tr>' + results.map(i => `<tr><td>${esc(i.skill)}</td><td>${esc(i.state)}</td><td>${esc(i.note || '')}</td></tr>`).join('') + '</table>';
+        }
+        view.innerHTML += '<p class="muted">输入具体 Skill 名称可预览并更新；合集的批量更新在上方操作。</p>';
       }
     } catch (e) {
       view.innerHTML = `<span class="badge bad">${esc(e.message)}</span>`;

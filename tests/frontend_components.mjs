@@ -9,6 +9,7 @@ class Element {
   constructor(tag) { this.tag = tag; this.children = []; this.value = ''; this.style = {}; this.classList = { add() {}, remove() {} }; }
   append(...nodes) { this.children.push(...nodes); }
   appendChild(node) { this.append(node); }
+  setAttribute(name, value) { (this.attributes ??= {})[name] = value; }
   remove() { this.removed = true; }
 }
 

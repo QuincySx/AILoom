@@ -1,5 +1,8 @@
 # Spec: SkillStore 分桶实体 + Workspace 软链 + Require 选用
 
+> 2026-09-17 修订：本页的 Base64 磁盘目录布局已被 [资源管理生命周期](resource-management-lifecycle.md) 替代。
+> SourceKey 保留历史身份兼容；新实体使用可读来源路径。旧目录不会自动删除。
+
 **Status:** local draft（本机规格，未挂 issue tracker）  
 **Triage:** ready-for-agent（本地约定）  
 **Related ADR:** ADR-0001 SkillStore + symlink  

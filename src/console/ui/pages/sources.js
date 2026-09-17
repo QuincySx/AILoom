@@ -22,7 +22,7 @@ export function mount(container, ctx) {
       <p><button data-deploy>刷新部署状态</button></p>
       <div data-deployview class="muted">未加载</div></div>`;
 
-  const collections = CollectionsPanel(root.querySelector('[data-collections]'));
+  const collections = CollectionsPanel(root.querySelector('[data-collections]'), { updatesOnly: true });
   const table = DataTable(root.querySelector('[data-table]'), { loading: true });
 
   async function refresh() {

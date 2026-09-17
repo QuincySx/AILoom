@@ -28,11 +28,14 @@ _Avoid_: 宿主插件包、添加合集就自动启动其中的 MCP。
 **SkillSource（技能源）**：专门提供 Skill 的资源源。
 _Avoid_: 把「短名字」或「逻辑项目」当成源身份。
 
-**SourceKey（源键）**：由规范化后的源 identity（URL 或本地路径，不含凭据）经可逆编码得到的分桶目录名。
-_Avoid_: 不可逆短哈希当唯一主键、人手起的易撞短名。
+**SourceKey（源键）**：资源来源的稳定身份标识，与用于人工浏览的存储路径分开。
+_Avoid_: 把目录展示名称当资源身份、改目录就改变项目引用。
 
-**SkillStore（技能库）**：本机按 SkillSource 分桶保存的 Skill 实体树；根目录优先级为 `$XDG_DATA_HOME/ailoom/store`（已设时）> `AILOOM_STORE_ROOT` > `$HOME/.local/share/ailoom/store`（规范默认；旧 `~/.ailoom/store` 首次运行自动迁移）。桶内元数据在 `.meta/`，skill 路径相对源仓 skills 根。
-_Avoid_: 每个业务仓各复制一份实体、把业务工程塞进技能库、在 store 下再套 `sources/` 分类层、在未设置 XDG 时假装走 `~/.local/share`。
+**SkillStore（技能库）**：本机按来源与版本保存、供多个项目引用的 Skill 实体集合；不是作者编辑和提交资源的 Git 工作仓库。
+_Avoid_: 每个业务仓各复制一份实体、把缓存当作者工作区、更新资源库就自动升级所有项目。
+
+**SourceRemoval（移除来源）**：从可用资源目录中取消来源登记；不等于删除远端仓库、历史实体或项目文件。
+_Avoid_: 把取消项目引用、移除来源和清理磁盘合并成一个删除动作。
 
 **Require（选用）**：某个作用域明确声明使用哪些来源中的哪些资源，包括 Skill 和 MCP；不同来源的同名资源仍是不同引用。
 _Avoid_: 隐式「全仓所有 skill 都装上」。

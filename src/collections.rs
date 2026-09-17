@@ -195,6 +195,34 @@ pub fn list(data: &Path) -> Result<Value> {
     let mut sources = Vec::new();
     for source in registry.sources.values() {
         let mut v = serde_json::to_value(source)?;
+        v["references"] = references(data, &format!("{}/", source.id))?;
+        v["store_path"] = json!(crate::store::source_bucket(
+            &crate::store::resolve_store_root()?,
+            &format!(
+                "{}#{}",
+                source.lock.identity,
+                source.lock.resolved_commit.as_deref().unwrap_or("working")
+            )
+        ));
+        let check_path = data
+            .join("collections/checks")
+            .join(format!("{}.json", source.id));
+        if check_path.is_file() {
+            let mut check: Value = serde_json::from_slice(&std::fs::read(check_path)?)?;
+            if check["base_commit"] == json!(source.lock.resolved_commit) {
+                if check["state"] == "available"
+                    && check["preview"]["registry_revision"] != json!(registry.revision)
+                {
+                    check["state"] = json!("stale");
+                }
+                v["update"] = check;
+            } else if check["preview"]["source"]["lock"]["resolved_commit"]
+                == json!(source.lock.resolved_commit)
+            {
+                check["state"] = json!("current");
+                v["update"] = check;
+            }
+        }
         match catalog(data, source) {
             Ok(c) => {
                 v["resources"] = json!(c
@@ -299,38 +327,182 @@ pub fn preview(
         &serde_json::to_vec_pretty(&preview)?,
     )?;
     Ok(
-        json!({ "preview_id": token, "source": source, "previous_commit": previous.and_then(|s| s.lock.resolved_commit.as_ref()),
+        json!({ "preview_id": token, "registry_revision": registry.revision, "source": source, "previous_commit": previous.and_then(|s| s.lock.resolved_commit.as_ref()),
         "resources": resources, "removed": removed, "note": "添加或更新合集仅锁定资源目录；项目只部署显式选用项，MCP 不在添加时启动" }),
     )
 }
 
 pub fn apply_preview(data: &Path, token: &str) -> Result<Value> {
-    if uuid::Uuid::parse_str(token).is_err() {
-        return Err(Error::new(code::USAGE, "无效预览 ID"));
+    apply_previews(data, &[token.to_string()])
+}
+
+pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
+    if tokens.is_empty() || tokens.len() > 100 {
+        return Err(Error::new(code::USAGE, "请选择 1–100 个已预览的合集"));
     }
-    let preview: Preview = serde_json::from_slice(&std::fs::read(
-        data.join("collections/previews")
-            .join(format!("{token}.json")),
-    )?)?;
+    let mut previews = Vec::new();
+    let mut seen = BTreeSet::new();
+    for token in tokens {
+        if uuid::Uuid::parse_str(token).is_err() {
+            return Err(Error::new(code::USAGE, "无效预览 ID"));
+        }
+        let preview: Preview = serde_json::from_slice(&std::fs::read(
+            data.join("collections/previews")
+                .join(format!("{token}.json")),
+        )?)?;
+        if !seen.insert(preview.source.id.clone()) {
+            return Err(Error::new(code::USAGE, "不能重复更新同一来源"));
+        }
+        previews.push(preview);
+    }
     crate::source::with_file_lock(&data.join("collections/registry.lock"), || {
         let mut registry = load(data)?;
-        if registry.revision != preview.base_revision {
-            return Err(Error::new(
-                code::USER_CONTENT_CONFLICT,
-                "合集列表已变更，请重新预览",
-            ));
+        for preview in &previews {
+            if registry.revision != preview.base_revision {
+                return Err(Error::new(
+                    code::USER_CONTENT_CONFLICT,
+                    "合集列表已变更，请重新预览",
+                ));
+            }
+            let next = catalog(data, &preview.source)?;
+            if let Some(old) = registry.sources.get(&preview.source.id) {
+                let next_ids: BTreeSet<_> = next.entries.iter().map(|e| e.id.to_string()).collect();
+                for entry in catalog(data, old)?.entries {
+                    let id = entry.id.to_string();
+                    if !next_ids.contains(&id)
+                        && !references(data, &id)?.as_array().unwrap().is_empty()
+                    {
+                        return Err(Error::new(
+                            code::USER_CONTENT_CONFLICT,
+                            format!("上游移除了仍被项目引用的资源 {id}；先取消引用或替换后再更新"),
+                        ));
+                    }
+                }
+            }
         }
-        catalog(data, &preview.source)?; // 校验预览绑定快照，不再次获取移动中的分支。
-        registry
-            .sources
-            .insert(preview.source.id.clone(), preview.source.clone());
+        for preview in &previews {
+            registry
+                .sources
+                .insert(preview.source.id.clone(), preview.source.clone());
+        }
         registry.revision += 1;
         crate::sync_common::atomic_write(
             &registry_path(data),
             &serde_json::to_vec_pretty(&registry)?,
         )?;
         Ok(
-            json!({ "source": preview.source, "revision": registry.revision, "note": "已保存合集；尚未修改任何项目或启动 MCP" }),
+            json!({ "source": previews[0].source, "updated": previews.len(), "revision": registry.revision, "note": "已保存合集；尚未修改任何项目或启动 MCP" }),
+        )
+    })
+}
+
+/// 明确启用的引用；同时包含仓库默认、子项目以及工作树覆盖，供更新/移除预览使用。
+pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
+    let profile = crate::profile::PersonalProfile::load_or_default(data)?;
+    let mut refs = Vec::new();
+    for (repo_id, repo) in &profile.repos {
+        let mut scan = |selection: &crate::profile::ScopeSelection, scope: String| {
+            for (id, state) in &selection.resources {
+                let matches = if id_or_prefix.ends_with('/') {
+                    id.starts_with(id_or_prefix)
+                } else {
+                    id == id_or_prefix
+                };
+                if matches && *state == crate::profile::TriState::Enable {
+                    refs.push(json!({"repo_id": repo_id, "scope": scope, "resource_id": id}));
+                }
+            }
+        };
+        if let Some(s) = &repo.default {
+            scan(s, "仓库默认".into());
+        }
+        for s in &repo.subprojects {
+            scan(&s.selection, format!("子项目 {}", s.path));
+        }
+        for (wt, s) in &repo.worktrees {
+            scan(s, format!("工作树 {wt}"));
+        }
+        for (wt, subs) in &repo.wt_subprojects {
+            for s in subs {
+                scan(&s.selection, format!("工作树 {wt}/{}", s.path));
+            }
+        }
+    }
+    Ok(json!(refs))
+}
+
+/// 检查会获取远端，但只持久化检查结果与候选快照，不改变库版本或项目。
+pub fn check_updates(data: &Path, source_id: Option<&str>) -> Result<Value> {
+    let registry = load(data)?;
+    if source_id.is_some_and(|id| !registry.sources.contains_key(id)) {
+        return Err(Error::new(code::UNKNOWN_REFERENCE, "来源不存在"));
+    }
+    let mut items = Vec::new();
+    for s in registry
+        .sources
+        .values()
+        .filter(|s| source_id.map_or(true, |id| s.id == id))
+    {
+        let mut status = json!({"source_id":s.id, "name":s.name, "base_commit":s.lock.resolved_commit, "checked_at":crate::ids::now_iso()});
+        match preview(data, &s.name, &s.url, s.lock.ref_.as_deref(), Some(&s.id)) {
+            Ok(p) => {
+                status["state"] = json!(if p["source"]["lock"]["resolved_commit"]
+                    == json!(s.lock.resolved_commit)
+                {
+                    "current"
+                } else {
+                    "available"
+                });
+                status["preview"] = p;
+            }
+            Err(e) => {
+                status["state"] = json!("error");
+                status["error"] = json!(e.to_string());
+            }
+        }
+        let dir = data.join("collections/checks");
+        std::fs::create_dir_all(&dir)?;
+        crate::sync_common::atomic_write(
+            &dir.join(format!("{}.json", s.id)),
+            &serde_json::to_vec_pretty(&status)?,
+        )?;
+        items.push(status);
+    }
+    Ok(json!({"items":items}))
+}
+
+/// 从目录移除来源而不删除快照、实体或项目文件。保留归档以便恢复和人工核查。
+pub fn remove(data: &Path, id: &str, execute: bool) -> Result<Value> {
+    crate::source::with_file_lock(&data.join("collections/registry.lock"), || {
+        let mut registry = load(data)?;
+        let source = registry
+            .sources
+            .get(id)
+            .ok_or_else(|| Error::new(code::UNKNOWN_REFERENCE, "来源不存在"))?
+            .clone();
+        let refs = references(data, &format!("{id}/"))?;
+        if execute {
+            if !refs.as_array().unwrap().is_empty() {
+                return Err(Error::new(
+                    code::USER_CONTENT_CONFLICT,
+                    "来源仍被项目启用，请先取消引用并应用",
+                ));
+            }
+            let archive = data.join("collections/archive");
+            std::fs::create_dir_all(&archive)?;
+            crate::sync_common::atomic_write(
+                &archive.join(format!("{}-{}.json", id, crate::ids::new_id())),
+                &serde_json::to_vec_pretty(&source)?,
+            )?;
+            registry.sources.remove(id);
+            registry.revision += 1;
+            crate::sync_common::atomic_write(
+                &registry_path(data),
+                &serde_json::to_vec_pretty(&registry)?,
+            )?;
+        }
+        Ok(
+            json!({"source":source, "references":refs, "executed":execute, "note":"只移除资源库来源登记；缓存、历史版本和现有项目文件保留，不删除远端仓库"}),
         )
     })
 }

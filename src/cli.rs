@@ -461,6 +461,9 @@ pub enum Command {
         /// apply 使用之前预览返回的 ID
         #[arg(long)]
         preview_id: Option<String>,
+        /// remove 默认仅预览；传此参数才移除来源登记（保留历史实体）
+        #[arg(long)]
+        execute: bool,
     },
     /// 本地控制台（AIL-046，仅 loopback）
     Console {

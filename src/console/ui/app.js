@@ -2,9 +2,9 @@
 // 切页销毁页面监听/轮询；服务端任务不受页面销毁影响。
 
 import { api, esc } from './services/api.js';
-import { loadDraft } from './state/draft.js';
-import { currentTarget } from './state/target.js';
-import { notify } from './state/store.js';
+import { loadDraft, draft } from './state/draft.js';
+import { currentTarget, setTarget } from './state/target.js';
+import { notify, subscribe } from './state/store.js';
 
 import * as pageOverview from './pages/overview.js';
 import * as pageSamples from './pages/samples.js';
@@ -18,11 +18,11 @@ import * as pageInstructions from './pages/instructions.js';
 
 const ROUTES = {
   '#/overview': { title: '总览', mount: pageOverview.mount },
-  '#/samples': { title: '组件样例', mount: pageSamples.mount },
+  '#/samples': { title: '组件样例', mount: pageSamples.mount, hidden: true },
   '#/onboarding': { title: '首次设置', mount: pageOnboarding.mount },
   '#/scopes': { title: '仓库与作用域', mount: pageScopes.mount },
   '#/library': { title: '资源库', mount: pageLibrary.mount },
-  '#/sources': { title: '来源与更新', mount: pageSources.mount },
+  '#/sources': { title: '更新中心', mount: pageSources.mount },
   '#/workflows': { title: '流程工作台', mount: pageWorkflows.mount },
   '#/tasks': { title: '任务', mount: pageTasks.mount },
   '#/instructions': { title: '个人指令', mount: pageInstructions.mount },
@@ -32,31 +32,34 @@ let currentPage = null;
 let activeRoute = null;
 
 function shell() {
-  const nav = document.createElement('div');
-  nav.className = 'nav';
+  const nav = document.createElement('nav');
+  nav.className = 'sidebar';
+  nav.setAttribute('aria-label', '主导航');
   nav.id = 'nav';
   const bar = document.createElement('div');
   bar.id = 'targetBar';
   bar.className = 'muted';
-  const app = document.createElement('div');
+  const app = document.createElement('main');
   app.id = 'app';
   document.body.append(nav, bar, app);
   renderNav();
-  setInterval(renderTargetBar, 2000);
+  subscribe('target', renderTargetBar);
   setInterval(checkConnection, 10000);
 }
 
 function renderNav() {
   const nav = document.querySelector('#nav');
   if (!nav) return;
-  nav.innerHTML = '';
+  nav.innerHTML = '<div class="brand">AILoom<span>你的 AI 资源工作台</span></div><div class="nav-label">工作空间</div>';
   for (const [route, def] of Object.entries(ROUTES)) {
+    if (def.hidden) continue;
     const b = document.createElement('button');
     b.textContent = def.title;
-    if (location.hash === route) b.className = 'on';
+    if (location.hash === route) { b.className = 'on'; b.setAttribute('aria-current', 'page'); }
     b.onclick = () => { location.hash = route; };
     nav.appendChild(b);
   }
+  nav.insertAdjacentHTML('beforeend', '<div class="sidebar-foot">本地运行 · 仅本机可访问<br>资源由你选择，项目由你确认。</div>');
 }
 
 function renderTargetBar() {
@@ -78,7 +81,7 @@ async function checkConnection() {
 }
 
 function route() {
-  if (!location.hash || !ROUTES[location.hash]) location.hash = '#/overview';
+  if (!location.hash || !ROUTES[location.hash]) location.hash = draft().completed ? '#/library' : '#/onboarding';
   if (activeRoute === location.hash) return;
   if (currentPage?.isDirty?.() && !window.confirm('当前页面有未保存内容。确定放弃这些修改并离开？')) {
     history.replaceState(null, '', activeRoute);
@@ -103,5 +106,9 @@ window.addEventListener('beforeunload', (event) => {
 (async function init() {
   shell();
   await loadDraft();
+  const d = draft();
+  if (d.target) setTarget(d.target);
+  else if (d.repo) setTarget({ repo_id: d.repo.repo_id, path: d.repo.current_worktree || d.repo.root, kind: d.repo.kind || 'git' });
   route();
+  renderTargetBar();
 })();

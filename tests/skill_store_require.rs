@@ -113,12 +113,10 @@ fn ticket01_store_symlink_layout_and_idempotent_sync() {
         assert!(!t.contains("resources/skills"), "{t}");
         assert!(target.join("SKILL.md").is_file(), "实体可读");
         assert!(
-            c.store_root().read_dir().unwrap().any(|e| e
-                .unwrap()
-                .path()
-                .join(".meta")
-                .join("SOURCE.json")
-                .is_file()),
+            target
+                .ancestors()
+                .take_while(|p| p.starts_with(c.store_root()))
+                .any(|p| p.join(".meta/SOURCE.json").is_file()),
             "应有 .meta/SOURCE.json"
         );
     }

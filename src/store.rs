@@ -1,6 +1,6 @@
 //! SkillStore：按源仓库分桶存放 Skill 实体；Workspace 只挂链接。
-//! 布局：`<store>/<source_key>/.meta/SOURCE.json` + `<store>/<source_key>/<相对 skills 根>/`
-//! `source_key` = base64url(规范化 identity)，可逆。
+//! 新布局：`<store>/<host>/<repo>/revisions/<version>/<skill>/`。
+//! source_key 保留历史编码；旧目录不自动删除，项目下次同步时逐个切换到可读布局。
 //! Store 根解析见 [`crate::paths::resolve_store_root`]。
 
 use crate::error::{code, Error, Result};
@@ -61,9 +61,56 @@ pub fn source_key_decode(key: &str) -> Result<String> {
         .map_err(|e| Error::new(code::INTERNAL, format!("source_key 非 UTF-8: {e}")))
 }
 
-/// 源仓分桶根：`<store>/<source_key>/`
+/// 可读的来源路径；旧 source_key 仅用于识别历史目录，不再作为新实体目录名。
 pub fn source_bucket(store_root: &Path, identity: &str) -> PathBuf {
-    store_root.join(source_key(identity))
+    let (source, revision) = identity.rsplit_once('#').unwrap_or((identity, "working"));
+    let norm = normalize_identity(source.strip_prefix("git+").unwrap_or(source));
+    let remote = norm
+        .split_once("://")
+        .filter(|(scheme, _)| matches!(*scheme, "https" | "http" | "ssh"));
+    let mut bucket = store_root.to_path_buf();
+    if let Some((_, rest)) = remote {
+        let (host, path) = rest.split_once('/').unwrap_or((rest, "repository"));
+        bucket.push(path_component(host));
+        for part in path.trim_matches('/').split('/') {
+            bucket.push(path_component(part));
+        }
+    } else {
+        let label = source
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("source");
+        bucket.push("local");
+        bucket.push(format!(
+            "{}-{}",
+            path_component(label),
+            &sha256_hex(source.as_bytes())[..12]
+        ));
+    }
+    bucket.join("revisions").join(path_component(revision))
+}
+
+// 编码分隔符、点目录和大小写，避免逃逸以及大小写不敏感文件系统中的碰撞。
+fn path_component(value: &str) -> String {
+    if value.is_empty() {
+        return "%00".into();
+    }
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || b == b'-'
+                || b == b'_'
+                || (b == b'.' && value != "." && value != "..")
+            {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 /// 仓内 skill 路径相对 skills 根；拒绝逃逸。
@@ -170,7 +217,7 @@ pub fn skill_entity_dir(store_root: &Path, identity: &str, skill_rel: &Path) -> 
 pub fn write_source_meta(store_root: &Path, identity: &str) -> Result<()> {
     let norm = normalize_identity(identity);
     let key = source_key(&norm);
-    let meta_dir = store_root.join(&key).join(".meta");
+    let meta_dir = source_bucket(store_root, identity).join(".meta");
     std::fs::create_dir_all(&meta_dir)?;
     let meta = SourceMeta {
         identity: norm,
@@ -293,12 +340,34 @@ mod tests {
         assert_eq!(rel, PathBuf::from("inking/line-art"));
         let p = skill_entity_dir(&root, id, &rel);
         let s = p.to_string_lossy();
-        let key = source_key(id);
+        let key = "github.com/acme/skills/revisions/working";
         assert!(!s.contains("/sources/"));
         assert_eq!(p, root.join(&key).join("inking/line-art"));
         assert_eq!(
             source_bucket(&root, id).join(".meta").join("SOURCE.json"),
             root.join(&key).join(".meta").join("SOURCE.json")
+        );
+    }
+
+    #[test]
+    fn readable_git_identity_keeps_version_and_contains_traversal() {
+        let root = Path::new("/tmp/store");
+        assert_eq!(
+            source_bucket(root, "git+https://github.com/acme/skills.git#abc123"),
+            root.join("github.com/acme/skills/revisions/abc123")
+        );
+        assert_ne!(
+            source_bucket(root, "git+https://github.com/acme/skills#v1"),
+            source_bucket(root, "git+https://github.com/acme/skills#v2")
+        );
+        let p = source_bucket(root, "https://example.com/../../evil#../bad");
+        assert!(p.starts_with(root));
+        assert!(!p
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir)));
+        assert_ne!(
+            source_bucket(root, "/a/skills"),
+            source_bucket(root, "/b/skills")
         );
     }
 }

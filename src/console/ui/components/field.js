@@ -1,16 +1,22 @@
 // AIL-082：Field/Input —— 标签、错误关联、保光标的受控输入。
 
+let nextFieldId = 0;
 export function Field(container, props) {
   const wrap = document.createElement('div');
   const label = document.createElement('label');
   const input = document.createElement(props.multi ? 'textarea' : 'input');
   const err = document.createElement('div');
   const hint = document.createElement('div');
+  input.id = `field-${++nextFieldId}`;
+  label.htmlFor = input.id;
+  err.id = input.id + '-error';
+  hint.id = input.id + '-hint';
+  input.setAttribute('aria-describedby', `${hint.id} ${err.id}`);
   label.textContent = props.label ?? '';
   label.className = 'muted';
   if (!props.multi) input.type = props.type ?? 'text';
   input.value = props.value ?? '';
-  input.style.width = props.width ?? '70%';
+  input.style.width = props.width ?? '100%';
   input.placeholder = props.placeholder ?? '';
   err.className = 'badge bad hidden';
   hint.className = 'muted';

@@ -367,7 +367,7 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             // 仅在真正 apply 时物化 store，保留冲突路径上的用户修改
             let store_root = crate::store::resolve_store_root()?;
             let rel = target
-                .strip_prefix(store_root.join(crate::store::source_key(source_identity)))
+                .strip_prefix(crate::store::source_bucket(&store_root, source_identity))
                 .unwrap_or(target.as_path());
             if artifact.resource_id.starts_with("collection-") && target.exists() {
                 // 锁定版本实体可能被其他工作树共同引用；首次向新工作树挂载也不能覆盖其后改。

@@ -602,12 +602,22 @@ pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json:
         "resource_id": resource_id,
         "exists": exists,
         "affected_scopes": affected,
-        "note": if exists { "确认后删除库内副本；已启用它的作用域需改为 inherit/禁用或改绑其他资源" } else { "资源不存在" },
+        "note": if exists { "仍被启用时拒绝删除；确认后移入本机 library-archive，保留项目文件和上游仓库" } else { "资源不存在" },
     }))
 }
 
 /// 删除库内资源（目录级；仅个人库自有内容）。
 pub fn delete_execute(data_root: &Path, resource_id: &str) -> Result<()> {
+    if !crate::collections::references(data_root, resource_id)?
+        .as_array()
+        .unwrap()
+        .is_empty()
+    {
+        return Err(Error::new(
+            code::USER_CONTENT_CONFLICT,
+            "资源仍被项目启用，请先停用引用并应用后再删除",
+        ));
+    }
     let lib = library_root(data_root);
     let manifest = TeamManifest::load_from(&lib)?;
     let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID)?;
@@ -624,14 +634,9 @@ pub fn delete_execute(data_root: &Path, resource_id: &str) -> Result<()> {
         .join(&entry.path)
         .canonicalize()
         .unwrap_or_else(|_| lib.join(&entry.path));
-    if full.is_dir() {
-        std::fs::remove_dir_all(&full)?;
-    } else if full.is_file() {
-        std::fs::remove_file(&full)?;
-        if let Some(p) = full.parent() {
-            let _ = std::fs::remove_dir(p);
-        }
-    }
+    let archive = data_root.join("library-archive").join(crate::ids::new_id());
+    std::fs::create_dir_all(&archive)?;
+    std::fs::rename(&full, archive.join(full.file_name().unwrap()))?;
     Ok(())
 }
 

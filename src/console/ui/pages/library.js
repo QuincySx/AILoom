@@ -4,22 +4,22 @@
 import { api, esc } from '../services/api.js';
 import { DataTable } from '../components/dataTable.js';
 import { Editor } from '../components/editor.js';
-import { ImportPreview } from '../features/importPreview.js';
-import { currentTarget, currentGeneration } from '../state/target.js';
+import { CollectionsPanel } from '../features/collectionsPanel.js';
 import { notify } from '../state/store.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
   container.appendChild(root);
   root.innerHTML = `
-    <div class="step"><h2>个人资源库 <span class="muted">（仓外；保存 ≠ 应用 ≠ 贡献）</span></h2>
-      <div data-import></div>
+    <div data-collections></div>
+    <div class="step"><h2>个人副本</h2><p class="muted">本地文件夹和 skills.sh 单项导入的资源。点击资源查看、编辑或删除；修改副本不会提交上游。</p>
       <div data-table></div>
       <div data-issues></div>
       <div data-editor class="hidden">
         <h2>编辑 <span data-id></span></h2>
         <div data-box></div><br>
         <button data-save>保存（指纹校验 + 保存前校验）</button>
+        <button data-delete class="danger">删除个人副本…</button>
         <span data-msg class="muted"></span>
       </div></div>`;
 
@@ -43,7 +43,7 @@ export function mount(container, ctx) {
       table.update({
         rows,
         rowKey: (r) => r.id,
-        empty: '个人库为空：用上方导入入口添加 skill。',
+        empty: '还没有个人副本。上方「导入资源」可选择本地文件夹或 skills.sh。Git 合集中的资源显示在来源目录中。',
         columns: [
           { key: 'id', label: '资源 ID' },
           { key: 'kind', label: '类型' },
@@ -98,18 +98,24 @@ export function mount(container, ctx) {
   };
 
   // 删除走影响预览确认
-  tableSlot.addEventListener('click', () => {});
+  root.querySelector('[data-delete]').onclick = async () => {
+    if (!currentId) return;
+    const id = currentId;
+    try {
+      const p = await api.libraryDelete(id, false);
+      const preview = p.preview ?? p;
+      if (!confirm('删除个人副本 ' + id + '？\n涉及作用域：' + (preview.affected_scopes || []).join('、') + '\n副本会移入本机 library-archive，不删除上游或项目文件。仍启用时会阻止删除。')) return;
+      await api.libraryDelete(id, true);
+      if (currentId === id) { currentId = null; editor.setValue(''); editorBox.classList.add('hidden'); }
+      notify('个人副本已移入本机归档，可恢复。'); await refresh();
+    } catch (e) { notify(e.message); }
+  };
   // 导入区
-  const importSlot = root.querySelector('[data-import]');
-  ImportPreview(importSlot, {
-    target: currentTarget(),
-    targetGen: currentGeneration(),
-    onImported: refresh,
-  });
+  const collections = CollectionsPanel(root.querySelector('[data-collections]'), { onChanged: refresh });
 
   refresh();
   return {
     isDirty: () => editor.isDirty(),
-    destroy() { ++loadGeneration; root.remove(); },
+    destroy() { ++loadGeneration; collections.destroy(); root.remove(); },
   };
 }

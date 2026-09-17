@@ -571,6 +571,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             ref_,
             source,
             preview_id,
+            execute,
         }) => {
             let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
             let required = |v: &Option<String>, field: &str| {
@@ -580,6 +581,10 @@ fn run(cli: &cli::Cli) -> Result<()> {
             };
             let value = match action.as_str() {
                 "list" => ailoom::collections::list(&data)?,
+                "check" => ailoom::collections::check_updates(&data, source.as_deref())?,
+                "remove" => {
+                    ailoom::collections::remove(&data, &required(source, "source")?, *execute)?
+                }
                 "preview" => ailoom::collections::preview(
                     &data,
                     &required(name, "name")?,
@@ -593,7 +598,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 _ => {
                     return Err(ailoom::error::Error::new(
                         ailoom::error::code::USAGE,
-                        "collection 动作为 list | preview | apply",
+                        "collection 动作为 list | preview | apply | check | remove",
                     ))
                 }
             };

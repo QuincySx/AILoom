@@ -510,6 +510,26 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
                 req.body["preview_id"].as_str().unwrap_or(""),
             ))
         }
+        ("POST", "/api/collections/check") => collection_response(
+            crate::collections::check_updates(&state.data_root, req.body["source_id"].as_str()),
+        ),
+        ("POST", "/api/collections/update") => {
+            let tokens: Vec<String> = req.body["preview_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            collection_response(crate::collections::apply_previews(
+                &state.data_root,
+                &tokens,
+            ))
+        }
+        ("POST", "/api/collections/remove") => collection_response(crate::collections::remove(
+            &state.data_root,
+            req.body["source_id"].as_str().unwrap_or(""),
+            req.body["execute"].as_bool().unwrap_or(false),
+        )),
         ("GET", "/api/resources") => {
             let (local, issues) = crate::personal_library::list_tolerant(&state.data_root);
             let result = crate::collections::list(&state.data_root).map(|v| {

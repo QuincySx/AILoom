@@ -78,6 +78,10 @@ export function JobPanel(container, props) {
           view.innerHTML = `<span class="badge bad">应用失败：${esc(done.error ?? '')}</span>`;
           return;
         }
+        if (done.result?.ok === false || (done.result?.skipped_conflicts ?? []).length) {
+          view.innerHTML = `<p class="badge warn">未全部应用成功。冲突内容已保留，请先处理后重新预览。</p><pre class="log">${esc(JSON.stringify(done.result.failed || done.result.skipped_conflicts, null, 2))}</pre>`;
+          return;
+        }
         cur.onApplied?.(j.job_id, done);
       } catch (e) {
         if (e.kind === 'conflict' || e.kind === 'validation') {
@@ -135,7 +139,7 @@ export function VerificationPanel(container, props) {
         <p class="badge ok">已写入 ${(p.appliedCount ?? 0)} 项</p>
         <table><tr><th>宿主</th><th>目标</th><th>状态</th><th>说明</th></tr>${items}</table>
         <p>下一步：在选定宿主<b>新开会话</b>调用刚启用的技能；回复与技能预期一致即验证通过。
-        文件落盘 ≠ 宿主已加载；真实调用证据由 AIL-077 验收流程给出。</p>`;
+        文件已写入不代表宿主已加载；请以实际调用结果确认。</p>`;
       view.querySelectorAll('[data-badge]').forEach((el) => {
         StatusBadge(el, { domain: 'host', status: el.dataset.badge });
       });
