@@ -21,3 +21,12 @@
 截图：`/private/tmp/ailoom-design-review.pTFlnX/final-*.png`。
 
 未做完整屏幕阅读器审计或深色主题验收；本次不改变原生目录选择桥接，也不宣称已验证远端认证。
+
+## HTML 下拉菜单追加验收
+
+- 全页面 select 保留为隐藏的数据层，可见触发器和选项均使用 HTML 组件。
+- Chrome design 流程通过，无 JS 异常：导入弹窗里的选项菜单进入 top layer，点击 GitLab 更新业务值；Esc 只关闭菜单，不关闭弹窗；方向键、Home、Enter 可以完成选择。
+- 搜索和选择器外观一致性、桌面及 390px 窄屏检查通过。
+- 4 项前端测试、构建、格式和 diff 检查通过。
+- 截图：`/private/tmp/ailoom-select-review.MwAlpw/after-html-options.png`、`after-detail-mobile.png`。
+- 未验证完整屏幕阅读器、多浏览器兼容性；未执行 CC Switch Skill 迁移。

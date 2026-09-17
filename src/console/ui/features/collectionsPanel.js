@@ -2,6 +2,7 @@
 import { api, esc } from '../services/api.js';
 import { setTarget, currentTarget } from '../state/target.js';
 import { Dialog, confirmAction } from '../components/dialog.js';
+import { CcSwitchImport } from './ccSwitchImport.js';
 let nextImportId = 0;
 
 export function CollectionsPanel(container, options = {}) {
@@ -12,7 +13,7 @@ export function CollectionsPanel(container, options = {}) {
   root.innerHTML = `
     <header class="page-head"><div><h1>${esc(options.title || (options.updatesOnly ? '更新中心' : '资源库'))}</h1>
       <p>${esc(options.description || (options.updatesOnly ? '先检查上游，再确认资源库版本。哪些项目使用新版，由你决定。' : '把自己的合集与第三方资源放在一起管理，按需引用到项目。'))}</p></div>
-      <button data-add class="primary">导入资源</button></header>
+      <div class="actions"><button data-cc-switch>从 CC Switch 迁移</button><button data-add class="primary">导入资源</button></div></header>
     <div data-import hidden>
       <p class="muted">远程仓库保留来源并支持检查更新。本地文件夹导入为个人副本。</p>
       <form data-form id="${formId}">
@@ -30,6 +31,8 @@ export function CollectionsPanel(container, options = {}) {
     <p data-msg class="inline-status muted" role="status" aria-live="polite"></p>
     <div data-sources><p class="muted">正在读取资源库…</p></div>`;
   const q = s => root.querySelector(s);
+  const migrationDialog = CcSwitchImport(root, {onChanged:async () => { changed(); await refresh(); }});
+  q('[data-cc-switch]').onclick = () => migrationDialog.show();
   const importBody = q('[data-import]');
   importBody.hidden = false;
   const importDialog = Dialog(root, {title:'导入资源', content:importBody, open:false, keepMounted:true, canClose:() => !busy, onClose:() => invalidate()});
@@ -115,6 +118,7 @@ export function CollectionsPanel(container, options = {}) {
       const u = s.update, status = s.error ? '来源异常' : ({ current:'已是最新', available:'有可用更新', error:'检查失败', stale:'预览过期，请重新检查' })[u?.state] || '尚未检查';
       return `<article class="resource-row"><div class="row-title"><div><h3>${esc(s.name)}</h3><p class="muted path">${esc(s.url)}</p></div><span class="badge ${s.error || u?.state === 'error' ? 'bad' : u?.state === 'available' ? 'warn' : u?.state === 'current' ? 'ok' : ''}">${status}</span></div>
       <p>${s.resources.length} 项资源 · ${(s.references || []).length} 条启用引用 · 版本 <code>${esc((s.lock.resolved_commit || '').slice(0,12))}</code></p>
+      ${s.migration?.provider === 'cc-switch' ? '<p class="muted">从 CC Switch 迁移 · ' + s.migration.skills.length + ' 条原始 Skill 来源记录</p><details><summary>迁移来源记录（导入时）</summary><ul>' + s.migration.skills.map(skill => '<li>' + esc(skill.name) + ' · <code>' + esc(skill.repo_path) + '</code><br><span class="path">' + esc(skill.discovery_entry) + '</span></li>').join('') + '</ul></details>' : ''}
       <p class="muted">${u?.checked_at ? '上次检查：' + esc(u.checked_at) : '点击检查更新，从上游获取最新版本状态。'}</p>
       ${s.error || u?.error ? '<p class="badge bad">' + esc(s.error || u.error) + '</p>' : ''}
       <div class="actions"><button data-check-one="${esc(s.id)}" ${busy ? 'disabled' : ''}>检查更新</button>${u?.state === 'available' ? '<button class="primary" data-update-one="' + esc(s.id) + '"' + (busy ? ' disabled' : '') + '>更新资源库版本</button>' : ''}<a href="#/scopes">管理项目引用</a><button class="danger" data-remove="${esc(s.id)}" ${busy ? 'disabled' : ''}>移除来源…</button></div>
@@ -134,5 +138,5 @@ export function CollectionsPanel(container, options = {}) {
   }
   async function refresh() { const v = await api.collections(); if (alive) { sources = v.sources; renderSources(); } }
   refresh().catch(e => message(e.message));
-  return { refresh, destroy() { alive = false; importDialog.destroy(); root.remove(); } };
+  return { refresh, destroy() { alive = false; migrationDialog.destroy(); importDialog.destroy(); root.remove(); } };
 }

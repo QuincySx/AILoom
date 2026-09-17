@@ -94,6 +94,87 @@ fn json_body(raw: &str) -> Value {
 }
 
 #[test]
+fn cc_switch_source_manifest_api_is_authenticated_and_offline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 18740)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let manifest = json!({"manifest":[{"name":"one","repo_owner":"fixture","repo_name":"skills","repo_branch":"main","readme_url":"https://github.com/fixture/skills/blob/main/plugins/one/SKILL.md"},{"name":"unknown"}]});
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/read",
+            &auth,
+            json!({})
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/read",
+            &auth,
+            json!({"directory":tmp.path(),"confirm_source_read":true})
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/scan",
+            &[],
+            manifest.clone()
+        )
+        .0,
+        401
+    );
+    let (status, body) = post(
+        server.port,
+        "/api/migrations/cc-switch/scan",
+        &auth,
+        manifest,
+    );
+    assert_eq!(status, 200);
+    let scan = json_body(&body);
+    assert_eq!(scan["items"][0]["source"]["repo_path"], "plugins/one");
+    assert!(scan["items"][1]["error"].is_string());
+    assert!(!tmp.path().join("data/collections").exists());
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/preview",
+            &auth,
+            json!({"scan_id":scan["scan_id"],"selected":["1"]})
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/apply",
+            &auth,
+            json!({"preview_id":"../bad"})
+        )
+        .0,
+        400
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/scan",
+            &auth,
+            json!({"manifest":{"skills":[],"providers":[]}})
+        )
+        .0,
+        400
+    );
+    server.shutdown();
+    server.join();
+}
+
+#[test]
 fn projects_persist_metadata_and_instructions_are_explicitly_scoped() {
     let tmp = tempfile::tempdir().unwrap();
     let a = tmp.path().join("project-a");

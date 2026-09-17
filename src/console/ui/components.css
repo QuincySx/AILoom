@@ -71,3 +71,17 @@ th { color: var(--muted-foreground); font-weight: 500; background: var(--muted);
 }
 @media (max-width:600px) { .step { padding: var(--sp-4); } }
 @media (prefers-reduced-motion:reduce) { button,#toast { transition: none; } }
+
+/* HTML Select: trigger and the entire option surface use the application theme. */
+.select-source { display: none !important; }
+.select-control { display: inline-block; min-width: 0; width: 100%; vertical-align: middle; }
+.select-trigger { display: flex; justify-content: space-between; width: 100%; height: var(--control-height); padding: var(--sp-2) var(--sp-3); font-weight: 400; text-align: left; appearance: none; }
+.select-trigger > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select-trigger::after { content: ''; flex: 0 0 var(--sp-4); width: var(--sp-4); height: var(--sp-4); background: var(--select-chevron) center / contain no-repeat; }
+.select-trigger[aria-expanded=true] { border-color: var(--ring); box-shadow: var(--focus-ring); }
+.select-menu { position: fixed; inset: auto; margin: 0; padding: var(--sp-1); border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--card-foreground); overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 8px 24px var(--overlay); font-family: var(--font-sans); font-size: var(--fs-small); }
+.select-option { position: relative; display: flex; align-items: center; min-height: var(--control-height); padding: var(--sp-2) var(--sp-6) var(--sp-2) var(--sp-3); border-radius: var(--radius); cursor: pointer; overflow-wrap: anywhere; }
+.select-option.active { background: var(--accent); color: var(--accent-foreground); }
+.select-option[aria-selected=true]::after { content: ''; position: absolute; right: var(--sp-3); width: 6px; height: 10px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.select-option[aria-disabled=true] { opacity: .45; cursor: not-allowed; }
+.select-group { padding: var(--sp-2) var(--sp-3); font-size: var(--fs-tiny); color: var(--muted-foreground); font-weight: 600; }

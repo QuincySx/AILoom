@@ -36,11 +36,45 @@ await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 await waitFor('!!document.querySelector("#app")?.textContent.trim()');
 await screenshot(output + '-desktop.png');
+if (mode === 'cc-switch') {
+  await evaluate("location.hash='#/library'");
+  await waitFor("!!document.querySelector('[data-cc-switch]')");
+  await evaluate("document.querySelector('[data-cc-switch]').focus(); document.querySelector('[data-cc-switch]').click()");
+  await waitFor("document.querySelector('[data-cc-json]')?.closest('dialog')?.matches(':modal')");
+  if (!await evaluate("getComputedStyle(document.querySelector('[data-cc-apply]')).display === 'none' && getComputedStyle(document.querySelector('[data-cc-prepare]')).display === 'none'")) throw new Error('Migration actions must stay hidden before scan/preview');
+  const ccDirectory = process.argv[5];
+  if (ccDirectory) {
+    // Only pass the explicitly created synthetic fixture directory, never a user database.
+    await evaluate(`document.querySelector('[data-cc-directory]').value=${JSON.stringify(ccDirectory)}; document.querySelector('[data-cc-read]').click()`);
+    await waitFor("document.querySelector('[data-cc-status]').textContent.includes('发现 2 项') && !document.querySelector('[data-cc-read]').disabled");
+    if (!await evaluate("document.querySelector('[data-cc-items]').textContent.includes('plugins/fixture-skill') && document.querySelectorAll('[data-cc-select]:checked').length===1")) throw new Error('One-click source database scan failed');
+    await screenshot(output + '-cc-switch-direct.png');
+  }
+  await evaluate("document.querySelector('[data-cc-fallback]').open=true");
+  await evaluate("document.querySelector('[data-cc-json]').value='invalid'; document.querySelector('[data-cc-scan]').click()");
+  await waitFor("document.querySelector('[data-cc-status]').textContent.includes('不是有效的 JSON')");
+  const fixture = [{name:'fixture-skill',directory:'fixture-skill',repo_owner:'fixture-owner',repo_name:'fixture-repo',repo_branch:'main',readme_url:'https://github.com/fixture-owner/fixture-repo/blob/main/plugins/fixture-skill/SKILL.md'},{name:'没有来源'},{name:'<script>fixture</script>',repo_url:'file:///tmp/forbidden'}];
+  await evaluate(`document.querySelector('[data-cc-json]').value=${JSON.stringify(JSON.stringify(fixture))}; document.querySelector('[data-cc-json]').dispatchEvent(new Event('input')); document.querySelector('[data-cc-scan]').click()`);
+  await waitFor("document.querySelector('[data-cc-status]').textContent.includes('发现 3 项') && !document.querySelector('[data-cc-scan]').disabled");
+  if (!await evaluate("document.querySelectorAll('[data-cc-select]:checked').length===1 && document.querySelectorAll('[data-cc-select]:disabled').length===2 && document.querySelector('[data-cc-items]').textContent.includes('plugins/fixture-skill') && !document.querySelector('[data-cc-items] script')")) throw new Error('Migration scan selection/path/escaping failed');
+  await screenshot(output + '-cc-switch-desktop.png');
+  await evaluate("document.querySelector('[data-cc-none]').click()");
+  if (!await evaluate("document.querySelector('[data-cc-prepare]').disabled")) throw new Error('Empty migration selection must be disabled');
+  await evaluate("document.querySelector('[data-cc-all]').click()");
+  if (!await evaluate("!document.querySelector('[data-cc-prepare]').disabled && document.querySelectorAll('[data-cc-select]:checked').length===1")) throw new Error('Invalid sources must stay unselected');
+  await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+  await screenshot(output + '-cc-switch-mobile.png');
+  if (await evaluate("document.documentElement.scrollWidth > innerWidth + 1 || document.querySelector('[data-cc-json]').closest('dialog').scrollWidth > document.querySelector('[data-cc-json]').closest('dialog').clientWidth + 1")) throw new Error('Migration dialog overflow');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await waitFor("!document.querySelector('dialog:modal')");
+  if (!await evaluate("document.activeElement===document.querySelector('[data-cc-switch]')")) throw new Error('Migration focus not restored');
+}
 if (mode === 'projects' || mode === 'design') {
   const [project] = process.argv.slice(5);
   await waitFor("location.hash === '#/projects' && !!document.querySelector('[data-new]')");
   if (mode === 'design') {
-    const fields = await evaluate("[document.querySelector('[data-search]'), document.querySelector('[data-filter]'), document.querySelector('[data-kind]')].map(e=>{const s=getComputedStyle(e);return [e.getBoundingClientRect().height,s.borderRadius,s.borderColor,s.backgroundColor,s.paddingLeft,s.fontSize,s.appearance]})");
+    await waitFor("!!document.querySelector('[data-filter]')?.parentElement.querySelector('[role=combobox]')");
+    const fields = await evaluate("[document.querySelector('[data-search]'), document.querySelector('[data-filter]').parentElement.querySelector('[role=combobox]'), document.querySelector('[data-kind]').parentElement.querySelector('[role=combobox]')].map(e=>{const s=getComputedStyle(e);return [e.getBoundingClientRect().height,s.borderRadius,s.borderColor,s.backgroundColor,s.paddingLeft,s.fontSize,s.appearance]})");
     if (fields.some(f => JSON.stringify(f)!==JSON.stringify(fields[0]))) throw new Error('Search and select styles differ: '+JSON.stringify(fields));
     await screenshot(output + '-toolbar.png');
   }
@@ -60,7 +94,7 @@ if (mode === 'projects' || mode === 'design') {
     await evaluate("document.querySelector('[data-meta-cancel]').click()");
     await waitFor("!document.querySelector('dialog:modal')");
   }
-  await evaluate("document.querySelector('[data-entries] select').value='enable'; document.querySelector('[data-entries] button').click()");
+  await evaluate("document.querySelector('[data-entries] select').value='enable'; [...document.querySelectorAll('[data-entries] button')].find(b=>b.textContent==='保存').click()");
   await waitFor("document.querySelector('[data-message]')?.textContent.includes('已保存') && document.querySelector('[data-entries]')?.textContent.includes('当前有效：启用')");
   await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
   await waitFor("!!document.querySelector('[data-save]') && !document.querySelector('[data-save]').disabled");
@@ -125,6 +159,22 @@ if (mode !== 'before') {
   await waitFor('!!document.querySelector("[data-add]")');
   await evaluate('document.querySelector("[data-add]").click()');
   await waitFor('document.querySelector("[data-import]")?.closest("dialog")?.matches(":modal")');
+  if(mode === 'design') {
+    await waitFor("!!document.querySelector('[data-provider]').parentElement.querySelector('[role=combobox]')");
+    await evaluate("document.querySelector('[data-provider]').parentElement.querySelector('[role=combobox]').click()");
+    await waitFor("!!document.querySelector('.select-menu:popover-open [role=option]')");
+    await screenshot(output + '-html-options.png');
+    await evaluate("[...document.querySelectorAll('.select-menu:popover-open [role=option]')].find(e=>e.textContent.includes('GitLab')).click()");
+    await waitFor("document.querySelector('[data-provider]').value === 'gitlab' && !document.querySelector('.select-menu:popover-open')");
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowDown',code:'ArrowDown',windowsVirtualKeyCode:40});
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    if(!await evaluate("!!document.querySelector('dialog:modal') && document.querySelector('[data-provider]').value === 'gitlab'")) throw new Error('Escape must close options, not dialog or change selection');
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowDown',code:'ArrowDown',windowsVirtualKeyCode:40});
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Home',code:'Home',windowsVirtualKeyCode:36});
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'});
+    await waitFor("document.querySelector('[data-provider]').value === 'github'");
+    if(await evaluate("[...document.querySelectorAll('#app select')].some(s=>getComputedStyle(s).display !== 'none')")) throw new Error('Native select still visible');
+  }
   const providers = await evaluate('[...document.querySelector("[data-provider]").options].map(o=>o.value)');
   if (providers.join(',') !== 'github,gitlab,git,local,entry') throw new Error('Missing source choices');
   for (const p of providers) {

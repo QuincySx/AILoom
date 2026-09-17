@@ -20,7 +20,9 @@
 
 Dialog 基于原生 dialog.showModal，进入 top layer 并让背景 inert；新建项目、项目设置、资源导入使用相同的标题/内容/底部动作区，Esc、取消和关闭按钮返回触发控件。请求期间不允许关闭表单。删除、更新和放弃修改使用同一 confirmAction，而不是浏览器 confirm。浏览器离站 beforeunload 保留系统提示，这是浏览器限制。
 
-搜索 input 与 select 使用同一高度、边框、背景、字体、左内边距和焦点规则，清除平台 appearance 差异，select 使用 Token 中统一的箭头。原生选项菜单保留系统键盘行为。
+搜索 input 与选择器使用同一高度、边框、背景、字体、左内边距和焦点规则。`components/select.js` 将页面中的单选 select 适配为 HTML combobox/listbox；原 select 隐藏，仅保留表单值和 change 事件兼容。选项菜单使用 Popover top layer，避免被 dialog 遮挡，支持方向键、Home/End、Enter、Esc、Tab 和输入字符定位。动态选项、禁用状态和程序赋值同步到组件；卸载时清理监听。当前不支持多选 select。
+
+交互参考 [WAI-ARIA select-only combobox](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-select-only/)；浮层使用 [Popover API](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API)。已验证当前 Chrome，尚未验证旧版 WebView 兼容性。
 
 当前只提供浅色主题，不宣称已完成深色主题或完整屏幕阅读器审计。配色为本项目选择的中性方案，不声称来自 shadcn 某个预设的逐值复制。
 

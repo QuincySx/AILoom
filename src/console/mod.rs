@@ -483,6 +483,58 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ),
         ("POST", "/api/hosts/detect") => api_hosts_detect(state),
         ("POST", "/api/library/import") => api_library_import(state, req),
+        ("GET", "/api/migrations/cc-switch/location") => collection_response(
+            crate::cc_switch::default_directory().map(|path| json!({"directory":path})),
+        ),
+        ("POST", "/api/migrations/cc-switch/read") => {
+            if req.body["confirm_source_read"].as_bool() != Some(true) {
+                return Response::json(
+                    400,
+                    json!({"error":"请在迁移界面点击扫描，确认读取 Skill 来源"}),
+                );
+            }
+            let default = crate::cc_switch::default_directory();
+            let directory = req.body["directory"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+                .or_else(|| default.as_ref().ok().cloned());
+            let Some(directory) = directory else {
+                return Response::json(400, json!({"error":"请选择 CC Switch 数据目录"}));
+            };
+            // 默认目录仅开放此固定来源查询，不加入通用文件读取授权根。
+            if default.as_ref().ok() != Some(&directory) {
+                if let Err(e) = ensure_within_roots(state, &directory) {
+                    return Response::json(403, json!({"error":e}));
+                }
+            }
+            collection_response(crate::cc_switch::scan_directory(
+                &state.data_root,
+                &directory,
+            ))
+        }
+        ("POST", "/api/migrations/cc-switch/scan") => collection_response(crate::cc_switch::scan(
+            &state.data_root,
+            &req.body["manifest"],
+        )),
+        ("POST", "/api/migrations/cc-switch/preview") => {
+            let selected: std::result::Result<Vec<String>, _> =
+                serde_json::from_value(req.body["selected"].clone());
+            match selected {
+                Ok(selected) => collection_response(crate::cc_switch::prepare(
+                    &state.data_root,
+                    req.body["scan_id"].as_str().unwrap_or(""),
+                    &selected,
+                )),
+                Err(_) => Response::json(400, json!({"error":"请选择来源记录"})),
+            }
+        }
+        ("POST", "/api/migrations/cc-switch/apply") => {
+            collection_response(crate::cc_switch::apply(
+                &state.data_root,
+                req.body["preview_id"].as_str().unwrap_or(""),
+            ))
+        }
         ("GET", "/api/library/list") => api_library_list(state),
         ("GET", "/api/collections") => {
             collection_response(crate::collections::list(&state.data_root))

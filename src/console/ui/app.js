@@ -6,6 +6,7 @@ import { loadDraft, draft } from './state/draft.js';
 import { currentTarget, setTarget } from './state/target.js';
 import { notify, subscribe } from './state/store.js';
 import { confirmAction } from './components/dialog.js';
+import { installSelects } from './components/select.js';
 
 import * as pageOverview from './pages/overview.js';
 import * as pageSamples from './pages/samples.js';
@@ -46,6 +47,7 @@ function shell() {
   const app = document.createElement('main');
   app.id = 'app';
   document.body.append(nav, bar, app);
+  installSelects(app);
   renderNav();
   subscribe('target', renderTargetBar);
   setInterval(checkConnection, 10000);

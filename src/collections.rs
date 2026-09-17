@@ -14,6 +14,8 @@ pub struct Collection {
     pub name: String,
     pub url: String,
     pub lock: SourceLock,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration: Option<crate::cc_switch::MigrationOrigin>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -289,6 +291,7 @@ pub fn preview(
         id: id.clone(),
         name: name.into(),
         url: git.url.clone(),
+        migration: registry.sources.get(&id).and_then(|s| s.migration.clone()),
         lock: SourceLock {
             kind: "git".into(),
             identity: git.identity.clone(),
@@ -334,6 +337,22 @@ pub fn preview(
 
 pub fn apply_preview(data: &Path, token: &str) -> Result<Value> {
     apply_previews(data, &[token.to_string()])
+}
+
+pub(crate) fn annotate_migration(
+    data: &Path,
+    token: &str,
+    origin: crate::cc_switch::MigrationOrigin,
+) -> Result<()> {
+    if uuid::Uuid::parse_str(token).is_err() {
+        return Err(Error::new(code::USAGE, "无效预览 ID"));
+    }
+    let path = data
+        .join("collections/previews")
+        .join(format!("{token}.json"));
+    let mut preview: Preview = serde_json::from_slice(&std::fs::read(&path)?)?;
+    preview.source.migration = Some(origin);
+    crate::sync_common::atomic_write(&path, &serde_json::to_vec_pretty(&preview)?)
 }
 
 pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {

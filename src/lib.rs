@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod appctx;
+pub mod cc_switch;
 pub mod cli;
 pub mod code_knowledge;
 pub mod collections;
