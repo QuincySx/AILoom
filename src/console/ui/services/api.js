@@ -60,7 +60,7 @@ export const api = {
   repoDiscover: (path) => request('POST', '/api/repo/discover', { path }),
   relink: (repoId, wtId, newPath) => request('POST', '/api/repo/relink', { repo_id: repoId, wt_id: wtId, new_path: newPath }),
   select: (body) => request('POST', '/api/profile/select', body),
-  effective: (root) => request('GET', '/api/effective' + qs({ root })),
+  effective: (root, scope) => request('GET', '/api/effective' + qs({ root, scope })),
   previewRepoDefault: () => request('POST', '/api/preview/repo-default', {}),
   instructions: (body) => request('POST', '/api/profile/instructions', body),
   deployStatus: (root) => request('GET', '/api/deploy-status' + qs({ root })),
@@ -69,6 +69,10 @@ export const api = {
   putDraft: (baseRevision, draft) => request('PUT', '/api/draft', { base_revision: baseRevision, draft }),
   // 个人库
   libraryList: () => request('GET', '/api/library/list'),
+  resources: () => request('GET', '/api/resources'),
+  collections: () => request('GET', '/api/collections'),
+  collectionPreview: (body) => request('POST', '/api/collections/preview', body),
+  collectionApply: (previewId) => request('POST', '/api/collections/apply', { preview_id: previewId }),
   libraryImport: (dir, name, execute) => request('POST', '/api/library/import', { dir, name, execute }),
   libraryImportGit: (url, repoPath, ref, name, execute) => request('POST', '/api/library/import-git', { url, path: repoPath, ref, name, execute }),
   libraryImportEntry: (entry, name, execute) => request('POST', '/api/library/import-entry', { entry, name, execute }),
@@ -102,5 +106,5 @@ export const api = {
 export function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s ?? '');
-  return d.innerHTML;
+  return d.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }

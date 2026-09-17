@@ -42,6 +42,38 @@ AGENTS.md 全文的本地视图，不遮蔽公司基线）。
 日常管理（仓库/作用域/资源库/流程包）在控制台「仓库与作用域」「资源库与流程」页；
 个人文档与流程产物默认保存在仓外数据区。
 
+## 多个 Git 合集：按需引用 Skill / MCP
+
+可以同时添加自己的合集、团队合集和第三方 Skill 仓库。合集是来源目录，
+**添加来源不等于启用全部资源**。资源 ID 包含来源 ID，避免不同仓库的同名资源被混淆。
+
+Web 操作：在「来源与更新」添加 Git 合集并确认版本，然后在「仓库与作用域」
+从按来源分组的目录中选择具体资源、宿主和作用域，最后预览并应用。
+
+CLI 操作：
+
+```bash
+ailoom collection --action preview --name my-tools --url https://github.com/owner/collection.git
+# 使用上一步返回的 preview_id，确认该快照：
+ailoom collection --action apply --preview-id <preview_id>
+ailoom collection --action list
+# 使用目录返回的完整资源 ID；在目标项目目录执行：
+ailoom personal --action select --host claude --state enable
+ailoom personal --action select --resource <collection-id>/skill/common/chosen --state enable
+ailoom personal --action select --resource <collection-id>/mcp/common/search --state enable
+ailoom personal --action plan
+ailoom personal --action sync
+```
+
+普通 Skill 仓库通过递归查找 `SKILL.md` 识别，无需额外清单。
+Skill/MCP 混合集使用下文的 `ailoom.toml` 和资源目录约定；不自动识别任意第三方
+MCP 清单格式。MCP 密钥只写 `$ENV:变量名` 引用；添加、预览合集不会启动 MCP。
+
+来源锁定到 commit。更新时重新 preview（传 `--source <collection-id>` 和原 URL），
+再 apply 确认版本；每个项目仍需预览并应用，不会立刻改变其他工作树的部署。
+修改过的部署内容会受到冲突保护；上游删除了正在引用的资源时，需要显式调整引用。
+这里的更新机制不包含定时拉取或无人确认的自动升级。
+
 ## 前置
 
 - Rust 1.75+（`cargo build` 产出 `target/debug/ailoom`）

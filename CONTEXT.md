@@ -19,7 +19,13 @@ _Avoid_: Team、逻辑项目、仓库所有副本的总称。
 **WorkspaceBinding（工作区绑定）**：某个工作区与资源源、逻辑项目、职能选择之间的关联。
 _Avoid_: 成员参与过的项目名册。
 
-**SkillSource（技能源）**：存放 Skill 的一个 Git 或本地仓库；一个源对应 store 里的一个分桶。
+**ResourceSource（资源源）**：可独立订阅、追踪来源与版本的资源仓库；可以来自个人、团队或第三方，包含 Skill、MCP 等资源。
+_Avoid_: 添加源即启用其中全部资源、把第三方内容变成无来源的个人内容。
+
+**Collection（资源合集）**：一个资源源中共同维护的一组资源；自己的 Git 合集与第三方合集采用相同的引用方式。
+_Avoid_: 宿主插件包、添加合集就自动启动其中的 MCP。
+
+**SkillSource（技能源）**：专门提供 Skill 的资源源。
 _Avoid_: 把「短名字」或「逻辑项目」当成源身份。
 
 **SourceKey（源键）**：由规范化后的源 identity（URL 或本地路径，不含凭据）经可逆编码得到的分桶目录名。
@@ -28,7 +34,7 @@ _Avoid_: 不可逆短哈希当唯一主键、人手起的易撞短名。
 **SkillStore（技能库）**：本机按 SkillSource 分桶保存的 Skill 实体树；根目录优先级为 `$XDG_DATA_HOME/ailoom/store`（已设时）> `AILOOM_STORE_ROOT` > `$HOME/.local/share/ailoom/store`（规范默认；旧 `~/.ailoom/store` 首次运行自动迁移）。桶内元数据在 `.meta/`，skill 路径相对源仓 skills 根。
 _Avoid_: 每个业务仓各复制一份实体、把业务工程塞进技能库、在 store 下再套 `sources/` 分类层、在未设置 XDG 时假装走 `~/.local/share`。
 
-**Require（选用）**：某个 Workspace（及可选 Agent 人设）声明需要哪些 Skill；部署结果是链接而非再存一份实体。
+**Require（选用）**：某个作用域明确声明使用哪些来源中的哪些资源，包括 Skill 和 MCP；不同来源的同名资源仍是不同引用。
 _Avoid_: 隐式「全仓所有 skill 都装上」。
 
 **Resource（资源）**：可以被共享和发布的技能、规则、文档、Agent 定义或 MCP 服务定义。

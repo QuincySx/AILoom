@@ -27,7 +27,7 @@ export function PlanPreview(container, props) {
       if (!target?.path) { notify('先选择操作目标'); return; }
       const gen = cur.targetGen;
       try {
-        const j = await api.plan(target.path);
+        const j = await api.plan(target.path, cur.scope);
         const done = await waitJob(j.job_id, { onProgress: (m) => { view.textContent = '预览：' + (m ?? '') + '…'; } });
         if (!cur.accept(gen)) return; // 期间切了目标：丢弃过期结果
         if (done.status !== 'success') {

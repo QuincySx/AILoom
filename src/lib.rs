@@ -4,6 +4,7 @@ pub mod adapters;
 pub mod appctx;
 pub mod cli;
 pub mod code_knowledge;
+pub mod collections;
 pub mod commands;
 pub mod config;
 pub mod console;

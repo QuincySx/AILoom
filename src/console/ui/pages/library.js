@@ -18,7 +18,7 @@ export function mount(container, ctx) {
       <div data-issues></div>
       <div data-editor class="hidden">
         <h2>编辑 <span data-id></span></h2>
-        <textarea data-box style="min-height:160px"></textarea><br>
+        <div data-box></div><br>
         <button data-save>保存（指纹校验 + 保存前校验）</button>
         <span data-msg class="muted"></span>
       </div></div>`;
@@ -26,10 +26,11 @@ export function mount(container, ctx) {
   const tableSlot = root.querySelector('[data-table]');
   const issuesSlot = root.querySelector('[data-issues]');
   const editorBox = root.querySelector('[data-editor]');
-  const editBox = root.querySelector('[data-box]');
+  const editor = Editor(root.querySelector('[data-box]'), { title: '资源正文', content: '' });
   const editMsg = root.querySelector('[data-msg]');
   let currentFp = null;
   let currentId = null;
+  let loadGeneration = 0;
 
   const table = DataTable(tableSlot, { loading: true });
 
@@ -61,11 +62,14 @@ export function mount(container, ctx) {
   }
 
   async function openResource(id) {
+    if (editor.isDirty() && !confirm('当前资源有未保存修改，确定放弃并打开另一项？')) return;
+    const generation = ++loadGeneration;
     try {
       const v = await api.libraryResource(id);
+      if (generation !== loadGeneration) return;
       editorBox.classList.remove('hidden');
       root.querySelector('[data-id]').textContent = id;
-      editBox.value = v.content;
+      editor.setValue(v.content);
       currentFp = v.fingerprint;
       currentId = id;
       editMsg.textContent = v.note ? '注意：' + v.note : '';
@@ -75,13 +79,21 @@ export function mount(container, ctx) {
   }
 
   root.querySelector('[data-save]').onclick = async () => {
+    const savedId = currentId;
+    const content = editor.value();
+    const button = root.querySelector('[data-save]');
+    if (button.disabled || !savedId) return;
+    button.disabled = true;
     try {
-      await api.librarySave(currentId, editBox.value, currentFp);
+      const v = await api.librarySave(savedId, content, currentFp);
+      if (currentId !== savedId) return;
+      editor.markSaved(content);
       editMsg.textContent = '已保存（未部署；部署走预览+应用）';
-      const v = await api.libraryResource(currentId);
       currentFp = v.fingerprint;
     } catch (e) {
       editMsg.textContent = (e.kind === 'conflict' ? '文件已被外部修改：' : '校验未通过：') + e.message;
+    } finally {
+      button.disabled = false;
     }
   };
 
@@ -97,6 +109,7 @@ export function mount(container, ctx) {
 
   refresh();
   return {
-    destroy() { root.remove(); },
+    isDirty: () => editor.isDirty(),
+    destroy() { ++loadGeneration; root.remove(); },
   };
 }

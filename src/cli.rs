@@ -445,6 +445,23 @@ pub enum Command {
         #[arg(long)]
         repo: Option<std::path::PathBuf>,
     },
+    /// 资源合集：list | preview | apply（添加/更新不启用资源）
+    Collection {
+        #[arg(long, default_value = "list")]
+        action: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long = "ref")]
+        ref_: Option<String>,
+        /// 更新已有合集的 source ID
+        #[arg(long)]
+        source: Option<String>,
+        /// apply 使用之前预览返回的 ID
+        #[arg(long)]
+        preview_id: Option<String>,
+    },
     /// 本地控制台（AIL-046，仅 loopback）
     Console {
         /// 监听端口（占用时自动向后寻找可用端口）

@@ -22,6 +22,7 @@ pub const CONFLICT_JS: &str = include_str!("ui/components/conflictPanel.js");
 
 pub const SCOPE_PICKER_JS: &str = include_str!("ui/features/scopePicker.js");
 pub const CAPABILITY_MATRIX_JS: &str = include_str!("ui/features/capabilityMatrix.js");
+pub const COLLECTIONS_PANEL_JS: &str = include_str!("ui/features/collectionsPanel.js");
 pub const IMPORT_PREVIEW_JS: &str = include_str!("ui/features/importPreview.js");
 pub const WORKFLOW_LIST_JS: &str = include_str!("ui/features/workflowStageList.js");
 pub const PLAN_PREVIEW_JS: &str = include_str!("ui/features/planPreview.js");
@@ -41,6 +42,10 @@ pub const PAGE_SAMPLES_JS: &str = include_str!("ui/pages/samples.js");
 /// 固定资产表：路径 → (内容, MIME)。
 pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
     let assets: &[(&str, (&str, &str))] = &[
+        (
+            "/ui/features/collectionsPanel.js",
+            (COLLECTIONS_PANEL_JS, "text/javascript; charset=utf-8"),
+        ),
         ("/ui/tokens.css", (TOKENS_CSS, "text/css; charset=utf-8")),
         ("/ui/base.css", (BASE_CSS, "text/css; charset=utf-8")),
         (

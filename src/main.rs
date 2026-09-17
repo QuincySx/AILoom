@@ -564,6 +564,46 @@ fn run(cli: &cli::Cli) -> Result<()> {
             }
             Ok(())
         }
+        Some(Command::Collection {
+            action,
+            name,
+            url,
+            ref_,
+            source,
+            preview_id,
+        }) => {
+            let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let required = |v: &Option<String>, field: &str| {
+                v.clone().ok_or_else(|| {
+                    ailoom::error::Error::new(ailoom::error::code::USAGE, format!("需要 --{field}"))
+                })
+            };
+            let value = match action.as_str() {
+                "list" => ailoom::collections::list(&data)?,
+                "preview" => ailoom::collections::preview(
+                    &data,
+                    &required(name, "name")?,
+                    &required(url, "url")?,
+                    ref_.as_deref(),
+                    source.as_deref(),
+                )?,
+                "apply" => {
+                    ailoom::collections::apply_preview(&data, &required(preview_id, "preview-id")?)?
+                }
+                _ => {
+                    return Err(ailoom::error::Error::new(
+                        ailoom::error::code::USAGE,
+                        "collection 动作为 list | preview | apply",
+                    ))
+                }
+            };
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+            Ok(())
+        }
         Some(Command::Console { port, no_open }) => {
             let data_root = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
             let opts = ailoom::console::ConsoleOptions {

@@ -419,6 +419,90 @@ pub fn prepare_personal(
         unsupported.extend(lib_unsupported);
     }
 
+    // 合集订阅只提供目录，必须按完整资源 ID 显式选用；不套团队 shared 自动启用规则。
+    let collections = crate::collections::load(data_root_resolved)?;
+    let mut remaining: std::collections::BTreeSet<String> = effective
+        .resources
+        .iter()
+        .filter(|(id, v)| v.deployed && id.starts_with("collection-"))
+        .map(|(id, _)| id.clone())
+        .collect();
+    for source in collections.sources.values() {
+        let prefix = format!("{}/", source.id);
+        let selected_ids: Vec<String> = remaining
+            .iter()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect();
+        if selected_ids.is_empty() {
+            continue;
+        }
+        let catalog = crate::collections::catalog(data_root_resolved, source)?;
+        let mut selected = Vec::new();
+        for entry in catalog.entries {
+            let id = entry.id.to_string();
+            if !selected_ids.contains(&id) {
+                continue;
+            }
+            remaining.remove(&id);
+            personal_selected_entries.push(entry.clone());
+            selected.push(crate::resolver::Selected {
+                id,
+                kind: entry.id.kind.as_str().into(),
+                name: entry.id.name.clone(),
+                namespace: entry.id.namespace.clone(),
+                reason: "个人显式引用合集资源".into(),
+                entry,
+            });
+        }
+        crate::resolver::check_target_conflicts(&selected)?;
+        let desired = crate::resolver::DesiredSet {
+            source: source.id.clone(),
+            // 不同锁定版本使用不同实体；更新一个工作树不能经共享 symlink 偷改其他工作树。
+            identity: format!(
+                "{}#{}",
+                source.lock.identity,
+                source.lock.resolved_commit.as_deref().unwrap_or_default()
+            ),
+            skills_root: catalog.skills_root,
+            revision: source.lock.resolved_commit.clone(),
+            content_digest: source.lock.content_digest.clone(),
+            active_projects: vec![],
+            active_roles: vec![],
+            selected,
+            excluded: vec![],
+        };
+        let targets = ToolTargets {
+            claude: enabled_hosts.iter().any(|h| h == "claude"),
+            codex: enabled_hosts.iter().any(|h| h == "codex"),
+            extra: enabled_hosts
+                .iter()
+                .filter(|h| h.as_str() != "claude" && h.as_str() != "codex")
+                .cloned()
+                .collect(),
+        };
+        let (mut rendered, missing) =
+            render_artifacts(&desired, &catalog.snapshot.root, &targets, &scope_dir)?;
+        // 个人合集不生成公司指令索引；其余仍经同一所有权/公司文件守卫。
+        rendered.retain(|a| a.resource_id != "ailoom-internal/doc-index");
+        if let Some(rel) = &active_rel {
+            for artifact in &mut rendered {
+                artifact.path = PathBuf::from(rel).join(&artifact.path);
+            }
+        }
+        artifacts.extend(rendered);
+        unsupported.extend(missing);
+    }
+    if !remaining.is_empty() {
+        return Err(Error::new(
+            code::UNKNOWN_REFERENCE,
+            format!(
+                "引用的合集资源不存在，请先修正引用或恢复来源版本：{}",
+                remaining.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        ));
+    }
+
     // 个人指令条目（AIL-042）：Codex 替代视图按作用域取最近基线（子项目用其目录内基线）
     let entry = pi::load_entry(data_root_resolved, &repo_id, Some(wt_id.as_str()));
     let instr_artifacts = match entry {
@@ -794,7 +878,7 @@ pub fn deploy_status(
     let p = prepare_personal(data_root, explicit_root, None, data_root_resolved)?;
     let mut items = Vec::new();
     for a in &p.artifacts {
-        if a.kind != "skill" || !a.resource_id.starts_with("personal/") {
+        if !matches!(a.kind.as_str(), "skill" | "mcp") {
             continue;
         }
         let current_desired = a.desired_hash().unwrap_or_default();
@@ -812,7 +896,7 @@ pub fn deploy_status(
             } else if up_to_date {
                 "current"
             } else {
-                "stale（库已更新，需重新预览+应用）"
+                "stale"
             },
         }));
     }

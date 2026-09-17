@@ -157,6 +157,9 @@ pub fn compute_fingerprint(
         material.push_str(&format!("profile:{};", sha256_hex(&b)));
     }
     let lib = crate::personal_library::library_root(&state.data_root);
+    if let Ok(b) = std::fs::read(crate::collections::registry_path(&state.data_root)) {
+        material.push_str(&format!("collections:{};", sha256_hex(&b)));
+    }
     if let Ok(d) = crate::store::dir_digest(&lib) {
         material.push_str(&format!("library:{d};"));
     }

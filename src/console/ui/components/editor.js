@@ -6,32 +6,33 @@ import { Field } from './field.js';
 export function Editor(container, props) {
   const box = document.createElement('div');
   container.appendChild(box);
-  const field = Field(box, { label: props.title ?? '', multi: true, width: '100%' });
+  let cur = props;
+  let saved = props.content ?? '';
+  let dirty = false;
+  const field = Field(box, {
+    label: props.title ?? '', multi: true, width: '100%', value: saved,
+    onChange: (value) => { dirty = value !== saved; renderMeta(); cur.onChange?.(value); },
+  });
   const meta = document.createElement('div');
   meta.className = 'muted';
   box.appendChild(meta);
-  let cur = props;
-  let dirty = false;
-
-  field && (field.update({ hint: props.hint ?? '' }));
-
-  function render(p) {
-    cur = p;
-    if (!dirty && p.content !== undefined) field.setValue(p.content);
+  function renderMeta() {
+    const p = cur;
     const bits = [];
     if (p.documentId) bits.push('文档 ' + p.documentId);
     if (p.baseRevision !== undefined && p.baseRevision !== null) bits.push('版本 ' + p.baseRevision);
     if (dirty) bits.push('（有未保存修改）');
     meta.textContent = bits.join(' · ');
   }
-  // 监听输入置 dirty
-  const origOnChange = props.onChange;
-  cur = { ...props, onChange: (v) => { dirty = true; if (origOnChange) origOnChange(v); } };
-
-  render(props);
+  renderMeta();
   return {
-    update(next) { render({ ...cur, ...next }); },
-    setValue(v) { field.setValue(v); dirty = false; },
+    update(next) {
+      cur = { ...cur, ...next };
+      if (!dirty && next.content !== undefined) { saved = next.content; field.setValue(saved); }
+      renderMeta();
+    },
+    setValue(v) { saved = v; field.setValue(v); dirty = false; renderMeta(); },
+    markSaved(value = field.value()) { saved = value; dirty = field.value() !== saved; renderMeta(); },
     value: () => field.value(),
     isDirty: () => dirty,
     destroy() { box.remove(); },

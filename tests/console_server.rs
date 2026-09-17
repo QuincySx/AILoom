@@ -93,6 +93,53 @@ fn json_body(raw: &str) -> Value {
     serde_json::from_str(&raw[idx..]).unwrap_or(Value::Null)
 }
 
+#[test]
+fn collections_api_requires_session_and_approved_local_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 18080)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let (status, body) = method(server.port, "GET", "/api/collections", &auth, None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["sources"], json!([]));
+    assert_eq!(
+        post(
+            server.port,
+            "/api/collections/apply",
+            &[],
+            json!({"preview_id": "invalid"})
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/collections/apply",
+            &auth,
+            json!({"preview_id": "../../registry"})
+        )
+        .0,
+        400
+    );
+    let outside = tmp.path().join("unapproved:source");
+    std::fs::create_dir_all(&outside).unwrap();
+    assert_eq!(
+        post(
+            server.port,
+            "/api/collections/preview",
+            &auth,
+            json!({"name": "outside", "url": outside})
+        )
+        .0,
+        403
+    );
+    let (status, body) = method(server.port, "GET", "/api/resources", &auth, None);
+    assert_eq!(status, 200);
+    assert_eq!(json_body(&body)["entries"], json!([]));
+    server.shutdown();
+    server.join();
+}
+
 /// 安全矩阵：Host 白名单、Origin 跨站拒绝、写接口 token 必需、目录越界与 symlink 逃逸拒绝。
 #[test]
 fn ail046_security_matrix() {

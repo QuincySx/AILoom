@@ -5,11 +5,13 @@ import { UpdatePanel } from '../features/importPreview.js';
 import { DataTable } from '../components/dataTable.js';
 import { currentTarget } from '../state/target.js';
 import { esc as esc2 } from '../services/api.js';
+import { CollectionsPanel } from '../features/collectionsPanel.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
   container.appendChild(root);
   root.innerHTML = `
+    <div data-collections></div>
     <div class="step"><h2>来源（上游 → 个人库 → 工作树/宿主）</h2>
       <p class="muted">远程来源默认只读取；更新仅写个人库（旧版备份），部署需重新预览+应用。
       同名不同来源不混同；旧数据按「本地管理」解释。</p>
@@ -20,6 +22,7 @@ export function mount(container, ctx) {
       <p><button data-deploy>刷新部署状态</button></p>
       <div data-deployview class="muted">未加载</div></div>`;
 
+  const collections = CollectionsPanel(root.querySelector('[data-collections]'));
   const table = DataTable(root.querySelector('[data-table]'), { loading: true });
 
   async function refresh() {
@@ -51,11 +54,11 @@ export function mount(container, ctx) {
     try {
       const v = await api.deployStatus(target.path);
       dview.innerHTML = '<table><tr><th>资源</th><th>宿主</th><th>路径</th><th>状态</th></tr>' +
-        (v.items ?? []).map((i) => `<tr><td>${esc2(i.resource_id)}</td><td>${esc2(i.tool)}</td><td>${esc2(i.path)}</td><td>${i.state === 'current' ? '<span class="badge ok">current</span>' : i.state === 'stale（库已更新，需重新预览+应用）'.includes('stale') ? '<span class="badge warn">stale（待同步）</span>' : '<span class="badge">not-deployed</span>'}</td></tr>`).join('') +
+        (v.items ?? []).map((i) => `<tr><td>${esc2(i.resource_id)}</td><td>${esc2(i.tool)}</td><td>${esc2(i.path)}</td><td>${i.state === 'current' ? '<span class="badge ok">已同步</span>' : i.state?.startsWith('stale') ? '<span class="badge warn">待同步</span>' : '<span class="badge">未部署</span>'}</td></tr>`).join('') +
         '</table>';
     } catch (e) {
       dview.innerHTML = `<span class="badge bad">${esc2(e.message)}</span>`;
     }
   };
-  return { destroy() { root.remove(); } };
+  return { destroy() { collections.destroy(); root.remove(); } };
 }

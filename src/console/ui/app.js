@@ -29,6 +29,7 @@ const ROUTES = {
 };
 
 let currentPage = null;
+let activeRoute = null;
 
 function shell() {
   const nav = document.createElement('div');
@@ -78,6 +79,11 @@ async function checkConnection() {
 
 function route() {
   if (!location.hash || !ROUTES[location.hash]) location.hash = '#/overview';
+  if (activeRoute === location.hash) return;
+  if (currentPage?.isDirty?.() && !window.confirm('当前页面有未保存内容。确定放弃这些修改并离开？')) {
+    history.replaceState(null, '', activeRoute);
+    return;
+  }
   const def = ROUTES[location.hash];
   document.title = `AILoom 本地控制台 · ${def.title}`;
   const app = document.querySelector('#app');
@@ -85,10 +91,14 @@ function route() {
   currentPage = null;
   app.innerHTML = '';
   currentPage = def.mount(app, {});
+  activeRoute = location.hash;
   renderNav();
 }
 
 window.addEventListener('hashchange', route);
+window.addEventListener('beforeunload', (event) => {
+  if (currentPage?.isDirty?.()) { event.preventDefault(); event.returnValue = ''; }
+});
 
 (async function init() {
   shell();

@@ -359,7 +359,7 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             target,
             source_dir,
             source_identity,
-            ..
+            content_digest,
         } => {
             if let Some(parent) = file.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -369,7 +369,17 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             let rel = target
                 .strip_prefix(store_root.join(crate::store::source_key(source_identity)))
                 .unwrap_or(target.as_path());
-            crate::store::materialize_skill_dir(&store_root, source_identity, rel, source_dir)?;
+            if artifact.resource_id.starts_with("collection-") && target.exists() {
+                // 锁定版本实体可能被其他工作树共同引用；首次向新工作树挂载也不能覆盖其后改。
+                if !target.is_dir() || crate::store::dir_digest(target)? != *content_digest {
+                    return Err(Error::new(
+                        code::USER_CONTENT_CONFLICT,
+                        "合集的已缓存 Skill 实体被修改，保留修改并拒绝覆盖",
+                    ));
+                }
+            } else {
+                crate::store::materialize_skill_dir(&store_root, source_identity, rel, source_dir)?;
+            }
             // 清掉旧实体目录或旧链接
             if let Ok(meta) = std::fs::symlink_metadata(&file) {
                 if meta.file_type().is_symlink() || meta.is_file() {

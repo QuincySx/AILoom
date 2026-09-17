@@ -7,6 +7,7 @@ export function WorkflowStageList(container, props) {
   const wrap = document.createElement('div');
   container.appendChild(wrap);
   let cur = props;
+  let dirty = false;
 
   function render(p) {
     cur = p;
@@ -45,6 +46,9 @@ export function WorkflowStageList(container, props) {
       <textarea data-content placeholder="产物正文（保存在机器数据区，默认不进公司仓库）"></textarea>
       <div data-art class="log hidden"></div>`;
     wire(run);
+    for (const selector of ['[data-content]', '[data-title]', '[data-stage]']) {
+      wrap.querySelector(selector).addEventListener('input', () => { dirty = true; });
+    }
   }
 
   function wire(run) {
@@ -52,6 +56,7 @@ export function WorkflowStageList(container, props) {
       b.onclick = async () => {
         const act = b.dataset.do;
         const q = (sel) => wrap.querySelector(sel);
+        if (dirty && !['put', 'open', 'export'].includes(act) && !confirm('当前产物有未保存修改，确定放弃后继续？')) return;
         try {
           if (act === 'bind') {
             const stage = b.dataset.stage;
@@ -68,6 +73,7 @@ export function WorkflowStageList(container, props) {
             const base = q('[data-content]').dataset.baseVersion;
             await api.workflowArtifact(run.id, q('[data-stage]').value, q('[data-title]').value.trim() || '未命名', q('[data-content]').value, base ? parseInt(base, 10) : undefined);
             delete q('[data-content]').dataset.baseVersion;
+            dirty = false;
           } else if (act === 'import') {
             const path = q('[data-import]').value.trim();
             if (!path) return;
@@ -89,6 +95,7 @@ export function WorkflowStageList(container, props) {
             const content = q('[data-content]');
             content.value = v.content;
             content.dataset.baseVersion = b.dataset.ver;
+            dirty = false;
             notify(`已载入 ${b.dataset.title} v${b.dataset.ver}；写入带版本前置`);
             return;
           } else if (act === 'rename') {
@@ -102,8 +109,10 @@ export function WorkflowStageList(container, props) {
             if (!confirm('写入 ' + pv.target + '？' + note)) return;
             await api.exportExecute(run.id, b.dataset.art, target, pv.target_fingerprint);
             notify('已导出（旧版本已备份；未提交 Git）');
+            return; // 导出已有版本不丢弃正在编辑的正文。
           }
-          p.onChanged?.();
+          dirty = false;
+          cur.onChanged?.();
         } catch (e) {
           notify((e.kind === 'conflict' ? '冲突：' : '失败：') + e.message);
         }
@@ -112,5 +121,5 @@ export function WorkflowStageList(container, props) {
   }
 
   render(props);
-  return { update(next) { render({ ...cur, ...next }); }, destroy() { wrap.remove(); } };
+  return { isDirty: () => dirty, update(next) { if (!dirty) render({ ...cur, ...next }); }, destroy() { wrap.remove(); } };
 }

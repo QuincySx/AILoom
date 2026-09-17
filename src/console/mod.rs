@@ -460,7 +460,10 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             }
             match crate::commands::personal::effective(
                 root.as_deref(),
-                None,
+                req.query
+                    .iter()
+                    .find(|(k, _)| k == "scope")
+                    .map(|(_, v)| v.clone()),
                 None,
                 &state.data_root,
             ) {
@@ -479,6 +482,64 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ("POST", "/api/hosts/detect") => api_hosts_detect(state),
         ("POST", "/api/library/import") => api_library_import(state, req),
         ("GET", "/api/library/list") => api_library_list(state),
+        ("GET", "/api/collections") => {
+            collection_response(crate::collections::list(&state.data_root))
+        }
+        ("POST", "/api/collections/preview") => {
+            let url = req.body["url"].as_str().unwrap_or("");
+            // 本机 Git 仓库也必须先批准目录；远程 URL 交 GitSource 校验。
+            if let Some(path) = url
+                .strip_prefix("file://")
+                .or_else(|| (Path::new(url).is_absolute() || !url.contains(':')).then_some(url))
+            {
+                if let Err(e) = ensure_within_roots(state, Path::new(path)) {
+                    return Response::json(403, json!({ "error": e }));
+                }
+            }
+            collection_response(crate::collections::preview(
+                &state.data_root,
+                req.body["name"].as_str().unwrap_or(""),
+                url,
+                req.body["ref"].as_str(),
+                req.body["source_id"].as_str(),
+            ))
+        }
+        ("POST", "/api/collections/apply") => {
+            collection_response(crate::collections::apply_preview(
+                &state.data_root,
+                req.body["preview_id"].as_str().unwrap_or(""),
+            ))
+        }
+        ("GET", "/api/resources") => {
+            let (local, issues) = crate::personal_library::list_tolerant(&state.data_root);
+            let result = crate::collections::list(&state.data_root).map(|v| {
+                let mut entries: Vec<Value> = local
+                    .iter()
+                    .map(|e| {
+                        json!({
+                            "id": e.id, "kind": e.kind, "description": e.description,
+                            "source_name": "个人资源库", "readonly": false
+                        })
+                    })
+                    .collect();
+                let mut source_errors = Vec::new();
+                for source in v["sources"].as_array().into_iter().flatten() {
+                    entries.extend(
+                        source["resources"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .cloned(),
+                    );
+                    if !source["error"].is_null() {
+                        source_errors
+                            .push(json!({ "source": source["name"], "error": source["error"] }));
+                    }
+                }
+                json!({ "entries": entries, "issues": issues, "source_errors": source_errors })
+            });
+            collection_response(result)
+        }
         ("POST", "/api/library/import-git") => {
             // AIL-064：GitHub/远程仓库导入（预览默认；execute 才复制）
             let Some(url) = req.body.get("url").and_then(|v| v.as_str()) else {
@@ -968,6 +1029,20 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
     }
 }
 
+fn collection_response(result: crate::error::Result<Value>) -> Response {
+    match result {
+        Ok(v) => Response::json(200, v),
+        Err(e) => Response::json(
+            if e.code == crate::error::code::USER_CONTENT_CONFLICT {
+                409
+            } else {
+                400
+            },
+            json!({ "error": e.to_string() }),
+        ),
+    }
+}
+
 fn api_state(state: &Arc<ServerState>) -> Response {
     let repos = read_repos_summary(&state.data_root);
     let profile_path = crate::profile::PersonalProfile::profile_path(&state.data_root);
@@ -1179,6 +1254,9 @@ fn api_profile_select(state: &Arc<ServerState>, req: &Request) -> Response {
             400,
             json!({ "error": "需要 root（选择目标仓库/工作树的绝对路径）" }),
         );
+    }
+    if let Err(e) = ensure_within_roots(state, args.repo_root.as_deref().unwrap()) {
+        return Response::json(403, json!({ "error": e }));
     }
     match crate::commands::personal::select(&args, &state.data_root) {
         Ok(v) => Response::json(200, v),

@@ -27,9 +27,11 @@ export function mount(container, ctx) {
   }
 
   async function open() {
+    if (stageList?.isDirty() && !confirm('当前流程有未保存内容，确定放弃并切换？')) return;
     const id = sel.value;
     if (!id) return;
     const [run, lib] = await Promise.all([api.workflowShow(id), api.libraryList()]);
+    stageList?.destroy();
     wfSlot.innerHTML = '';
     stageList = WorkflowStageList(wfSlot, {
       run,
@@ -39,6 +41,7 @@ export function mount(container, ctx) {
   }
 
   root.querySelector('[data-new]').onclick = async () => {
+    if (stageList?.isDirty() && !confirm('当前流程有未保存内容，确定放弃并新建？')) return;
     const name = root.querySelector('[data-name]').value.trim() || '未命名流程';
     await api.workflowNew(name);
     await refreshRuns();
@@ -52,6 +55,7 @@ export function mount(container, ctx) {
 
   refreshRuns();
   return {
+    isDirty: () => stageList?.isDirty() ?? false,
     destroy() { root.remove(); stageList?.destroy?.(); },
   };
 }
