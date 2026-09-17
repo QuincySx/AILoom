@@ -19,6 +19,16 @@ FROM skills ORDER BY name LIMIT 1001;
 
 ## 流程
 
+### 管理方式
+
+默认「由 AILoom 管理（推荐）」：保留原来的 Git 拉取、版本锁定和检查更新，不复制 CC Switch 本地修改。
+
+可选「继续由 CC Switch 管理」：选择实际 Skill 存放目录（默认建议扫描数据目录下的 skills，也可以用文件夹选择器指定统一存储目录）。逐个 Skill 登记外部绝对路径，不拉取 Git、不生成托管副本。项目部署为指向原目录的直接链接，原处修改立即生效。AILoom 只拥有项目链接，不拥有目标文件；更新接口拒绝外部管理来源，检查全部更新不会 fetch 外部来源。资源库显示「重新检查路径」而非「更新」。
+
+外部目录失效、目录或内部文件变成符号链接时明确报错。登记预览到确认之间的内容变更会使预览失效。停用或解除引用只删除项目链接/来源记录，不能删除原目录；已变成普通目录的项目链接位置也不会被强删。同名的托管和外部来源可以共存，但同时部署到同一项目位置仍走现有冲突检测。当前不提供已登记来源的原地切换管理方式，需先停用旧引用再重新登记。
+
+导入记录采用紧凑行（名称 + 一行来源摘要），路径与错误详情折叠；列表限高滚动，提供名称/仓库搜索，避免每条记录占一个大卡片。
+
 1. 扫描 CC Switch：用户点击后只读查询 skills 来源字段，离线解析，不联网、不登记。支持官方 snake_case / camelCase 字段，备用 JSON 也支持显式 repo_url、repo_path、source_url。HTTPS、Git SSH 和 skills.sh 入口可解析。来源缺失、地址冲突、不安全路径单项报错。
 2. 勾选 Skill：有来源项默认选中；无效项禁选；全选/取消全选。清单或勾选变化使后续预览失效。
 3. 拉取预览：按仓库合并，复用合集 Git 缓存/不可变快照。保留分支；同仓库多分支明确拒绝，不自动换分支。准确路径优先，其次唯一名称/目录名匹配；不唯一、缺失、拉取失败按仓库展示。此步骤只写缓存和预览。
@@ -34,7 +44,7 @@ FROM skills ORDER BY name LIMIT 1001;
 - `GET /api/migrations/cc-switch/location`：仅返回默认目录字符串，不读文件。
 - `POST /api/migrations/cc-switch/read`：`{directory?, confirm_source_read:true}` → 读取固定 skills 字段并返回 scan_id、逐项来源/错误。自定义目录必须先授权；默认目录只对固定来源查询开放，不加入通用文件读取授权根。
 - `POST /api/migrations/cc-switch/scan`：`{manifest: [...]}` → scan_id、逐项来源/错误。
-- `POST /api/migrations/cc-switch/preview`：`{scan_id, selected: [item_id]}` → preview_id、仓库分组、锁定版本、匹配路径、失败信息。
+- `POST /api/migrations/cc-switch/preview`：`{scan_id, selected: [item_id], management?: "managed" | "external", skills_directory?: string}` → preview_id、来源分组、锁定版本或外部目录、失败信息。外部模式必须先授权 skills_directory，最多 100 个 Skill；确认阶段不接受新的路径或管理方式，使用服务端保存的预览。
 - `POST /api/migrations/cc-switch/apply`：`{preview_id}` → 登记结果。执行只接受服务端保存的预览 ID，不信任前端传入的替换 URL 或路径。
 
 清单和预览保存于数据根 `migrations/cc-switch/`，只持久化归一化来源字段；合集内 `migration` 保留导入时溯源信息。CC Switch 的 Skill 文件不写入、不删除，数据库以只读方式打开。没有执行仓库脚本或安装器。

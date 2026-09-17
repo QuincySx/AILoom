@@ -19,6 +19,8 @@ pub fn fragment_end(resource_id: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum ArtifactBody {
+    /// 外部管理：只拥有项目中的链接，不拥有目标目录及其内容。
+    ExternalSymlink { target: PathBuf },
     /// 整个文件内容
     Full { content: String },
     /// 合并到 JSON 文件的 pointer 处（如 .mcp.json#mcpServers/name）
@@ -98,6 +100,7 @@ impl Artifact {
             }
             ArtifactBody::Full { .. } => String::new(),
             ArtifactBody::Symlink { .. } => "#symlink".into(),
+            ArtifactBody::ExternalSymlink { .. } => "#external-link".into(),
         };
         format!("{}{suffix}", self.path.display())
     }
@@ -105,6 +108,9 @@ impl Artifact {
     /// 期望内容哈希（稳定 canonical 序列化）。
     pub fn desired_hash(&self) -> Result<String> {
         let payload: Vec<u8> = match &self.body {
+            ArtifactBody::ExternalSymlink { target } => {
+                format!("external|{}", target.display()).into_bytes()
+            }
             ArtifactBody::Full { content } => content.clone().into_bytes(),
             ArtifactBody::JsonPointer { value, .. } => serde_json::to_vec(value)
                 .map_err(|e| Error::new(code::RENDER_FAILED, format!("JSON 序列化失败: {e}")))?,

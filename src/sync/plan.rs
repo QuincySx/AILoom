@@ -221,6 +221,7 @@ pub fn current_state(ws_root: &Path, artifact: &Artifact) -> Result<Option<Strin
             Ok(read_fragment(&text, &artifact.resource_id)
                 .map(|c| format!("sha256:{}", crate::ids::sha256_hex(c.as_bytes()))))
         }
+        ArtifactBody::ExternalSymlink { .. } => current_external_link_hash(&file),
         ArtifactBody::Symlink { .. } => {
             let meta = match std::fs::symlink_metadata(&file) {
                 Ok(m) => m,
@@ -380,6 +381,29 @@ pub fn build_plan(
 }
 
 /// 按托管清单条目键读取当前内容哈希（删除分类用）。
+fn current_external_link_hash(file: &Path) -> Result<Option<String>> {
+    let meta = match file.symlink_metadata() {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let payload = if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(file)?;
+        let absolute = if target.is_absolute() {
+            target
+        } else {
+            file.parent().unwrap().join(target)
+        };
+        format!("external|{}", absolute.display())
+    } else {
+        "not-an-external-link".into()
+    };
+    Ok(Some(format!(
+        "sha256:{}",
+        crate::ids::sha256_hex(payload.as_bytes())
+    )))
+}
+
 pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<Option<String>> {
     let (path, mode) = split_key(key);
     let file = ws_root.join(&path);
@@ -454,6 +478,7 @@ pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Resu
                 None => Ok(None),
             }
         }
+        Some(mode) if mode == "external-link" => current_external_link_hash(&file),
         Some(mode) if mode == "symlink" => {
             if !file
                 .symlink_metadata()

@@ -103,7 +103,7 @@ export function CollectionsPanel(container, options = {}) {
   q('[data-check]').onclick = () => run(async () => {
     message('正在逐个检查上游；失败的来源会单独列出…');
     const v = await api.collectionCheck();
-    message('检查完成：' + v.items.filter(i => i.state === 'available').length + ' 个可更新，' + v.items.filter(i => i.state === 'error').length + ' 个失败。');
+    message('检查完成：' + v.items.filter(i => i.state === 'available').length + ' 个可更新，' + v.items.filter(i => i.state === 'error').length + ' 个失败，' + v.items.filter(i => i.state === 'external').length + ' 个外部来源路径有效（不做 Git 更新）。');
     await refresh();
   });
   q('[data-update]').onclick = () => run(() => update(available()));
@@ -115,18 +115,20 @@ export function CollectionsPanel(container, options = {}) {
     const search = q('[data-search]').value.toLowerCase();
     const shown = sources.filter(s => JSON.stringify([s.name,s.url,s.resources]).toLowerCase().includes(search));
     q('[data-sources]').innerHTML = !sources.length ? `<div class="empty-state"><h2>先添加你的第一个资源来源</h2><p>连接自己的 Git 合集，或导入第三方 Skill。来源、版本和引用项目都会记录在这里。</p><button data-first class="primary">选择来源并导入</button></div>` : !shown.length ? '<p>没有匹配的资源来源。</p>' : shown.map(s => {
-      const u = s.update, status = s.error ? '来源异常' : ({ current:'已是最新', available:'有可用更新', error:'检查失败', stale:'预览过期，请重新检查' })[u?.state] || '尚未检查';
+      const external = s.management === 'external';
+      const u = external ? null : s.update, status = s.error ? '来源异常' : external ? 'CC Switch 管理' : ({ current:'已是最新', available:'有可用更新', error:'检查失败', stale:'预览过期，请重新检查' })[u?.state] || '尚未检查';
       return `<article class="resource-row"><div class="row-title"><div><h3>${esc(s.name)}</h3><p class="muted path">${esc(s.url)}</p></div><span class="badge ${s.error || u?.state === 'error' ? 'bad' : u?.state === 'available' ? 'warn' : u?.state === 'current' ? 'ok' : ''}">${status}</span></div>
-      <p>${s.resources.length} 项资源 · ${(s.references || []).length} 条启用引用 · 版本 <code>${esc((s.lock.resolved_commit || '').slice(0,12))}</code></p>
+      <p>${s.resources.length} 项资源 · ${(s.references || []).length} 条启用引用 · ${external ? '外部目录实时引用' : 'AILoom 管理 · 版本 <code>' + esc((s.lock.resolved_commit || '').slice(0,12)) + '</code>'}</p>
       ${s.migration?.provider === 'cc-switch' ? '<p class="muted">从 CC Switch 迁移 · ' + s.migration.skills.length + ' 条原始 Skill 来源记录</p><details><summary>迁移来源记录（导入时）</summary><ul>' + s.migration.skills.map(skill => '<li>' + esc(skill.name) + ' · <code>' + esc(skill.repo_path) + '</code><br><span class="path">' + esc(skill.discovery_entry) + '</span></li>').join('') + '</ul></details>' : ''}
-      <p class="muted">${u?.checked_at ? '上次检查：' + esc(u.checked_at) : '点击检查更新，从上游获取最新版本状态。'}</p>
+      <p class="muted">${external ? '在 CC Switch 中维护；原处修改立即生效，AILoom 不复制、不更新或删除原文件。' : u?.checked_at ? '上次检查：' + esc(u.checked_at) : '点击检查更新，从上游获取最新版本状态。'}</p>
       ${s.error || u?.error ? '<p class="badge bad">' + esc(s.error || u.error) + '</p>' : ''}
-      <div class="actions"><button data-check-one="${esc(s.id)}" ${busy ? 'disabled' : ''}>检查更新</button>${u?.state === 'available' ? '<button class="primary" data-update-one="' + esc(s.id) + '"' + (busy ? ' disabled' : '') + '>更新资源库版本</button>' : ''}<a href="#/scopes">管理项目引用</a><button class="danger" data-remove="${esc(s.id)}" ${busy ? 'disabled' : ''}>移除来源…</button></div>
-      <details><summary>资源目录、引用位置与存储路径</summary><p class="path muted">本机实体：${esc(s.store_path)}<br>路径在首次应用资源时创建。历史版本保留。</p>
+      <div class="actions">${external ? '<button data-refresh-external>重新检查路径</button>' : '<button data-check-one="' + esc(s.id) + '" ' + (busy ? 'disabled' : '') + '>检查更新</button>'}${u?.state === 'available' ? '<button class="primary" data-update-one="' + esc(s.id) + '"' + (busy ? ' disabled' : '') + '>更新资源库版本</button>' : ''}<a href="#/scopes">管理项目引用</a><button class="danger" data-remove="${esc(s.id)}" ${busy ? 'disabled' : ''}>${external ? '解除来源引用…' : '移除来源…'}</button></div>
+      <details><summary>资源目录、引用位置与存储路径</summary><p class="path muted">${external ? '外部原目录' : '本机实体'}：${esc(s.store_path)}<br>${external ? '此目录不归 AILoom 所有。路径失效时请恢复目录或解除旧引用后重新登记。' : '路径在首次应用资源时创建。历史版本保留。'}</p>
       <ul>${s.resources.map(r=>'<li>' + esc(r.kind) + ' · ' + esc(r.name) + '<br><code>' + esc(r.id) + '</code></li>').join('')}</ul>
       <h4>哪些项目在使用</h4>${(s.references || []).length ? '<ul>' + s.references.map(r=>'<li>' + esc(r.repo_id) + ' · ' + esc(r.scope) + '</li>').join('') + '</ul>' : '<p class="muted">没有项目启用引用。</p>'}</details></article>`;
     }).join('');
     q('[data-first]')?.addEventListener('click', () => q('[data-add]').click());
+    root.querySelectorAll('[data-refresh-external]').forEach(b => { b.onclick = () => run(refresh); });
     root.querySelectorAll('[data-check-one]').forEach(b => { b.onclick = () => run(async () => { message('正在检查上游…'); await api.collectionCheck(b.dataset.checkOne); await refresh(); message('检查完成。'); }); });
     root.querySelectorAll('[data-update-one]').forEach(b => { b.onclick = () => run(() => update([sources.find(s => s.id === b.dataset.updateOne)])); });
     root.querySelectorAll('[data-remove]').forEach(b => { b.onclick = () => run(async () => {

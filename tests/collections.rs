@@ -162,6 +162,126 @@ impl Fixture {
 }
 
 #[test]
+fn external_skills_link_original_content_and_unlink_without_owning_it() {
+    let f = Fixture::new();
+    let repo = f.source("cc-switch-external", "original", false);
+    let data = f.data();
+    let scan = ailoom::cc_switch::scan(&data, &serde_json::json!([{"id":"cc-one","name":"chosen","directory":"chosen","repo_owner":"fixture","repo_name":"skills","repo_branch":"main"}])).unwrap();
+    let preview = ailoom::cc_switch::prepare_external(
+        &data,
+        scan["scan_id"].as_str().unwrap(),
+        &["0".into()],
+        &repo.join("skills"),
+    )
+    .unwrap();
+    assert_eq!(preview["ready"], 1);
+    assert!(
+        !data.join("collections/cache").exists(),
+        "外部登记不 clone 或复制源"
+    );
+    ailoom::cc_switch::apply(&data, preview["preview_id"].as_str().unwrap()).unwrap();
+    let registry = ailoom::collections::load(&data).unwrap();
+    let source = registry.sources.values().next().unwrap();
+    let skill_id = source.migration.as_ref().unwrap().skills[0]
+        .resource_id
+        .as_ref()
+        .unwrap();
+    assert!(source.external_path.is_some());
+    assert!(
+        ailoom::collections::preview(&data, &source.name, &source.url, None, Some(&source.id))
+            .is_err(),
+        "外部源不能通过 Git 更新接口接管"
+    );
+    assert_eq!(
+        ailoom::collections::check_updates(&data, Some(&source.id)).unwrap()["items"][0]["state"],
+        "external"
+    );
+    let ws = f.tmp.path().join("project");
+    std::fs::create_dir(&ws).unwrap();
+    f.host(&ws);
+    f.select(&ws, skill_id, "enable");
+    f.sync(&ws);
+    let target = repo.join("skills/chosen").canonicalize().unwrap();
+    let link = ws.join(".claude/skills/chosen");
+    assert_eq!(std::fs::read_link(&link).unwrap(), target);
+    assert!(
+        !common::isolated_store_root(f.tmp.path()).exists(),
+        "外部部署不生成 SkillStore 副本"
+    );
+    let file = target.join("SKILL.md");
+    let edited = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("original", "edited-by-external-owner");
+    std::fs::write(&file, &edited).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+        edited,
+        "外部修改即时可见"
+    );
+    f.sync(&ws); // 修改外部内容不应变成 AILoom 所有权冲突。
+    assert!(
+        ailoom::collections::remove(&data, &source.id, true).is_err(),
+        "仍有项目引用不能移除"
+    );
+    let moved = repo.join("skills/moved");
+    std::fs::rename(&target, &moved).unwrap();
+    assert!(
+        ailoom::collections::catalog(&data, source).is_err(),
+        "失效路径明确报错"
+    );
+    // 坏链也可停用：只读链接身份，不读取目标内容，不删除外部目录。
+    f.select(&ws, skill_id, "disable");
+    f.sync(&ws);
+    assert!(link.symlink_metadata().is_err());
+    ailoom::collections::remove(&data, &source.id, true).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(moved.join("SKILL.md")).unwrap(),
+        edited
+    );
+}
+
+#[test]
+fn external_preview_is_content_bound_and_rejects_symlink_escape() {
+    let f = Fixture::new();
+    let repo = f.source("external-guards", "one", false);
+    let scan = ailoom::cc_switch::scan(&f.data(), &serde_json::json!([{"name":"chosen","directory":"chosen","repo_owner":"fixture","repo_name":"skills"}])).unwrap();
+    let preview = ailoom::cc_switch::prepare_external(
+        &f.data(),
+        scan["scan_id"].as_str().unwrap(),
+        &["0".into()],
+        &repo.join("skills"),
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("skills/chosen/notes.txt"),
+        "changed after preview",
+    )
+    .unwrap();
+    assert!(ailoom::cc_switch::apply(&f.data(), preview["preview_id"].as_str().unwrap()).is_err());
+    assert!(ailoom::collections::load(&f.data())
+        .unwrap()
+        .sources
+        .is_empty());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            repo.join("skills/unused"),
+            repo.join("skills/chosen/escape"),
+        )
+        .unwrap();
+        let preview = ailoom::cc_switch::prepare_external(
+            &f.data(),
+            scan["scan_id"].as_str().unwrap(),
+            &["0".into()],
+            &repo.join("skills"),
+        )
+        .unwrap();
+        assert_eq!(preview["ready"], 0);
+        assert_eq!(preview["groups"][0]["state"], "error");
+    }
+}
+
+#[test]
 fn multiple_collections_only_deploy_explicit_skill_and_mcp_references() {
     let f = Fixture::new();
     let a = f.source("my-collection", "A-v1", true);

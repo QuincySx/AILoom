@@ -170,6 +170,55 @@ fn cc_switch_source_manifest_api_is_authenticated_and_offline() {
         .0,
         400
     );
+    let skills = tmp.path().join("external-skills");
+    std::fs::create_dir_all(skills.join("one")).unwrap();
+    std::fs::write(
+        skills.join("one/SKILL.md"),
+        "---\nname: one\ndescription: fixture\n---\nExternal\n",
+    )
+    .unwrap();
+    let request = json!({"scan_id":scan["scan_id"],"selected":["0"],"management":"external","skills_directory":skills});
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/preview",
+            &auth,
+            request.clone()
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/fs/approve",
+            &auth,
+            json!({"path":skills})
+        )
+        .0,
+        200
+    );
+    let (status, response) = post(
+        server.port,
+        "/api/migrations/cc-switch/preview",
+        &auth,
+        request,
+    );
+    assert_eq!(status, 200);
+    let preview = json_body(&response);
+    assert_eq!(preview["ready"], 1);
+    assert_eq!(preview["management"], "external");
+    assert_eq!(
+        post(
+            server.port,
+            "/api/migrations/cc-switch/apply",
+            &auth,
+            json!({"preview_id":preview["preview_id"]})
+        )
+        .0,
+        200
+    );
+    assert!(!tmp.path().join("data/collections/cache").exists());
     server.shutdown();
     server.join();
 }

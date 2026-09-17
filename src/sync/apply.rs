@@ -175,7 +175,9 @@ fn apply_action(
             }
             Some(a) => !matches!(
                 a.body,
-                ArtifactBody::Full { .. } | ArtifactBody::Symlink { .. }
+                ArtifactBody::Full { .. }
+                    | ArtifactBody::Symlink { .. }
+                    | ArtifactBody::ExternalSymlink { .. }
             ),
             None => false,
         },
@@ -250,6 +252,41 @@ fn apply_action(
 fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
     let file = ws_root.join(&artifact.path);
     match &artifact.body {
+        ArtifactBody::ExternalSymlink { target } => {
+            if !target.is_absolute()
+                || target.canonicalize().ok().as_ref() != Some(target)
+                || !target.join("SKILL.md").is_file()
+            {
+                return Err(Error::new(
+                    code::SOURCE_NOT_CACHED,
+                    "外部 Skill 路径失效，请修复原目录",
+                ));
+            }
+            if let Ok(meta) = file.symlink_metadata() {
+                if !meta.file_type().is_symlink() {
+                    return Err(Error::new(
+                        code::USER_CONTENT_CONFLICT,
+                        "项目挂载位置已有普通文件或目录，拒绝覆盖",
+                    ));
+                }
+                std::fs::remove_file(&file)?;
+            }
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(target, &file)?;
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                Err(Error::new(
+                    code::WRITE_FAILED,
+                    "当前平台暂不支持外部 Skill 链接部署",
+                ))
+            }
+        }
         ArtifactBody::Full { content } => {
             if let Some(parent) = file.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -486,6 +523,19 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
     let (path, mode) = split_key(key);
     let file = ws_root.join(&path);
     match mode.as_deref() {
+        Some("external-link") => match file.symlink_metadata() {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                std::fs::remove_file(&file)?;
+                cleanup_empty_parents(ws_root, &file);
+                Ok(())
+            }
+            Ok(_) => Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                "外部链接已被普通文件或目录替换，拒绝删除",
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        },
         None | Some("symlink") => {
             // Full 技能树 / symlink 挂载点
             if let Ok(meta) = file.symlink_metadata() {

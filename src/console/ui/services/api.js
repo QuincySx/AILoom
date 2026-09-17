@@ -76,7 +76,7 @@ export const api = {
   ccSwitchScan: (manifest) => request('POST', '/api/migrations/cc-switch/scan', { manifest }),
   ccSwitchLocation: () => request('GET', '/api/migrations/cc-switch/location'),
   ccSwitchRead: (directory) => request('POST', '/api/migrations/cc-switch/read', { directory, confirm_source_read:true }),
-  ccSwitchPreview: (scanId, selected) => request('POST', '/api/migrations/cc-switch/preview', { scan_id:scanId, selected }),
+  ccSwitchPreview: (scanId, selected, management = 'managed', skillsDirectory) => request('POST', '/api/migrations/cc-switch/preview', { scan_id:scanId, selected, management, skills_directory:skillsDirectory }),
   ccSwitchApply: (previewId) => request('POST', '/api/migrations/cc-switch/apply', { preview_id:previewId }),
   collectionCheck: (sourceId) => request('POST', '/api/collections/check', { source_id: sourceId }),
   collectionUpdate: (previewIds) => request('POST', '/api/collections/update', { preview_ids: previewIds }),

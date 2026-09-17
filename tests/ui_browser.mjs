@@ -49,6 +49,16 @@ if (mode === 'cc-switch') {
     await waitFor("document.querySelector('[data-cc-status]').textContent.includes('发现 2 项') && !document.querySelector('[data-cc-read]').disabled");
     if (!await evaluate("document.querySelector('[data-cc-items]').textContent.includes('plugins/fixture-skill') && document.querySelectorAll('[data-cc-select]:checked').length===1")) throw new Error('One-click source database scan failed');
     await screenshot(output + '-cc-switch-direct.png');
+    if (!await evaluate("document.querySelector('[name=cc-management]:checked').value==='managed'")) throw new Error('AILoom management must be the default');
+    await evaluate("const mode=document.querySelector('[name=cc-management][value=external]'); mode.checked=true; mode.dispatchEvent(new Event('change')); document.querySelector('[data-cc-prepare]').click()");
+    await waitFor("document.querySelector('[data-cc-preview]').textContent.includes('fixture-skill') && !document.querySelector('[data-cc-prepare]').disabled");
+    if (!await evaluate("document.querySelector('[data-cc-preview]').textContent.includes('CC Switch 继续维护') && (!document.querySelector('[data-cc-apply]').hidden || document.querySelector('[data-cc-preview]').textContent.includes('已存在'))")) throw new Error('External preview did not produce a registrable source');
+    await screenshot(output + '-cc-external-preview.png');
+    if (!await evaluate("document.querySelector('[data-cc-apply]').hidden")) {
+      await evaluate("document.querySelector('[data-cc-apply]').click()");
+      await waitFor("document.querySelector('[data-cc-status]').textContent.includes('已登记') && !document.querySelector('[data-cc-read]').disabled");
+    }
+    if (!await evaluate("document.querySelector('[data-sources]').textContent.includes('CC Switch 管理') && !document.querySelector('[data-sources] [data-check-one]')")) throw new Error('Externally managed source must not expose Git update controls');
   }
   await evaluate("document.querySelector('[data-cc-fallback]').open=true");
   await evaluate("document.querySelector('[data-cc-json]').value='invalid'; document.querySelector('[data-cc-scan]').click()");
@@ -56,12 +66,22 @@ if (mode === 'cc-switch') {
   const fixture = [{name:'fixture-skill',directory:'fixture-skill',repo_owner:'fixture-owner',repo_name:'fixture-repo',repo_branch:'main',readme_url:'https://github.com/fixture-owner/fixture-repo/blob/main/plugins/fixture-skill/SKILL.md'},{name:'没有来源'},{name:'<script>fixture</script>',repo_url:'file:///tmp/forbidden'}];
   await evaluate(`document.querySelector('[data-cc-json]').value=${JSON.stringify(JSON.stringify(fixture))}; document.querySelector('[data-cc-json]').dispatchEvent(new Event('input')); document.querySelector('[data-cc-scan]').click()`);
   await waitFor("document.querySelector('[data-cc-status]').textContent.includes('发现 3 项') && !document.querySelector('[data-cc-scan]').disabled");
+  if (!await evaluate("[...document.querySelectorAll('.cc-skill-row')].every(row=>row.getBoundingClientRect().height<=86)")) throw new Error('Import records are not compact');
+  await evaluate("document.querySelector('[data-cc-search]').value='fixture-skill'; document.querySelector('[data-cc-search]').dispatchEvent(new Event('input'))");
+  if (!await evaluate("document.querySelectorAll('[data-cc-row]:not([hidden])').length===1")) throw new Error('Import source search failed');
+  await evaluate("document.querySelector('[data-cc-search]').value=''; document.querySelector('[data-cc-search]').dispatchEvent(new Event('input'))");
   if (!await evaluate("document.querySelectorAll('[data-cc-select]:checked').length===1 && document.querySelectorAll('[data-cc-select]:disabled').length===2 && document.querySelector('[data-cc-items]').textContent.includes('plugins/fixture-skill') && !document.querySelector('[data-cc-items] script')")) throw new Error('Migration scan selection/path/escaping failed');
   await screenshot(output + '-cc-switch-desktop.png');
   await evaluate("document.querySelector('[data-cc-none]').click()");
   if (!await evaluate("document.querySelector('[data-cc-prepare]').disabled")) throw new Error('Empty migration selection must be disabled');
   await evaluate("document.querySelector('[data-cc-all]').click()");
   if (!await evaluate("!document.querySelector('[data-cc-prepare]').disabled && document.querySelectorAll('[data-cc-select]:checked').length===1")) throw new Error('Invalid sources must stay unselected');
+  const manySkills = Array.from({length:60}, (_,n)=>({name:`skill-${n}`,repo_owner:'fixture',repo_name:'skills',directory:`skill-${n}`}));
+  await evaluate(`document.querySelector('[data-cc-json]').value=${JSON.stringify(JSON.stringify(manySkills))}; document.querySelector('[data-cc-json]').dispatchEvent(new Event('input')); document.querySelector('[data-cc-scan]').click()`);
+  await waitFor("document.querySelector('[data-cc-status]').textContent.includes('发现 60 项') && !document.querySelector('[data-cc-scan]').disabled");
+  if (!await evaluate("document.querySelector('.cc-skill-list').clientHeight<=320 && document.querySelector('.cc-skill-list').scrollHeight>document.querySelector('.cc-skill-list').clientHeight && [...document.querySelectorAll('.cc-skill-row')].every(r=>r.getBoundingClientRect().height<=72)")) throw new Error('Large import list is not bounded/compact');
+  await evaluate("document.querySelector('[data-cc-fallback]').open=false; document.querySelector('[data-cc-items]').scrollIntoView({block:'start'})");
+  await screenshot(output + '-cc-compact-60.png');
   await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
   await screenshot(output + '-cc-switch-mobile.png');
   if (await evaluate("document.documentElement.scrollWidth > innerWidth + 1 || document.querySelector('[data-cc-json]').closest('dialog').scrollWidth > document.querySelector('[data-cc-json]').closest('dialog').clientWidth + 1")) throw new Error('Migration dialog overflow');

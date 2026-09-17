@@ -477,7 +477,11 @@ pub fn prepare(data: &Path, scan_id: &str, selected: &[String]) -> Result<Value>
                     "同一仓库的 Skill 使用不同分支，当前合集只能锁定一个分支；请分开选择",
                 ));
             }
-            if let Some(existing) = registry.sources.values().find(|s| repo_key(&s.url) == key) {
+            if let Some(existing) = registry
+                .sources
+                .values()
+                .find(|s| s.external_path.is_none() && repo_key(&s.url) == key)
+            {
                 if existing.lock.ref_ != branch {
                     return Err(invalid("资源中心已有该仓库，但分支不同；不会覆盖已有来源"));
                 }
@@ -534,6 +538,61 @@ pub fn apply(data: &Path, id: &str) -> Result<Value> {
     let result = collections::apply_previews(data, &prepared.preview_ids)?;
     Ok(
         json!({"updated":result["updated"],"groups":prepared.groups,"note":"来源已登记；CC Switch 文件与所有项目均未修改"}),
+    )
+}
+
+pub fn prepare_external(
+    data: &Path,
+    scan_id: &str,
+    selected: &[String],
+    skills_root: &Path,
+) -> Result<Value> {
+    let scan: Scan = serde_json::from_slice(&std::fs::read(file(data, "scans", scan_id)?)?)?;
+    let root = skills_root.canonicalize()?;
+    let ids: BTreeSet<_> = selected.iter().cloned().collect();
+    if ids.is_empty()
+        || ids.len() != selected.len()
+        || ids.len() > 100
+        || ids
+            .iter()
+            .any(|id| !scan.items.iter().any(|s| &s.id == id && s.source.is_some()))
+    {
+        return Err(invalid("请选择 1–100 个有效 Skill 来源"));
+    }
+    let mut prepared = Prepared {
+        preview_ids: vec![],
+        groups: vec![],
+    };
+    let mut seen = BTreeSet::new();
+    for item in scan.items.into_iter().filter(|i| ids.contains(&i.id)) {
+        let source = item.source.unwrap();
+        let result = (|| -> Result<Value> {
+            let rel = relative(&source.directory)?;
+            if rel == "." {
+                return Err(invalid("外部 Skill 必须位于所选 skills 目录下"));
+            }
+            let path = root.join(rel);
+            if path.canonicalize().ok().as_ref() != Some(&path) {
+                return Err(invalid(
+                    "Skill 目录不存在或包含符号链接，请选择真实的 Skill 存放目录",
+                ));
+            }
+            if !seen.insert(path.clone()) {
+                return Err(invalid("重复的外部 Skill 目录"));
+            }
+            let mut group = collections::preview_external(data, &path, source.clone())?;
+            if let Some(token) = group["preview_id"].as_str() {
+                prepared.preview_ids.push(token.into());
+            }
+            group["url"] = json!(source.repo_url);
+            Ok(group)
+        })();
+        prepared.groups.push(result.unwrap_or_else(|e| json!({"state":"error","error":e.to_string(),"url":source.repo_url,"skills":[source],"management":"external"})));
+    }
+    let id = crate::ids::new_id();
+    save(data, "previews", &id, &prepared)?;
+    Ok(
+        json!({"preview_id":id,"groups":prepared.groups,"ready":prepared.preview_ids.len(),"management":"external"}),
     )
 }
 

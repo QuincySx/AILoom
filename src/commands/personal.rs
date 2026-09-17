@@ -483,6 +483,17 @@ pub fn prepare_personal(
         };
         let (mut rendered, missing) =
             render_artifacts(&desired, &catalog.snapshot.root, &targets, &scope_dir)?;
+        if source.external_path.is_some() {
+            for artifact in &mut rendered {
+                if let crate::adapters::common::ArtifactBody::Symlink { source_dir, .. } =
+                    &artifact.body
+                {
+                    artifact.body = crate::adapters::common::ArtifactBody::ExternalSymlink {
+                        target: source_dir.clone(),
+                    };
+                }
+            }
+        }
         // 个人合集不生成公司指令索引；其余仍经同一所有权/公司文件守卫。
         rendered.retain(|a| a.resource_id != "ailoom-internal/doc-index");
         if let Some(rel) = &active_rel {

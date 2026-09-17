@@ -16,6 +16,9 @@ pub struct Collection {
     pub lock: SourceLock,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration: Option<crate::cc_switch::MigrationOrigin>,
+    /// 外部维护的 Skill 根目录；不物化缓存、不更新上游。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -183,7 +186,126 @@ fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
 }
 
 pub fn catalog(data: &Path, source: &Collection) -> Result<Catalog> {
+    if let Some(path) = &source.external_path {
+        return external_catalog(path, &source.id);
+    }
     enumerate(snapshot(data, source)?, &source.id)
+}
+
+fn external_catalog(path: &Path, id: &str) -> Result<Catalog> {
+    if !path.is_absolute() || path.canonicalize().ok().as_deref() != Some(path) || !path.is_dir() {
+        return Err(Error::new(
+            code::SOURCE_NOT_CACHED,
+            "外部 Skill 路径失效或被替换为符号链接，请恢复原目录或重新登记",
+        ));
+    }
+    for entry in walkdir::WalkDir::new(path) {
+        let entry = entry.map_err(|e| Error::new(code::SOURCE_NOT_CACHED, e.to_string()))?;
+        if entry.file_type().is_symlink() {
+            return Err(Error::new(
+                code::PATH_TRAVERSAL,
+                "外部 Skill 内含符号链接，拒绝越界引用",
+            ));
+        }
+    }
+    let raw = std::fs::read_to_string(path.join("SKILL.md"))?;
+    let (meta, _) = crate::resource::parse_frontmatter(&raw)?;
+    let name = meta
+        .as_ref()
+        .and_then(|m| m.name.clone())
+        .unwrap_or_else(|| path.file_name().unwrap().to_string_lossy().into_owned());
+    let namespace = meta
+        .as_ref()
+        .and_then(|m| m.namespace.clone())
+        .unwrap_or_else(|| "default".into());
+    if !crate::manifest::valid_name(&name) || !crate::manifest::valid_name(&namespace) {
+        return Err(Error::new(
+            code::MANIFEST_MISSING_FIELD,
+            "外部 Skill 名称或命名空间无效",
+        ));
+    }
+    let digest = crate::store::dir_digest(path)?;
+    Ok(Catalog {
+        snapshot: Snapshot {
+            identity: format!("external+{}", path.display()),
+            resolved_commit: None,
+            content_digest: digest,
+            root: path.into(),
+            ref_: None,
+            locked_at: crate::ids::now_iso(),
+            mutable: true,
+        },
+        entries: vec![ResourceEntry {
+            id: ResourceId {
+                source: id.into(),
+                kind: ResourceKind::Skill,
+                namespace: namespace.clone(),
+                name,
+            },
+            meta: ResourceMeta {
+                shared: false,
+                projects: vec![],
+                roles: vec![],
+                namespace,
+                tags: vec![],
+            },
+            path: path.to_string_lossy().into_owned(),
+            description: meta.and_then(|m| m.description).unwrap_or_default(),
+            raw: Some(raw),
+        }],
+        skills_root: ".".into(),
+    })
+}
+
+pub fn preview_external(
+    data: &Path,
+    path: &Path,
+    mut origin: crate::cc_switch::SkillOrigin,
+) -> Result<Value> {
+    let id = format!(
+        "collection-external-{}",
+        crate::ids::sha256_prefix(path.to_string_lossy().as_bytes(), 16)
+    );
+    let cat = external_catalog(path, &id)?;
+    let registry = load(data)?;
+    origin.resource_id = Some(cat.entries[0].id.to_string());
+    if registry.sources.contains_key(&id) {
+        return Ok(
+            json!({"state":"existing","source_id":id,"skills":[origin],"external_path":path,"management":"external"}),
+        );
+    }
+    let source = Collection {
+        id,
+        name: format!("CC Switch · {}", cat.entries[0].id.name),
+        url: origin.repo_url.clone(),
+        lock: SourceLock {
+            kind: "external".into(),
+            identity: cat.snapshot.identity,
+            ref_: None,
+            resolved_commit: None,
+            content_digest: cat.snapshot.content_digest,
+            locked_at: crate::ids::now_iso(),
+        },
+        external_path: Some(path.into()),
+        migration: Some(crate::cc_switch::MigrationOrigin {
+            provider: "cc-switch".into(),
+            imported_at: crate::ids::now_iso(),
+            skills: vec![origin.clone()],
+        }),
+    };
+    let token = crate::ids::new_id();
+    let dir = data.join("collections/previews");
+    std::fs::create_dir_all(&dir)?;
+    crate::sync_common::atomic_write(
+        &dir.join(format!("{token}.json")),
+        &serde_json::to_vec_pretty(&Preview {
+            base_revision: registry.revision,
+            source: source.clone(),
+        })?,
+    )?;
+    Ok(
+        json!({"state":"ready","preview_id":token,"source_id":source.id,"skills":[origin],"external_path":path,"management":"external"}),
+    )
 }
 
 fn entry_value(entry: &ResourceEntry, source: &Collection) -> Value {
@@ -197,6 +319,11 @@ pub fn list(data: &Path) -> Result<Value> {
     let mut sources = Vec::new();
     for source in registry.sources.values() {
         let mut v = serde_json::to_value(source)?;
+        v["management"] = json!(if source.external_path.is_some() {
+            "external"
+        } else {
+            "managed"
+        });
         v["references"] = references(data, &format!("{}/", source.id))?;
         v["store_path"] = json!(crate::store::source_bucket(
             &crate::store::resolve_store_root()?,
@@ -206,6 +333,9 @@ pub fn list(data: &Path) -> Result<Value> {
                 source.lock.resolved_commit.as_deref().unwrap_or("working")
             )
         ));
+        if let Some(path) = &source.external_path {
+            v["store_path"] = json!(path);
+        }
         let check_path = data
             .join("collections/checks")
             .join(format!("{}.json", source.id));
@@ -252,6 +382,15 @@ pub fn preview(
     update_id: Option<&str>,
 ) -> Result<Value> {
     let registry = load(data)?;
+    if update_id
+        .and_then(|id| registry.sources.get(id))
+        .is_some_and(|s| s.external_path.is_some())
+    {
+        return Err(Error::new(
+            code::USAGE,
+            "外部管理来源不能由 AILoom 更新，请在 CC Switch 中维护",
+        ));
+    }
     if !(url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("ssh://")
@@ -292,6 +431,7 @@ pub fn preview(
         name: name.into(),
         url: git.url.clone(),
         migration: registry.sources.get(&id).and_then(|s| s.migration.clone()),
+        external_path: None,
         lock: SourceLock {
             kind: "git".into(),
             identity: git.identity.clone(),
@@ -384,6 +524,14 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
                 ));
             }
             let next = catalog(data, &preview.source)?;
+            if preview.source.external_path.is_some()
+                && next.snapshot.content_digest != preview.source.lock.content_digest
+            {
+                return Err(Error::new(
+                    code::USER_CONTENT_CONFLICT,
+                    "外部 Skill 在预览后已变化，请重新预览",
+                ));
+            }
             if let Some(old) = registry.sources.get(&preview.source.id) {
                 let next_ids: BTreeSet<_> = next.entries.iter().map(|e| e.id.to_string()).collect();
                 for entry in catalog(data, old)?.entries {
@@ -463,6 +611,15 @@ pub fn check_updates(data: &Path, source_id: Option<&str>) -> Result<Value> {
         .filter(|s| source_id.map_or(true, |id| s.id == id))
     {
         let mut status = json!({"source_id":s.id, "name":s.name, "base_commit":s.lock.resolved_commit, "checked_at":crate::ids::now_iso()});
+        if s.external_path.is_some() {
+            status["state"] = json!("external");
+            if let Err(e) = catalog(data, s) {
+                status["state"] = json!("error");
+                status["error"] = json!(e.to_string());
+            }
+            items.push(status);
+            continue;
+        }
         match preview(data, &s.name, &s.url, s.lock.ref_.as_deref(), Some(&s.id)) {
             Ok(p) => {
                 status["state"] = json!(if p["source"]["lock"]["resolved_commit"]

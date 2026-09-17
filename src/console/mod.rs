@@ -520,6 +520,28 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ("POST", "/api/migrations/cc-switch/preview") => {
             let selected: std::result::Result<Vec<String>, _> =
                 serde_json::from_value(req.body["selected"].clone());
+            if req.body["management"].as_str() == Some("external") {
+                let root = Path::new(req.body["skills_directory"].as_str().unwrap_or(""));
+                let root = match ensure_within_roots(state, root) {
+                    Ok(p) => p,
+                    Err(e) => return Response::json(403, json!({"error":e})),
+                };
+                return match selected {
+                    Ok(selected) => collection_response(crate::cc_switch::prepare_external(
+                        &state.data_root,
+                        req.body["scan_id"].as_str().unwrap_or(""),
+                        &selected,
+                        &root,
+                    )),
+                    Err(_) => Response::json(400, json!({"error":"请选择来源记录"})),
+                };
+            }
+            if req.body["management"]
+                .as_str()
+                .is_some_and(|m| m != "managed")
+            {
+                return Response::json(400, json!({"error":"未知管理方式"}));
+            }
             match selected {
                 Ok(selected) => collection_response(crate::cc_switch::prepare(
                     &state.data_root,

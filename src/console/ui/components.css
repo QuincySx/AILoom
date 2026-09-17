@@ -85,3 +85,13 @@ th { color: var(--muted-foreground); font-weight: 500; background: var(--muted);
 .select-option[aria-selected=true]::after { content: ''; position: absolute; right: var(--sp-3); width: 6px; height: 10px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .select-option[aria-disabled=true] { opacity: .45; cursor: not-allowed; }
 .select-group { padding: var(--sp-2) var(--sp-3); font-size: var(--fs-tiny); color: var(--muted-foreground); font-weight: 600; }
+.cc-management { margin: var(--sp-3) 0; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.cc-management label { margin: 0; }
+.cc-skill-list { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); margin-top: var(--sp-2); }
+.cc-skill-row { padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+.cc-skill-row:last-child { border-bottom: 0; }
+.cc-skill-row label { min-height: 28px !important; margin: 0; gap: var(--sp-1); }
+.cc-skill-row label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-skill-row details { margin: 0; padding: 0; }
+.cc-skill-row summary { min-height: 24px; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-tiny); }
+.cc-skill-row p,.cc-skill-row ul { margin: var(--sp-1) 0; font-size: var(--fs-tiny); }
