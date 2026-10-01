@@ -1,0 +1,89 @@
+--- a/src/shared/plugins/plugin-capabilities.ts
++++ b/src/shared/plugins/plugin-capabilities.ts
+@@ -19,7 +19,8 @@
+   'storage',
+   'secrets',
+   'events:subscribe',
+-  'settings:own'
++  'settings:own',
++  'commands:own'
+ ] as const
+ 
+ export type PluginCapabilityKind = (typeof PLUGIN_CAPABILITY_KINDS)[number]
+@@ -40,7 +41,8 @@
+   secrets: "Store and read secrets in the plugin's own encrypted vault",
+   'events:subscribe':
+     'Get notified when worktrees are created or removed and when agent status changes',
+-  'settings:own': "Read and change the plugin's own settings"
++  'settings:own': "Read and change the plugin's own settings",
++  'commands:own': "Run this plugin’s declared worker commands from its own panel"
+ }
+ 
+ /**
+--- a/src/shared/plugins/plugin-host-api.ts
++++ b/src/shared/plugins/plugin-host-api.ts
+@@ -121,6 +121,16 @@
+ 
+ export const PLUGIN_HOST_API_V0: readonly PluginHostMethodSpec[] = [
+   spec({
++    name: 'commands.invokeOwn',
++    since: '1.0',
++    scope: 'plugin-private',
++    capability: 'commands:own',
++    mutation: true,
++    panel: true,
++    params: z.object({ commandId: z.string().min(1).max(256), args: pluginJsonValueSchema.optional() }).strict(),
++    result: pluginJsonValueSchema
++  }),
++  spec({
+     name: 'workspace.readContext',
+     since: '1.0',
+     scope: 'active-worktree',
+--- a/src/main/plugins/plugin-host-method-bindings.ts
++++ b/src/main/plugins/plugin-host-method-bindings.ts
+@@ -17,6 +17,7 @@
+ /** Structural service surface the facade delegates to. Desktop main binds it
+  *  over runtime services; relay policy and conformance tests bind fakes. */
+ export type PluginHostServices = {
++  invokeOwnCommand?: (pluginId: string, commandId: string, args?: unknown) => Promise<unknown>
+   resolveActiveWorktreeContext(): Promise<PluginWorktreeContext | null>
+   listWorktreeTerminals(worktreeId: string): Promise<{ id: string }[]>
+   sendTerminalText(
+@@ -69,6 +70,12 @@
+ }
+ 
+ const HANDLERS = new Map<string, BoundPluginHostMethod>([
++  definePluginMethod('commands.invokeOwn', async (params, { pluginId, services }) => {
++    if (!services.invokeOwnCommand) throw new Error('own command bridge unavailable')
++    const { commandId, args } = params as { commandId: string; args?: unknown }
++    // Identity comes only from the consented panel session; never from params.
++    return (await services.invokeOwnCommand(pluginId, commandId, args)) ?? null
++  }),
+   definePluginMethod('workspace.readContext', async (_params, { services }) => {
+     const context = await services.resolveActiveWorktreeContext()
+     if (!context) {
+--- a/src/main/plugins/plugin-host-service-bindings.ts
++++ b/src/main/plugins/plugin-host-service-bindings.ts
+@@ -31,10 +31,12 @@
+ export function bindPluginHostServices(input: {
+   delegate: PluginRuntimeDelegate
+   pluginsDataDir: string
++  invokeOwnCommand?: PluginHostServices['invokeOwnCommand']
+   subscribeEvents: (pluginKey: string, events: PluginEventName[]) => PluginEventName[]
+ }): PluginHostServices {
+   const { delegate, pluginsDataDir, subscribeEvents } = input
+   return {
++    invokeOwnCommand: input.invokeOwnCommand,
+     resolveActiveWorktreeContext: async () => {
+       const context = await delegate.resolveActiveWorktreeContext()
+       if (!context) {
+--- a/src/main/plugins/plugin-service.ts
++++ b/src/main/plugins/plugin-service.ts
+@@ -259,6 +259,7 @@
+         services: this.runtimeDelegate
+           ? bindPluginHostServices({
+               delegate: this.runtimeDelegate,
++              invokeOwnCommand: (key, commandId, args) => this.invokeCommand(key, commandId, args),
+               pluginsDataDir: getPluginsDataDir(this.options.userDataPath),
+               subscribeEvents: (key, events) => this.eventBus.subscribe(key, events)
+             })

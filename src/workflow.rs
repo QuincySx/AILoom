@@ -131,15 +131,19 @@ pub fn create(data_root: &Path, name: &str) -> Result<WorkflowRun> {
 }
 
 fn library_resource_digest(data_root: &Path, resource_id: &str) -> Option<String> {
-    // 个人库内按完整 ResourceId 校验真实存在（不凭名字假定）
+    // 资源库内按完整 ResourceId 校验真实存在（不凭名字假定）
     let lib = crate::personal_library::library_root(data_root);
     if !lib.is_dir() {
         return None;
     }
     let manifest = crate::manifest::TeamManifest::load_from(&lib).ok()?;
-    let entries =
-        crate::resource::enumerate(&lib, &manifest, crate::personal_library::LIBRARY_TEAM_ID)
-            .ok()?;
+    let entries = crate::resource::enumerate(
+        &lib,
+        &manifest,
+        crate::personal_library::LIBRARY_TEAM_ID,
+        &mut Vec::new(),
+    )
+    .ok()?;
     entries
         .iter()
         .find(|e| e.id.to_string() == resource_id)
@@ -157,7 +161,7 @@ fn sha256_of(b: &[u8]) -> String {
     crate::ids::sha256_hex(b)
 }
 
-/// 绑定流程包：逐阶段解析资源身份；个人库中找不到 → 显式 missing（不静默装）。
+/// 绑定流程包：逐阶段解析资源身份；资源库中找不到 → 显式 missing（不静默装）。
 pub fn bind_pack(
     data_root: &Path,
     id: &str,
@@ -185,7 +189,7 @@ pub fn bind_pack(
                 // 显式缺失：保持 missing，不从未知位置复制
                 binding.resource_id = Some(rid.clone());
                 binding.bound_digest = None;
-                binding.status = "missing（个人库中未找到该资源）".into();
+                binding.status = "missing（资源库中未找到该资源）".into();
             }
         }
     }
@@ -212,7 +216,7 @@ pub fn record_input(
     Ok(run)
 }
 
-/// 按资源身份记录输入版本（L06：给页面一个真实入口；摘要取自个人库实际内容，
+/// 按资源身份记录输入版本（L06：给页面一个真实入口；摘要取自资源库实际内容，
 /// 资源不存在 → 显式报错，不凭名字记录）。
 pub fn record_resource_input(data_root: &Path, id: &str, resource_id: &str) -> Result<WorkflowRun> {
     let digest = library_resource_digest(data_root, resource_id).ok_or_else(|| {
@@ -251,7 +255,7 @@ pub fn put_artifact(
     ) {
         if existing.version != base {
             return Err(Error::new(
-                code::USER_CONTENT_CONFLICT,
+                code::PRECONDITION_FAILED,
                 format!(
                     "产物版本已变化（期望 v{base}，当前 v{}）——拒绝覆盖，请基于最新版本重试",
                     existing.version
@@ -482,7 +486,7 @@ pub fn export_execute(
             .unwrap_or_default(),
     ) {
         return Err(Error::new(
-            code::USER_CONTENT_CONFLICT,
+            code::TARGET_CONFLICT,
             "目标已被 Git 跟踪（公司文件），导出拒绝覆盖",
         ));
     }
@@ -495,13 +499,13 @@ pub fn export_execute(
     match expected_fingerprint {
         None => {
             return Err(Error::new(
-                code::USER_CONTENT_CONFLICT,
+                code::USAGE,
                 "缺少导出确认指纹（必须先预览并回传 target_fingerprint）",
             ));
         }
         Some(expected) if expected != current => {
             return Err(Error::new(
-                code::USER_CONTENT_CONFLICT,
+                code::PRECONDITION_FAILED,
                 format!("导出目标已变化（预览时 {expected}，当前 {current}），拒绝覆盖"),
             ));
         }
@@ -564,7 +568,7 @@ mod tests {
     #[test]
     fn create_bind_put_and_spec_review_flow() {
         let data = tempfile::tempdir().unwrap();
-        // 个人库 + skill（用于真实绑定校验）
+        // 资源库 + skill（用于真实绑定校验）
         crate::personal_library::ensure_library(data.path()).unwrap();
         let src = data.path().join("sk");
         std::fs::create_dir_all(&src).unwrap();

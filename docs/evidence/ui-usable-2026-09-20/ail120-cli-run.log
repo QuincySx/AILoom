@@ -1,0 +1,22 @@
+[AIL-120-cli] PASS CLI scan-skills：未托管条目
+[AIL-120-cli] PASS CLI scan-skills：损坏条目独立报错
+[AIL-120-cli] PASS CLI scan-skills：不指定根时只扫宿主目录（仅托管部署/异常，无越界读取）
+[AIL-120-cli] PASS CLI select/effective：引用生效
+[AIL-120-cli] PASS CLI sync：部署成功
+[AIL-120-cli] PASS CLI sync：动作计数（applied=0, noop=1）
+[AIL-120-cli] PASS CLI sync：持久化撤销清单（job=21e39d54…）
+[AIL-120-cli] PASS CLI undo：恢复 1 项
+[AIL-120-cli] PASS CLI undo：磁盘回滚
+[AIL-120-cli] PASS CLI undo：重复撤销被拒（清单已处理）
+[AIL-120-cli] PASS CLI sync：重新部署恢复现场
+[AIL-120-cli] PASS CLI library delete：预览模式且资源在库
+[AIL-120-cli] PASS CLI library delete：执行移入归档
+[AIL-120-cli] PASS 副本已从资源库移除
+[AIL-120-cli] PASS 删除可恢复（归档：/tmp/ailoom-usable/data/library-archive/62c27e50-202e-4fc0-8b26-58ada8ce317b/cli-delete-test）
+CLI pending: 0 | Web pending: 0
+[AIL-120-cli] PASS CLI/Web pending 一致
+[AIL-120-cli] PASS CLI/Web 资源集合一致
+[AIL-120-cli] PASS CLI/Web 宿主状态一致
+{
+  "failures": []
+}

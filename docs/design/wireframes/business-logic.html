@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AILoom 业务逻辑线稿 · 2026-09-21</title>
+<style>
+  :root{
+    --ink:#1f2328; --muted:#57606a; --line:#d0d7de; --bg:#f6f8fa;
+    --blue:#0969da; --green:#1a7f37; --amber:#9a6700; --red:#cf222e; --purple:#8250df;
+  }
+  *{box-sizing:border-box}
+  body{font:15px/1.65 -apple-system,"PingFang SC","Segoe UI",sans-serif;color:var(--ink);margin:0;background:#fff}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 28px 80px}
+  h1{font-size:26px;margin:0 0 4px}
+  .sub{color:var(--muted);margin-bottom:20px}
+  h2{font-size:20px;margin:48px 0 4px;padding-top:18px;border-top:2px solid var(--line)}
+  h2 .no{color:var(--blue);font-variant-numeric:tabular-nums;margin-right:6px}
+  .lead{color:var(--muted);margin:0 0 14px}
+  nav.toc{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 6px}
+  nav.toc a{font-size:13px;color:var(--blue);text-decoration:none;border:1px solid var(--line);border-radius:99px;padding:2px 12px;background:var(--bg)}
+  /* ---------- 元信息 ---------- */
+  .meta{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 12px}
+  .meta span{font-size:12px;border-radius:5px;padding:2px 9px;background:var(--bg);border:1px solid var(--line);color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  .meta .ui b{color:var(--blue)} .meta .api b{color:var(--purple)} .meta .disk b{color:var(--amber)}
+  /* ---------- 流程线稿 ---------- */
+  .flow{border:1px solid var(--line);border-radius:10px;padding:16px 16px 8px;background:#fff;margin-bottom:10px}
+  .lane{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .step{border:1.5px solid var(--ink);border-radius:8px;padding:5px 12px;background:#fff;font-size:13.5px;font-weight:500;white-space:nowrap}
+  .step.sys{border-style:solid;border-color:var(--purple);color:var(--purple)}
+  .step.disk{border-color:var(--amber);color:var(--amber);border-style:dashed}
+  .step.dec{border-style:dashed;border-radius:2px;background:var(--bg)}
+  .step.ok{border-color:var(--green);color:var(--green)}
+  .step.stop{border-color:var(--red);color:var(--red)}
+  .step.todo{border-style:dotted;color:var(--muted);background:repeating-linear-gradient(45deg,transparent,transparent 6px,#00000006 6px,#00000006 12px)}
+  .arr{color:var(--muted);font-size:15px}
+  .down{color:var(--muted);margin:0 0 4px 26px;font-size:14px}
+  .branch{margin:-6px 0 14px 40px;padding:8px 12px;border-left:3px solid var(--line);background:var(--bg);border-radius:0 8px 8px 0;font-size:13px;color:var(--muted)}
+  .branch b{color:var(--ink)}
+  .branch.warn{border-left-color:var(--red);background:#fff5f5ee}
+  .branch.good{border-left-color:var(--green);background:#f0fff4cc}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12.5px;color:var(--muted);margin:8px 0 0}
+  /* ---------- 界面线框 ---------- */
+  .wire{border:2px solid var(--ink);border-radius:10px;overflow:hidden;margin-bottom:10px;background:#fff}
+  .w-nav{display:flex;gap:14px;align-items:center;background:var(--ink);color:#fff;padding:7px 14px;font-size:12.5px}
+  .w-nav .brand{font-weight:700}
+  .w-nav .sp{flex:1}
+  .w-body{display:flex;min-height:60px}
+  .w-side{width:150px;border-right:1px solid var(--line);padding:10px 0;background:var(--bg);font-size:12.5px;flex-shrink:0}
+  .w-side div{padding:5px 14px;color:var(--muted)}
+  .w-side div.on{color:var(--ink);font-weight:600;border-right:2px solid var(--ink);background:#fff}
+  .w-main{flex:1;padding:12px 16px;min-width:0}
+  .w-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .w-title{font-weight:700;font-size:14px}
+  .w-pill{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 9px;color:var(--muted)}
+  .w-pill.g{color:var(--green);border-color:var(--green)} .w-pill.a{color:var(--amber);border-color:var(--amber)}
+  .w-pill.r{color:var(--red);border-color:var(--red)} .w-pill.b{color:var(--blue);border-color:var(--blue)}
+  .w-btn{font-size:11.5px;border:1px solid var(--ink);border-radius:6px;padding:2px 10px;background:#fff;white-space:nowrap}
+  .w-btn.p{background:var(--ink);color:#fff}
+  .w-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:8px 0 10px;flex-wrap:wrap}
+  .w-tabs span{font-size:12px;padding:4px 12px;color:var(--muted);border-radius:6px 6px 0 0}
+  .w-tabs span.on{background:var(--ink);color:#fff}
+  .w-row{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:7px;font-size:12.5px}
+  .w-row .rh{display:flex;align-items:center;gap:8px}
+  .w-row .nm{font-weight:600}
+  .w-row .ds{color:var(--muted);font-size:11.5px;margin:2px 0}
+  .w-row .ac{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .w-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:860px){.w-grid{grid-template-columns:1fr}}
+  .w-note{font-size:12px;color:var(--muted);padding:6px 2px 0}
+  .w-dialog{border:2px solid var(--ink);border-radius:12px;box-shadow:6px 6px 0 #00000012;margin:0 auto 10px;max-width:640px;background:#fff;overflow:hidden}
+  .w-dialog .dh{background:var(--bg);border-bottom:1px solid var(--line);padding:8px 14px;font-weight:700;font-size:13.5px;display:flex}
+  .w-dialog .dh .x{margin-left:auto;color:var(--muted)}
+  .w-dialog .db{padding:12px 14px;font-size:12.5px}
+  .w-input{border:1px solid var(--line);border-radius:6px;padding:5px 10px;color:var(--muted);font-size:12px;background:#fff;margin:4px 0}
+  .w-foot{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line);background:var(--bg)}
+  .w-scan{border:1px dashed var(--amber);border-radius:8px;padding:8px 12px;margin-top:10px;font-size:12.5px;color:var(--muted)}
+  .w-scan b{color:var(--amber)}
+  code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>AILoom 业务逻辑线稿</h1>
+<p class="sub">2026-09-21 · 对应已交付的 USABLE-LOCAL 急用版（AIL-110~115、112、118、119）· 标注当前实现边界，未做部分如实标 ⛔</p>
+
+<div class="legend">
+  <span class="step">用户动作</span>
+  <span class="step sys">系统服务</span>
+  <span class="step disk">磁盘产物</span>
+  <span class="step dec">判断</span>
+  <span class="step ok">成功态</span>
+  <span class="step stop">失败/守卫</span>
+  <span class="step todo">⛔ 未交付</span>
+  <span style="color:var(--muted)">｜ 元信息：<b style="color:var(--blue)">UI 入口</b> · <b style="color:var(--purple)">API</b> · <b style="color:var(--amber)">落盘</b></span>
+</div>
+
+<nav class="toc">
+  <a href="#ov">总览</a><a href="#base">基础机制</a><a href="#b1">1 登记</a><a href="#b2">2 宿主</a><a href="#b3">3 扫描</a><a href="#b4">4 入库</a><a href="#b5">5 添加引用</a><a href="#b6">6 移除</a><a href="#b7">7 预览应用</a><a href="#b8">8 部署状态</a><a href="#b9">9 指令</a><a href="#b10">10 删除未托管</a><a href="#b11">11 MCP</a><a href="#b12">12 Agent/其他</a><a href="#b13">13 来源与故障</a><a href="#b14">14 CLI 同源</a><a href="#ui">界面线框</a>
+</nav>
+
+<!-- ================= 总览 ================= -->
+<h2 id="ov"><span class="no">◎</span>端到端主线：把一个本地 Skill 用起来</h2>
+<p class="lead">用户视角的完整旅程。1~8 步是急用版主链路；任何一步取消都零写入。</p>
+<div class="flow">
+  <div class="lane">
+    <span class="step">① 登记项目<br><small>普通文件夹即可</small></span><span class="arr">→</span>
+    <span class="step">② 扫描已有 Skill<br><small>只读</small></span><span class="arr">→</span>
+    <span class="step">③ 入库<br><small>本地导入/合集</small></span><span class="arr">→</span>
+    <span class="step">④ 项目里添加引用</span><span class="arr">→</span>
+    <span class="step">⑤ 启用宿主<br><small>Claude/Codex</small></span><span class="arr">→</span>
+    <span class="step">⑥ 预览</span><span class="arr">→</span>
+    <span class="step">⑦ 应用</span><span class="arr">→</span>
+    <span class="step disk">⑧ 写入项目目录<br><small>.claude/skills/…</small></span>
+  </div>
+  <div class="lane">
+    <span class="step ok">⑧a 面板明确显示结果<br><small>写入项+路径+待验证</small></span><span class="arr">⇄</span>
+    <span class="step">⑨ 撤销 / 移除引用</span><span class="arr">→</span>
+    <span class="step">⑩ 再应用清理或恢复</span><span class="arr">→</span>
+    <span class="step ok">重启后全部保留</span>
+  </div>
+  <div class="legend"><span>系统全程约束：不动知识正文 · 不产生 .git · 项目之间互相隔离 · 身份=登记路径哈希</span></div>
+</div>
+
+<!-- ================= 基础机制 ================= -->
+<h2 id="base"><span class="no">◇</span>基础机制：东西放在哪、谁是谁</h2>
+<p class="lead">三条线稿解释后面所有业务的共同前提。</p>
+
+<div class="meta"><span class="disk"><b>数据根</b> data/</span><span class="disk"><b>实体库</b> XDG_DATA_HOME/ailoom/store</span><span class="disk"><b>项目产物</b> 各项目目录内 .claude/ 等</span></div>
+<div class="flow">
+  <div class="lane"><span class="step sys">data/repos/&lt;repo-id&gt;/</span><span class="arr">→</span><span class="step"><small>project.json 登记信息 · registry.json 宿主/范围</small></span></div>
+  <div class="lane"><span class="step sys">data/profile/profile.toml</span><span class="arr">→</span><span class="step"><small>每项目的宿主开关 + 资源引用（enable/disable，按层）</small></span></div>
+  <div class="lane"><span class="step sys">data/library/</span><span class="arr">→</span><span class="step"><small>个人副本（导入入库的 Skill 实体）</small></span><span class="arr">·</span><span class="step sys">data/collections/</span><span class="step"><small>来源缓存与快照</small></span></div>
+  <div class="lane"><span class="step sys">data/project-archive/</span><span class="arr">→</span><span class="step"><small>删除未托管 Skill 的归档（可手动移回）</small></span></div>
+  <div class="lane"><span class="step disk">项目目录/.claude/skills/…　.claude/rules/ailoom-personal.md　AGENTS.override.md</span><span class="arr">←</span><span class="step sys">apply 时生成；undo/停用时清理</span></div>
+</div>
+
+<div class="meta"><span class="ui"><b>身份</b> repo-id</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">登记路径</span><span class="arr">→</span>
+    <span class="step sys">路径哈希 = repo-id（如 nongit-b4a7…）</span><span class="arr">→</span>
+    <span class="step dec">目录还在吗？</span>
+  </div>
+  <div class="down">└─ 在 → active，正常配置　｜　不在 → missing，项目页显示「目录失联」+ 两条恢复路（见 1）</div>
+  <div class="branch">身份契约：<b>移回原路径</b>则原身份恢复；<b>换路径重新登记</b>=新项目，系统绝不静默合并两份配置。</div>
+</div>
+
+<div class="meta"><span class="ui"><b>作用域</b> 层模型</span><span class="api"><b>API</b> /api/effective · /api/preview/repo-default</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step sys">团队声明层</span><span class="arr">→</span>
+    <span class="step sys">项目默认层<br><small>profile.repos.&lt;id&gt;.default</small></span><span class="arr">→</span>
+    <span class="step sys">工作树层<br><small>.worktrees.&lt;name&gt;</small></span><span class="arr">→</span>
+    <span class="step ok">有效配置 effective</span>
+  </div>
+  <div class="branch">上层不表态（无键）→ 下层说了算；下层「恢复继承」= 删除本层键，回到上层表态。UI 里每个引用行都同时展示：<b>本层设置</b> / <b>有效配置来源</b> / <b>磁盘部署状态</b> 三件事。</div>
+</div>
+
+<!-- ================= B1 ================= -->
+<h2 id="b1"><span class="no">①</span>项目登记（Git / 非 Git 同一入口）</h2>
+<p class="lead">普通文件夹就是一等公民：不 init、不推远端、不搬文件。</p>
+<div class="meta"><span class="ui"><b>UI</b> 项目 → 新建项目 Dialog</span><span class="api"><b>API</b> /api/repo/discover · /api/projects/metadata · /api/fs/*</span><span class="disk"><b>落盘</b> data/repos/&lt;id&gt;/ + registry</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">新建项目</span><span class="arr">→</span>
+    <span class="step">选路径（手填/目录浏览）</span><span class="arr">→</span>
+    <span class="step sys">discover：识别 Git / 普通目录</span><span class="arr">→</span>
+    <span class="step">命名+分类</span><span class="arr">→</span>
+    <span class="step dec">确认 or 取消？</span>
+  </div>
+  <div class="branch good">确认 → 建 repo-id、写登记 → 自动打开项目页，徽标显示「文件夹项目 / Git 项目」。</div>
+  <div class="branch warn">取消 → <b>零写入</b>：repos 目录、profile 都不变（门禁断言项）。</div>
+  <div class="lane">
+    <span class="step dec">日后目录失联？</span><span class="arr">→</span>
+    <span class="step stop">项目页顶部「目录失联」面板</span>
+  </div>
+  <div class="branch">恢复路 A：把目录移回原路径 → 点「<b>重新检查</b>」→ 原项目恢复（配置保留）。恢复路 B：在新路径重新登记 = 新身份，不合并。</div>
+</div>
+
+<!-- ================= B2 ================= -->
+<h2 id="b2"><span class="no">②</span>宿主启用 / 停用（含继承）</h2>
+<p class="lead">决定 Claude Code / Codex CLI 是否接管这个项目。</p>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · 宿主页签</span><span class="api"><b>API</b> /api/profile/select · /api/hosts/detect · /api/effective</span><span class="disk"><b>落盘</b> profile.toml 的 hosts 键</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">宿主行下拉选</span><span class="arr">→</span>
+    <span class="step dec">选了什么？</span>
+  </div>
+  <div class="down">├─ 启用/停用 → 写本层键 →「保存」→ effective 立即可查（UI 与 CLI 同读一份）</div>
+  <div class="down">└─ 恢复继承 → 删除本层键 → 有效值回到上层</div>
+  <div class="lane">
+    <span class="step">「检测版本」按钮</span><span class="arr">→</span>
+    <span class="step sys">hosts/detect</span><span class="arr">→</span>
+    <span class="step ok">显示本机版本</span><span class="arr">｜</span>
+    <span class="step stop">未检测≠未安装（文案明示）</span>
+  </div>
+  <div class="branch">非 Git 项目只有「项目默认」一层，工作树层仅 Git 项目可用；无效的范围控件直接禁用而非报错。</div>
+</div>
+
+<!-- ================= B3 ================= -->
+<h2 id="b3"><span class="no">③</span>扫描项目里已有的 Skill（只读）</h2>
+<p class="lead">不登记也能看见：项目目录里已经存在的 Skill 被发现并分类，不动任何文件。</p>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · Skill 页签下方「项目目录里的 Skill」</span><span class="api"><b>API</b> /api/project/scan-skills（有界扫描：宿主目录深≤2、自定根深≤3）</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">填 Skill 根（如 skills）→ 点扫描</span><span class="arr">→</span>
+    <span class="step sys">walkdir：跳过 .git/node_modules/隐藏目录，不跟随链接内容</span><span class="arr">→</span>
+    <span class="step dec">每项分类</span>
+  </div>
+  <div class="down">├─ 无 frontmatter 引用 → <b>项目自有未托管</b>（无虚假的版本/更新按钮）</div>
+  <div class="down">├─ 符号链接指向 store → <b>AILoom 托管</b>（去重：已在引用列表的不重复列）</div>
+  <div class="down">├─ 符号链接指向外部 → <b>外部链接</b>（只报分类+目标路径，不读内容）</div>
+  <div class="down">└─ SKILL.md 损坏 → <b>独立报错</b>，不锁定整张列表</div>
+  <div class="branch good">守卫：扫描前后源文件哈希逐字节不变；结果只读展示；接管=导入副本（原目录不动）；删除走独立双确认（见 ⑩）。</div>
+</div>
+
+<!-- ================= B4 ================= -->
+<h2 id="b4"><span class="no">④</span>资源入库（全局资源中心）</h2>
+<p class="lead">四种来源汇入同一个资源库；扫描≠入库，入库才可被项目引用。</p>
+<div class="meta"><span class="ui"><b>UI</b> 资源中心 /library · 各处「＋导入」Dialog（共用组件）</span><span class="api"><b>API</b> /api/library/import(-entry/-git) · /api/collections/preview+apply · /api/migrations/cc-switch/*</span><span class="disk"><b>落盘</b> data/library/ 个人副本</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">＋导入</span><span class="arr">→</span>
+    <span class="step dec">来源类型？</span>
+  </div>
+  <div class="down">├─ 本地文件夹 → 填<b>存储名（须 ASCII）</b>+浏览 → 预览 → 确认 → 复制为个人副本（原名目录不动）</div>
+  <div class="down">├─ 合集仓库 → preview → apply（E3003 逐项处置：仓内链接放行、外逃/悬空定位跳过）</div>
+  <div class="down">├─ Git 来源 → 走既有服务克隆入库</div>
+  <div class="down">└─ CC Switch → scan → read → preview → apply（迁移既有来源）</div>
+  <div class="lane">
+    <span class="step ok">入库成功 → 刷新目录、选中新条目</span><span class="arr">｜</span>
+    <span class="step">「检查更新」</span><span class="arr">→</span>
+    <span class="step sys">library/check-update / update</span>
+  </div>
+  <div class="branch warn">守卫：取消导入零写入；导入失败<b>不撤销</b>已入库的其他资源；全局导入成功≠任何项目被暗启用；删除库内资源走 CLI 化的 library/delete（移入 library-archive 可恢复）。</div>
+</div>
+
+<!-- ================= B5 ================= -->
+<h2 id="b5"><span class="no">⑤</span>项目内添加引用（含 ＋导入 不离页）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · Skill 页签 →「添加Skill」Dialog（resourcePicker）</span><span class="api"><b>API</b> /api/resources · /api/profile/select</span><span class="disk"><b>落盘</b> profile.toml 的 resources 键</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">点「添加Skill」</span><span class="arr">→</span>
+    <span class="step dec">库里有没有货？</span>
+  </div>
+  <div class="down">├─ 有 → 搜索（真实名称/说明）+ 来源分组 + 已添加项禁选标注 → 勾选 →「添加所选」</div>
+  <div class="down">└─ 空 → 空态如实显示（不 undefined），Dialog 内直接「<b>＋导入</b>」→ 导入成功自动选中新条目 → 回到同一 Dialog 继续（<b>全程 hash 停在项目页</b>）</div>
+  <div class="lane">
+    <span class="step sys">逐项保存 profile</span><span class="arr">→</span>
+    <span class="step dec">某项失败？</span>
+  </div>
+  <div class="branch good">全部成功 →「已保存 N 条引用」，引用列表立即出现。</div>
+  <div class="branch warn">部分失败 → 如实报「已保存 X 项；Y 项失败」+列失败项；<b>成功项不回滚</b>；仅失败项保留勾选，重试只补失败项。保存期间搜索/勾选/重复提交/切项目全部锁住。</div>
+</div>
+
+<!-- ================= B6 ================= -->
+<h2 id="b6"><span class="no">⑥</span>移除引用（两种语义，说清楚再动手）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 引用行 →「从本项目移除…」Dialog</span><span class="api"><b>API</b> /api/profile/select（inherit=删键）</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">点移除</span><span class="arr">→</span>
+    <span class="step sys">predictAfterClear：预测清除本层后的有效值</span><span class="arr">→</span>
+    <span class="step">Dialog 两个选项</span>
+  </div>
+  <div class="down">├─ <b>清除本层设置</b> → 删键回到继承；确认文案按预测如实说</div>
+  <div class="down">└─ <b>在本范围停用</b> → 写显式 disable；应用后清理磁盘托管文件</div>
+  <div class="branch warn">关键区分：上层（项目默认）已 enable、工作树也 enable 时选「清除本层」→ 文案明示「<b>上层仍启用，文件不会被清理</b>」，plan 也确实无清理动作——不承诺做不到的事。停用项不会被选择器误判为「已添加」而禁选，可重新勾回启用。</div>
+</div>
+
+<!-- ================= B7 ================= -->
+<h2 id="b7"><span class="no">⑦</span>预览与应用（显式两步，结果必现）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · 预览与应用页签（planPreview JobPanel）· 顶部「待生效」横幅</span><span class="api"><b>API</b> /api/jobs/plan → /api/jobs/apply → /api/jobs/undo · /api/jobs/&lt;id&gt; 轮询</span><span class="disk"><b>落盘</b> 项目目录 .claude/skills/… · 持久化任务记录</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">生成预览</span><span class="arr">→</span>
+    <span class="step sys">plan：算出要写/删哪些文件</span><span class="arr">→</span>
+    <span class="step dec">有差异？</span>
+  </div>
+  <div class="down">├─ 无变化 → 如实说「无改动」（应用按钮不给点）</div>
+  <div class="down">└─ 有差异 → 差异清单 →「应用」</div>
+  <div class="lane">
+    <span class="step sys">apply 写盘</span><span class="arr">→</span>
+    <span class="step ok">JobPanel 结果面板</span>
+  </div>
+  <div class="branch good">成功必显示：「应用完成：写入 N 项」+ 每宿主写入路径表 + <b>撤销</b>入口 + 「需新会话生效」提示。不再停留进度文字；过期结果（切了目标/范围）直接丢弃不回写旧 DOM。</div>
+  <div class="branch">失败/部分失败也在此面板如实列出；「操作记录」页可 undo。改了配置忘了应用时，项目页顶部常驻「待生效」横幅一键跳预览。</div>
+</div>
+
+<!-- ================= B8 ================= -->
+<h2 id="b8"><span class="no">⑧</span>磁盘部署状态（四态，多宿主逐个说）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 引用行第三段徽章</span><span class="api"><b>API</b> /api/deploy-status（期望 artifacts × manifest 比对）</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step sys">deploy-status</span><span class="arr">→</span>
+    <span class="step dec">比对结果？</span>
+  </div>
+  <div class="down">├─ current 已部署（与资源库一致）｜ stale 待更新（库已变）｜ not-deployed 未部署</div>
+  <div class="down">└─ 查询失败 → <b>未知 + 重试按钮</b>（绝不把失败说成「未部署」）</div>
+  <div class="branch warn">两宿主一旧一新 → 显示「各宿主不一致」并逐宿主列出，不乐观聚合称「已部署一致」。</div>
+</div>
+
+<!-- ================= B9 ================= -->
+<h2 id="b9"><span class="no">⑨</span>Markdown 个人指令</h2>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · Markdown 指令页签；独立 /instructions 页同样上报脏状态</span><span class="api"><b>API</b> /api/profile/instructions · /api/draft</span><span class="disk"><b>落盘</b> 项目默认层指令 → apply 时写 .claude/rules/ailoom-personal.md 等</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">编辑文本</span><span class="arr">→</span>
+    <span class="step dec">未保存就切页签/范围/路由？</span>
+  </div>
+  <div class="down">├─ 是 → 放弃确认 Dialog；取消则草稿原样保留（不丢稿）</div>
+  <div class="down">└─ 否/确认 → 保存 → 生成待生效 → 走 ⑦ 应用落盘</div>
+  <div class="branch">范围固定为项目默认层（非 Git 项目也如此）；不支持工作树差异的控件直接禁用。统一指令/宿主加载规则（AGENTS 与 CLAUDE 共存语义）⛔ AIL-117 未做，不静默改写用户已有的 AGENTS.md/CLAUDE.md。</div>
+</div>
+
+<!-- ================= B10 ================= -->
+<h2 id="b10"><span class="no">⑩</span>删除未托管 Skill（两步确认 + 归档可恢复）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 扫描区条目 →「删除…」</span><span class="api"><b>API</b> /api/project/delete-skill 两段：preview 发令牌+指纹 → execute 校验后归档</span><span class="disk"><b>落盘</b> data/project-archive/&lt;ts&gt;-&lt;名&gt;/（可手动移回）</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">点删除</span><span class="arr">→</span>
+    <span class="step sys">预览影响（列出将删内容）</span><span class="arr">→</span>
+    <span class="step">「继续：输入名称确认」</span><span class="arr">→</span>
+    <span class="step">输入目录名</span><span class="arr">→</span>
+    <span class="step dec">名称一致？</span>
+  </div>
+  <div class="down">└─ 是 → 服务端校验：令牌单次有效 · 指纹一致（目录被换过则拒）· 路径不穿越 · 非项目根 → <b>归档并移除</b></div>
+  <div class="branch warn">守卫全绿：名称错零写入；令牌重放/重启后失效；目录内容被替换后拒绝执行；符号链接只摘链接不碰目标；项目根/穿越路径直接拒。</div>
+</div>
+
+<!-- ================= B11 ================= -->
+<h2 id="b11"><span class="no">⑪</span>MCP（现状：共享定义引用，只读）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · MCP 页签</span><span class="api"><b>API</b> /api/resources/mcp-detail（服务端掩码，$ENV: 引用约束）</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">引用共享 MCP 定义</span><span class="arr">→</span>
+    <span class="step sys">详情只读展示（掩码）</span><span class="arr">→</span>
+    <span class="step disk">apply 随计划写入宿主配置</span>
+  </div>
+  <div class="lane">
+    <span class="step todo">⛔ 密钥安全托管/更换/作用域（AIL-116）</span><span class="arr">←</span>
+    <span class="step stop">等安全设计评审：Keychain vs 加密文件等，未评审不实现</span>
+  </div>
+  <div class="branch warn">明确不宣称：掩码不是加密存储，「MCP 密钥已安全托管」当前不可说。</div>
+</div>
+
+<!-- ================= B12 ================= -->
+<h2 id="b12"><span class="no">⑫</span>Agent / 其他资源（能力矩阵与禁选一致）</h2>
+<div class="meta"><span class="ui"><b>UI</b> 项目页 · Agent / 其他资源页签 · 页头说明 + 折叠的「加载方式」参考表</span><span class="api"><b>API</b> /api/capabilities · /api/resources</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">进页签</span><span class="arr">→</span>
+    <span class="step sys">capabilities 首次即加载</span><span class="arr">→</span>
+    <span class="step dec">宿主支持该类型？</span>
+  </div>
+  <div class="down">├─ 原生支持（如 claude×agent）→ 可勾选</div>
+  <div class="down">└─ 需生成入口 → 说明「AILoom 生成到宿主配置」；不支持 → 禁选+原因，矩阵与选择器同一份事实</div>
+  <div class="branch">其他资源类型行渲染不抛错（移除/恢复继承在同页可用）；页签切换受脏状态保护。</div>
+</div>
+
+<!-- ================= B13 ================= -->
+<h2 id="b13"><span class="no">⑬</span>来源更新与故障恢复</h2>
+<div class="meta"><span class="ui"><b>UI</b> 来源页（显式选择项目目标）· 资源中心警告 · 项目页失效引用行</span><span class="api"><b>API</b> /api/library/check-update · /api/collections/check+update · warnings 字段</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">来源检查更新</span><span class="arr">→</span>
+    <span class="step dec">扫描发现异常链接？</span>
+  </div>
+  <div class="down">├─ 仓内链接 → 放行　├─ 外逃/悬空 → <b>逐项 warnings 定位</b>（不再整源拒绝 E3003）</div>
+  <div class="down">└─ 更新 → 按来源更新快照；同步失败逐项目报告，不暗改其他项目</div>
+  <div class="lane">
+    <span class="step dec">项目引用的来源条目没了？</span><span class="arr">→</span>
+    <span class="step stop">失效引用仍显示（不消失）</span><span class="arr">→</span>
+    <span class="step">可在项目内「解除引用」</span><span class="arr">→</span>
+    <span class="step ok">profile 无残留</span>
+  </div>
+  <div class="branch">非 Git 项目在作用域选择器同样可选；来源页部署状态需显式选目标，未选时明确提示而非拿隐式 currentTarget 猜。</div>
+</div>
+
+<!-- ================= B14 ================= -->
+<h2 id="b14"><span class="no">⑭</span>CLI 与控制台同源</h2>
+<div class="meta"><span class="ui"><b>UI</b> 终端 <code>ailoom …</code></span><span class="api"><b>API</b> 共用 commands/：personal、scan_skills、library、plan/apply、undo_apply</span></div>
+<div class="flow">
+  <div class="lane">
+    <span class="step">CLI personal --action effective</span><span class="arr">→</span>
+    <span class="step sys">同一 resolver/profile 服务</span><span class="arr">→</span>
+    <span class="step ok">与 Web 页面读到同一状态</span>
+  </div>
+  <div class="down">└─ 撤销清单、扫描、库删除均 CLI 化并持久化 → Web「操作记录」与 CLI undo 互认</div>
+  <div class="branch">门禁断言过：CLI 与 Web 同一 repo_id、同一 enabled 状态。CLI 导入默认预览、<code>--execute</code> 才落盘。</div>
+</div>
+
+<!-- ================= 界面线框 ================= -->
+<h2 id="ui"><span class="no">▣</span>关键界面线框</h2>
+<p class="lead">只画结构与信息层级，不画视觉稿。</p>
+
+<div class="w-grid">
+
+<div>
+<div class="wire">
+  <div class="w-nav"><span class="brand">AILoom</span><span>项目</span><span>资源中心</span><span>来源</span><span>操作记录</span><span class="sp"></span><span> ⟲ 待生效横幅（有未应用改动时常驻）</span></div>
+  <div class="w-body"><div class="w-main">
+    <div class="w-head"><span class="w-title">项目</span><span class="w-pill">搜索</span><span class="w-pill">类型筛选：全部/文件夹/Git</span><span style="flex:1"></span><span class="w-btn p">＋新建项目</span></div>
+    <div class="w-row"><div class="rh"><span class="nm">知识库甲</span><span class="w-pill b">文件夹</span><span class="w-pill">知识库</span><span class="ac"><span class="w-pill g">claude 已启用</span></span></div></div>
+    <div class="w-row"><div class="rh"><span class="nm">知识库乙</span><span class="w-pill b">文件夹</span><span class="ac"><span class="w-pill">未启用</span></span></div></div>
+    <div class="w-row"><div class="rh"><span class="nm">项目丙</span><span class="w-pill">Git</span><span class="ac"><span class="w-pill a">1 项待生效</span></span></div></div>
+    <div class="w-note">失联项目在此列表带红色「目录失联」徽标，点进详情见恢复面板。</div>
+  </div></div>
+</div>
+<p class="w-note"><b>项目列表</b>：登记入口 + 每项目一眼看到宿主状态与待生效数。</p>
+</div>
+
+<div>
+<div class="wire">
+  <div class="w-body"><div class="w-main">
+    <div class="w-head"><span class="w-title">知识库甲</span><span class="w-pill b">文件夹项目：仅作用于本目录</span><span style="flex:1"></span><span class="w-btn">检测宿主版本</span></div>
+    <div class="w-tabs"><span class="on">宿主</span><span>Skill</span><span>MCP</span><span>Agent</span><span>Markdown 指令</span><span>预览与应用</span><span>其他资源</span></div>
+    <div class="w-row"><div class="rh"><span class="nm">Claude Code</span><span class="w-pill g">已启用</span><span class="ac">本层：启用 ▾　<button class="w-btn">保存</button></span></div><div class="ds">有效配置：本层（项目默认）｜磁盘：—</div></div>
+    <div class="w-row"><div class="rh"><span class="nm">Codex CLI</span><span class="w-pill">未启用</span><span class="ac">本层：恢复继承 ▾　<button class="w-btn">保存</button></span></div><div class="ds">未检测版本（不代表未安装）</div></div>
+    <div class="w-note">每行=一个宿主；下拉三选项：启用 / 停用 / 恢复继承。</div>
+  </div></div>
+</div>
+<p class="w-note"><b>项目页 · 宿主</b>：启用/停用+版本检测。</p>
+</div>
+
+<div>
+<div class="wire">
+  <div class="w-body"><div class="w-main">
+    <div class="w-head"><span class="w-title">Skill</span><span style="flex:1"></span><span class="w-btn p">＋添加Skill</span></div>
+    <div class="w-row"><div class="rh"><span class="nm">检索技巧</span><span class="w-pill g">已启用</span><span class="ac">本层设置 ▾　<button class="w-btn">移除…</button></span></div><div class="ds">检索类任务的方法与模板。</div><div class="ds">磁盘：<b>已部署（与资源库一致）</b>｜id personal/skill/personal/retrieval-tips</div></div>
+    <div class="w-row"><div class="rh"><span class="nm">术语表</span><span class="w-pill a">已停用</span><span class="ac">…</span></div><div class="ds">磁盘：未部署</div></div>
+    <div class="w-scan"><b>项目目录里的 Skill</b>（只读扫描）　Skill根 [skills]　<button class="w-btn">扫描项目目录</button><br>
+      ├ 会议纪要 · 项目自有未托管　[接管说明…] [删除…]<br>
+      ├ skills/分类/周报生成 · 项目自有未托管（嵌套）<br>
+      ├ 链接到乙 · 外部链接 → /tmp/…/知识库 乙/…（不读内容）<br>
+      └ ⚠ 损坏技能：SKILL.md 缺 frontmatter（独立报错）</div>
+  </div></div>
+</div>
+<p class="w-note"><b>项目页 · Skill</b>：上半=托管引用（三段状态），下半=只读扫描区（已引用的托管部署去重不重复列）。</p>
+</div>
+
+<div>
+<div class="w-dialog">
+  <div class="dh">添加Skill<span class="x">✕</span></div>
+  <div class="db">
+    <div class="w-input">🔍 按名称/说明搜索…</div>
+    <div class="w-row"><div class="rh"><span class="nm">✅ 检索技巧</span><span class="w-pill">个人副本</span><span class="ac"><span class="w-pill g">已添加</span></span></div></div>
+    <div class="w-row"><div class="rh"><span class="nm">☐ 术语表</span><span class="w-pill">来源仓库</span></span></div></div>
+    <div class="w-note">空库存时：此处显示「资源库为空」＋右侧「＋导入」按钮始终可用。</div>
+  </div>
+  <div class="w-foot"><span class="w-btn">＋导入</span><span style="flex:1"></span><span class="w-btn">取消</span><span class="w-btn p">添加所选</span></div>
+</div>
+<p class="w-note"><b>添加 Dialog</b>：搜索/分组/禁选；导入成功自动选中新条目回本 Dialog。</p>
+</div>
+
+<div>
+<div class="w-dialog">
+  <div class="dh">导入到资源库<span class="x">✕</span></div>
+  <div class="db">
+    <div class="w-input">来源：本地 Skill 文件夹</div>
+    <div class="w-input">路径 /tmp/ailoom-usable/导入源/检索技巧　<button class="w-btn">浏览…</button></div>
+    <div class="w-input">存储名称 retrieval-tips　← 须 ASCII；中文目录名原样保留</div>
+    <div class="w-note">预览列出将复制的条目 →「确认导入」→ 自动选中新条目，回到添加 Dialog 继续勾选，全程不离开项目页。</div>
+  </div>
+  <div class="w-foot"><span class="w-btn">取消</span><span class="w-btn p">预览 → 确认导入</span></div>
+</div>
+<p class="w-note"><b>＋导入 Dialog</b>（共用组件）：项目内与资源中心同款。</p>
+</div>
+
+<div>
+<div class="w-dialog">
+  <div class="dh">从本项目移除「检索技巧」<span class="x">✕</span></div>
+  <div class="db">
+    <div class="w-input">◉ 清除本层设置（推荐）</div>
+    <div class="w-note">清除后：本层不再表态，回到继承。按当前上层预测——<b>项目默认仍启用，文件不会被清理</b>。</div>
+    <div class="w-input">○ 在本范围停用</div>
+    <div class="w-note">显式停用本层；<b>预览并应用后</b>会清理该范围里的托管文件。</div>
+  </div>
+  <div class="w-foot"><span class="w-btn">取消</span><span class="w-btn p">确认</span></div>
+</div>
+<p class="w-note"><b>移除 Dialog</b>：双语义+按真实继承预测的文案，不承诺做不到的清理。</p>
+</div>
+
+<div>
+<div class="wire">
+  <div class="w-body"><div class="w-main">
+    <div class="w-head"><span class="w-title">预览与应用</span><span class="w-pill a">待生效 N 项</span><span style="flex:1"></span><span class="w-btn p">生成预览</span><span class="w-btn">应用</span></div>
+    <div class="w-row"><div class="ds">计划：写入 1 项 · 清理 0 项</div></div>
+    <div class="w-row"><div class="rh"><span class="nm">✅ 应用完成：写入 1 项</span></div><div class="ds">claude → /…/知识库 甲/.claude/skills/retrieval-tips</div><div class="ds">ⓘ 宿主需<b>新开会话</b>才会加载；可在「操作记录」撤销。</div></div>
+  </div></div>
+</div>
+<p class="w-note"><b>预览与应用</b>：plan→apply 两步；结果面板必现（成功/失败/无改动三种都明确）。</p>
+</div>
+
+<div>
+<div class="w-dialog">
+  <div class="dh">删除未托管 Skill「待删除技能」 · 第 1/2 步<span class="x">✕</span></div>
+  <div class="db">
+    <div class="w-note">将删除：<code>/…/skills/待删除技能</code>（含 SKILL.md）<br>会先归档到 AILoom 数据区，可手动移回恢复；不碰任何其他文件。</div>
+    <div class="w-foot"><span class="w-btn">取消</span><span class="w-btn p">继续：输入名称确认 →</span></div>
+  </div>
+</div>
+<div class="w-dialog">
+  <div class="dh">第 2/2 步 · 输入目录名确认<span class="x">✕</span></div>
+  <div class="db"><div class="w-input">输入：待删除技能</div></div>
+  <div class="w-foot"><span class="w-btn">取消</span><span class="w-btn p">确认删除</span></div>
+</div>
+<p class="w-note"><b>删除两步 Dialog</b>：影响预览 → 输入名称；后端令牌+指纹二次校验，归档可恢复。</p>
+</div>
+
+</div>
+
+<p class="sub" style="margin-top:40px">事实来源：src/console/mod.rs 路由表 · src/paths.rs 数据布局 · profile.toml 层模型 · docs/evidence/ui-usable-2026-09-20 门禁脚本断言。⛔ 项：AIL-116（MCP 凭据）、AIL-117（统一指令）保持 Backlog。</p>
+</div>
+</body>
+</html>

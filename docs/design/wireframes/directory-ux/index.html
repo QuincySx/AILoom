@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AILoom · 目录优先 Web 线稿</title>
+  <link rel="stylesheet" href="theme.css?v=10">
+  <script src="theme.js?v=2"></script>
+  <style>
+    body { background: #f7f8f7; }
+    .canvas-shell { width: min(1440px, calc(100% - 64px)); margin-inline: auto; padding: 32px 0 112px; }
+    .canvas-head { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(260px, 340px); gap: 32px; align-items: end; padding: 20px 0 48px; border-bottom: 1px solid var(--vc-line-strong); }
+    .canvas-id { align-self: stretch; display: flex; flex-direction: column; justify-content: space-between; }
+    .canvas-id strong { font-family: var(--vc-mono); font-size: 38px; font-weight: 500; letter-spacing: -.08em; line-height: 1; }
+    .canvas-id span { color: var(--vc-muted); font-family: var(--vc-mono); font-size: var(--vc-font-micro); letter-spacing: .04em; text-transform: uppercase; }
+    .canvas-head h1 { max-width: 860px; margin: 10px 0 0; font-family: var(--vc-display); font-size: clamp(42px, 5.2vw, 74px); font-weight: 720; letter-spacing: -.065em; line-height: .98; text-wrap: balance; }
+    .canvas-intro { max-width: 340px; margin: 0; color: var(--vc-muted); font-size: 15px; line-height: 1.72; }
+    .canvas-brief { display: grid; grid-template-columns: 112px repeat(3, minmax(0, 1fr)); gap: 32px; padding: 18px 0; border-bottom: 1px solid var(--vc-line); }
+    .brief-title, .brief-item span { color: var(--vc-muted); font-family: var(--vc-mono); font-size: var(--vc-font-micro); letter-spacing: .04em; text-transform: uppercase; }
+    .brief-item { display: grid; gap: 5px; }
+    .brief-item strong { font-size: 15px; font-weight: 620; }
+    .canvas-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; row-gap: 64px; margin-top: 48px; }
+    .canvas-cell { min-width: 0; }
+    .cell-label { display: flex; min-height: 68px; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 0 0 14px; }
+    .cell-heading { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; }
+    .cell-label h2 { margin: 0; font-size: 17px; font-weight: 680; letter-spacing: -.02em; }
+    .cell-label p { margin: 4px 0 0; color: var(--vc-muted); font-size: 14px; line-height: 1.5; }
+    .cell-index, .cell-state { color: var(--vc-muted); font-family: var(--vc-mono); font-size: var(--vc-font-micro); letter-spacing: .04em; text-transform: uppercase; }
+    .cell-state { padding-top: 2px; }
+    .frame { position: relative; aspect-ratio: 16 / 10; overflow: hidden; padding: clamp(24px, 3vw, 42px); border: 1px solid var(--vc-line-strong); border-radius: 6px; }
+    .frame h3 { position: relative; z-index: 1; max-width: 9ch; margin: 24px 0 0; font-family: var(--vc-display); font-size: clamp(38px, 4.2vw, 66px); font-weight: 700; letter-spacing: -.065em; line-height: .92; }
+    .frame-a { background: #fbfcfa; }
+    .frame-a::before { content: "01"; position: absolute; right: 32px; bottom: 20px; color: #e3e9e5; font-family: var(--vc-mono); font-size: clamp(100px, 13vw, 190px); font-weight: 600; letter-spacing: -.1em; line-height: .78; }
+    .frame-a::after { content: ""; position: absolute; top: 0; right: 26%; width: 1px; height: 100%; background: var(--vc-primary); opacity: .75; }
+    .frame-b { background: #1f2422; color: #f4f6f3; }
+    .frame-b .vc-label { color: #aab4ae; }
+    .frame-b::before { content: ""; position: absolute; inset: 0; background: linear-gradient(rgba(255,255,255,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.055) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(to left, black, transparent 72%); }
+    .frame-b::after { content: ""; position: absolute; right: 12%; bottom: 15%; width: 18%; aspect-ratio: 1; border-radius: 50%; background: var(--vc-primary); }
+    .wireframe { display: grid; grid-template-rows: 20px 1fr; gap: 20px; background: #fafbfa; color: var(--vc-ink); }
+    .wire-toolbar { display: flex; gap: 6px; align-items: center; }
+    .wire-toolbar span { width: 6px; height: 6px; border: 1px solid var(--vc-line-strong); border-radius: 50%; }
+    .wire-layout { display: grid; grid-template-columns: 28% 1fr; gap: 12px; }
+    .wire-side, .wire-main { border: 1px solid var(--vc-line-strong); border-radius: 5px; }
+    .wire-side { display: grid; align-content: start; gap: 11px; padding: 14px; }
+    .wire-side span { display: block; height: 7px; border-radius: 99px; background: var(--vc-line); }
+    .wire-side span:nth-child(2) { width: 70%; }
+    .wire-side span:nth-child(3) { width: 84%; }
+    .wire-main { display: grid; grid-template-rows: 44% 1fr; gap: 12px; padding: 14px; }
+    .wire-hero { border: 1px dashed var(--vc-line-strong); border-radius: 4px; background: white; }
+    .wire-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .wire-cards span { border: 1px solid var(--vc-line); border-radius: 4px; background: white; }
+    .poster { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto; background: var(--vc-primary-soft); color: var(--vc-ink); }
+    .poster::before { content: ""; position: absolute; top: 0; right: 0; left: 0; height: 6px; background: var(--vc-secondary); }
+    .poster .index { grid-column: 2; color: var(--vc-secondary); font-family: var(--vc-mono); font-size: var(--vc-font-micro); font-weight: 700; }
+    .poster h3 { grid-row: 2; align-self: end; max-width: 7ch; margin: 0 0 22px; font-size: clamp(46px, 5vw, 78px); }
+    .poster .vc-label { grid-row: 3; }
+    @media (max-width: 900px) { .canvas-head { grid-template-columns: 72px 1fr; } .canvas-intro { grid-column: 2; } .canvas-brief { grid-template-columns: 72px 1fr; } .brief-item { grid-column: 2; } }
+    @media (max-width: 720px) { .canvas-shell { width: calc(100% - 32px); padding-top: 12px; } .canvas-head { grid-template-columns: 1fr; gap: 24px; padding-bottom: 32px; } .canvas-id { min-height: 54px; flex-direction: row; align-items: end; } .canvas-intro { grid-column: 1; } .canvas-brief { grid-template-columns: 1fr; gap: 14px; } .brief-item { grid-column: 1; } .canvas-grid { grid-template-columns: 1fr; row-gap: 44px; margin-top: 36px; } .cell-state { display: none; } }
+  
+    .canvas-head h1 {font-size:clamp(32px,4vw,58px);line-height:1.2;letter-spacing:-.03em}
+    .canvas-grid {align-items:start}
+    nav {display:flex;flex-wrap:wrap;gap:8px;padding:24px 0;border-bottom:1px solid var(--vc-line)}
+    nav a {display:flex;align-items:center;min-height:44px;padding:8px 12px;border:1px solid var(--vc-line);border-radius:6px;color:var(--vc-ink);font-size:var(--vc-font-caption)}
+    .diagram {aspect-ratio:auto;overflow:auto;padding:20px;background:var(--vc-surface);min-height:260px}
+    .diagram pre {font-family:var(--vc-mono);font-size:var(--vc-font-caption);line-height:1.9;margin:0;white-space:pre}
+    .cell-label h2 {font-size:20px;margin-top:8px}
+    .caption, details, footer {font-size:var(--vc-font-body);line-height:1.7}
+    summary {cursor:pointer;min-height:44px;padding:8px 0;font-weight:600}
+    li {margin-bottom:10px}
+    details {border-top:1px solid var(--vc-line);padding-top:8px}
+    footer {border-top:1px solid var(--vc-line);margin-top:48px;padding-top:24px}
+    article {scroll-margin-top:24px}
+    :focus-visible {outline:2px solid var(--vc-ink);outline-offset:4px}
+    @media(max-width:1100px){.canvas-grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main class="canvas-shell">
+<header class="canvas-head">
+<div class="canvas-id"><strong>UI</strong><span>2026-09-21</span></div>
+<div><p class="vc-kicker">AIL-121 — AIL-128 · 下一轮实现规划</p><h1>先选目录，<br>再管理资源。</h1></div>
+<p class="canvas-intro">静态线稿评审板，不是已实现的页面。所有名称、数量和路径均为示例；框内操作只作示意，不连接真实服务。</p>
+</header>
+<section class="canvas-brief" aria-label="规划边界"><span class="brief-title">核心边界</span><div class="brief-item"><span>目录</span><strong>Git 与普通知识库使用同一路径</strong></div><div class="brief-item"><span>范围</span><strong>目录配置与项目共享设置分离</strong></div><div class="brief-item"><span>应用</span><strong>保存配置 → 预览 → 确认应用</strong></div></section>
+<nav aria-label="卡片导航"><a href="#ail-121">121 统一目录目标与有效配置契约</a><a href="#ail-122">122 项目目录导航与选择 Dialog</a><a href="#ail-123">123 目录资源列表与添加移除 Dialog</a><a href="#ail-124">124 项目共享设置与 Markdown 指令范围分离</a><a href="#ail-125">125 当前目标预览应用与结果闭环</a><a href="#ail-126">126 资源中心按真实来源分组与引用 Dialog</a><a href="#ail-127">127 旧入口衔接与统一交互收口</a><a href="#ail-128">128 按线稿完成真实浏览器与文件验收</a></nav>
+<section class="canvas-grid" aria-label="逐卡线稿">
+<article class="canvas-cell" id="ail-121"><header class="cell-label"><div><span class="cell-index">AIL-121 · 待实现</span><h2>统一目录目标与有效配置契约</h2><p>修复上一轮 diffOf 忽略中间继承层、扫描/部署目标不一致。先建立契约，再做 UI。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-121 布局线稿，可横向滚动"><pre>项目丙 / main / web                         [项目共享设置]
+当前目录：/项目丙/web
+[宿主] [Skill] [MCP] [Agent] [其他资源]
+会议记录     已启用   来自 main 目录配置
+部署：Claude 已同步 · Codex 未部署          [详情]
+配置已保存，尚未应用                         [预览更改]</pre></div><p class="caption">先补复现测试：项目默认停用、当前工作树启用、web 无覆盖；web 必须显示启用且来源为工作树，不得根据项目默认推断。</p><details><summary>实现步骤与验收要求</summary><ol><li>先补复现测试：项目默认停用、当前工作树启用、web 无覆盖；web 必须显示启用且来源为工作树，不得根据项目默认推断。</li><li>定义唯一只读目标快照（建议字段 projectId、worktreeId、rootPath、relativeDir、resolvedPath、viewKind、generation）；目录视图与项目共享设置使用不同 viewKind。字段为建议契约，不是假定已有 API。</li><li>集中适配已有 effective/select/scanProjectSkills/deployStatus/plan 接口，逐项记录 root、scope、sub 的真实意义。不要简单把所有 root 拼上子路径；扫描范围、配置范围、部署清单分别验证。</li><li>有效状态与来源以 resolver 的完整结果为准；diffOf 不能只取 repo_default 与当前层。恢复继承必须计算移除当前覆盖后的真实上游结果，包含工作树和已有子项目模板层。</li><li>项目/工作树/目录/视图切换均递增 generation；丢弃旧读取结果，计划失效，未保存草稿先确认。写请求冻结目标，响应不得冒充新目标的成功。</li><li>非 Git 根目录维持现有身份；核实子目录持久化/解析/计划能力，有缺口在本卡补最小契约及回归，不创建虚假 Git 身份，不将子目录静默保存到根。</li></ol><h3>验收</h3><ul><li>团队声明、项目默认、子项目模板、工作树、工作树子目录的现有解析顺序有契约测试；UI 不另造一套优先级。</li><li>根→web→另一工作树，慢响应逆序到达仍不串状态；旧计划不可在新目标应用。</li><li>非 Git 根及子目录配置重启仍可解析；兄弟目录、另一项目不受影响。</li><li>状态请求失败显示未知及重试，不显示已同步。</li></ul><p>实现落点：pages/projects.js、services/api.js、现有目标状态模块；src/console/mod.rs、resolver/部署相关模块仅在接口缺口时修改</p></details></article>
+<article class="canvas-cell" id="ail-122"><header class="cell-label"><div><span class="cell-index">AIL-122 · 待实现</span><h2>项目目录导航与选择 Dialog</h2><p>让用户选真实目录，而不是学习 repo/worktree/wt-sub。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-122 布局线稿，可横向滚动"><pre>项目丙                              [项目设置]
+工作目录 [main · /项目丙          v]
+目录 [根目录 / web]                 [切换目录]
+-------------------------------------------
+选择目录                                  ×
+[搜索目录名称或相对路径__________________]
+根目录                         跟随共享设置
+  docs                         有单独配置
+  web                          当前选中
+  packages  &gt;
+选中：/项目丙/web
+                        [取消] [使用此目录]</pre></div><p class="caption">复用现有 Dialog、表单、Combobox；目录选择器先以静态夹具覆盖根目录、嵌套目录、空结果、失联，保证统一控件高度和键盘操作。</p><details><summary>实现步骤与验收要求</summary><ol><li>复用现有 Dialog、表单、Combobox；目录选择器先以静态夹具覆盖根目录、嵌套目录、空结果、失联，保证统一控件高度和键盘操作。</li><li>Git 多工作树才显示工作目录选择；单工作树可展示静态名称。非 Git 使用同一目录导航，只隐藏 Git 特有信息。</li><li>使用受限 fsList 按需展开目录，不递归扫描整个磁盘；搜索明确限定已加载目录，或实现有界服务端目录搜索并展示范围。</li><li>标注有单独配置的目录；标记来自真实配置记录，不根据文件夹存在猜测。已登记但失联的配置目录可查看、不可应用。</li><li>选择只更新浏览目标，不自动注册子项目、不写配置；首次资源增删才创建相应覆盖。目录被删除、越界、符号链接逃逸由服务端再次校验。</li><li>移除日常页的配置层下拉与手填子路径主入口；高级路径输入可放 Dialog 内，提交同样校验。保留已有高级模板数据，不做破坏迁移。</li></ol><h3>验收</h3><ul><li>Git 与无 Git 知识库都能选择实际子目录；取消选择零配置写入。</li><li>含空格/中文/深层路径可用；../、越界链接、不存在目录被拒绝。</li><li>打开时焦点进入 Dialog，Esc 取消，关闭回原触发器；390px 宽不裁切操作。</li></ul><p>实现落点：pages/projects.js、features/scopePicker.js、components/dialog.js（按需）、现有 fsList API</p></details></article>
+<article class="canvas-cell" id="ail-123"><header class="cell-label"><div><span class="cell-index">AIL-123 · 待实现</span><h2>目录资源列表与添加移除 Dialog</h2><p>沿用 AIL-111～114，不再写第二套选择器与删除器。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-123 布局线稿，可横向滚动"><pre>项目丙 / main / web · Skill              [+ 添加 Skill]
+[搜索当前目录资源________________________]
+会议记录   已启用 · 来自 main      [在此停用] [详情]
+术语表     已启用 · 在此添加       [移除] [恢复继承]
+-------------------------------------------------
+添加 Skill 到 web                                  ×
+[搜索资源中心____________________] [+ 导入资源]
+[✓] 会议记录     owner/repo · 简短说明
+[ ] 文档检索     本地资源 · 简短说明
+                              [取消] [添加所选]
+-------------------------------------------------
+在 web 停用“会议记录”？                             ×
+仅修改 web 的配置；不删除全局资源，不修改 main 配置。
+应用后将处理：&lt;服务端计划中的实际部署路径&gt;
+                              [取消] [在此停用]</pre></div><p class="caption">封装共享 ResourceRow：名称/说明为主，生效来源、当前目录设置、逐宿主部署状态可区分；Skill/MCP/Agent 复用结构，但保留能力与参数差异。</p><details><summary>实现步骤与验收要求</summary><ol><li>封装共享 ResourceRow：名称/说明为主，生效来源、当前目录设置、逐宿主部署状态可区分；Skill/MCP/Agent 复用结构，但保留能力与参数差异。</li><li>添加使用已有 resourcePicker Dialog：搜索、已选、已启用/已停用提示；显式停用的资源允许重新添加。+导入进入同一 Dialog 的下一步，返回保留搜索和选择，不堆叠失控弹窗。</li><li>导入成功进入全局中心并回选资源；取消项目添加不回滚已完成的全局导入，必须明确告知。部分成功逐项报告，重试仅处理失败项。</li><li>继承启用用“在此停用”；本地覆盖用“恢复继承”；无上游启用的本地新增可“移除”。确认窗展示实际目标和预测结果，不把清除覆盖等同于停用。</li><li>本地未托管 Skill 独立区域，显示扫描目录及真实路径，只有查看/帮助/双重确认删除，不伪装成资源中心可更新条目；复用 AIL-112 的安全删除。</li><li>MCP 缺凭据和宿主不支持时明确阻止误报可用；凭据存储仍由 AIL-116 负责，不在此重复实现。</li></ol><h3>验收</h3><ul><li>工作树启用/web 继承→停用仅影响 web；恢复继承预览与真实 effective 一致。</li><li>添加/移除仅保存配置，明确待应用；全局源、兄弟目录及用户自建 Skill 不被误删。</li><li>导入失败、批量部分失败、无结果、200 条资源、键盘搜索选择都有浏览器证据。</li></ul><p>实现落点：pages/projects.js、features/resourcePicker.js、importDialog.js、现有资源行/确认 Dialog</p></details></article>
+<article class="canvas-cell" id="ail-124"><header class="cell-label"><div><span class="cell-index">AIL-124 · 待实现</span><h2>项目共享设置与 Markdown 指令范围分离</h2><p>解决“顶上说子目录、正文说全项目”的直接矛盾。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-124 布局线稿，可横向滚动"><pre>项目丙 / main / web                  [项目共享设置]
+Skill · 当前目录内容……
+                 点击项目共享设置 → 项目级设置页
+--------------------------------------------------
+返回 项目丙 / main / web
+项目丙 · 共享设置
+作用范围：整个项目；目录可以覆盖支持覆盖的资源。
+[共享资源] [Markdown 指令] [项目资料]
+Markdown 指令
+作用范围：整个项目（当前实现不支持按目录编辑）
+[编辑器_________________________________________]
+[取消更改] [保存配置]        保存后需预览并应用</pre></div><p class="caption">日常目录页与项目共享设置显式分开；共享设置用独立项目内路由，返回保持原目录、页签、搜索条件。项目名称/分类这种短表单继续使用 Dialog。</p><details><summary>实现步骤与验收要求</summary><ol><li>日常目录页与项目共享设置显式分开；共享设置用独立项目内路由，返回保持原目录、页签、搜索条件。项目名称/分类这种短表单继续使用 Dialog。</li><li>将现有项目默认编辑放入共享资源页；进入前保护草稿，页头不再显示“只影响 web”。项目共享页不显示一个禁用却仍暗示 web 的目录选择器。</li><li>Markdown 指令入口归项目共享设置；若保留目录页入口，只展示范围说明和前往项目指令链接，不在目录标题下直接保存全项目。</li><li>保留现有指令保护、冲突及预览；不把布局调整等同于完成 AIL-117 的宿主文件规则更新。展示实际受支持能力，不承诺所有宿主均支持目录指令。</li><li>项目默认改变列出受影响工作目录，已有目录覆盖保持；预览不得默默扩大到其他项目。</li></ol><h3>验收</h3><ul><li>从 web 打开 Markdown，标题/范围/保存请求/预览全部明确项目级。</li><li>编辑后返回、切目录或浏览器后退都有草稿保护，取消离开不丢稿。</li><li>共享设置修改后工作树覆盖仍生效，目录视图刷新来源正确。</li></ul><p>实现落点：pages/projects.js、app.js 路由、features/instructionsPanel.js、pages/instructions.js</p></details></article>
+<article class="canvas-cell" id="ail-125"><header class="cell-label"><div><span class="cell-index">AIL-125 · 待实现</span><h2>当前目标预览应用与结果闭环</h2><p>视觉结果中的数量仅为线稿示例，不是已通过的验收结果。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-125 布局线稿，可横向滚动"><pre>项目丙 / main / web
+配置已保存 · 待应用                         [预览更改]
+---------------------------------------------------
+预览：项目丙 / main / web
+Claude Code  新增 会议记录   web/&lt;实际宿主路径&gt;
+Codex        无变化
+警告/冲突：按真实计划展示
+                            [返回修改] [确认应用]
+---------------------------------------------------
+应用完成 · web
+已写入 1 项；配置与部署已同步（经重新查询确认）
+[查看结果] [撤销此次操作] [返回 Skill]</pre></div><p class="caption">保留显式预览→确认应用，不引入隐式自动同步；目录页提供统一待应用入口，调用已有 PlanPreview/JobPanel，不造第二套任务系统。</p><details><summary>实现步骤与验收要求</summary><ol><li>保留显式预览→确认应用，不引入隐式自动同步；目录页提供统一待应用入口，调用已有 PlanPreview/JobPanel，不造第二套任务系统。</li><li>预览绑定完整目标、配置版本、资源版本和计划 ID；变更目标/配置后清除可应用状态并要求重新预览，服务端也校验。</li><li>项目共享预览按工作目录分组列实际影响；目录预览列精确落盘路径。跨目录影响若由宿主部署机制产生，明确提示，不能承诺假隔离。</li><li>应用中禁止重复提交；失败、部分成功、无变化各有结果；成功后重新读取状态再声称已同步。</li><li>撤销使用已有 after-image 保护，遇用户后改提示冲突不覆盖；操作详情保留原目标、返回地址，不污染当前目录。</li></ol><h3>验收</h3><ul><li>计划后切目录/改配置/上游更新均无法套用旧计划。</li><li>成功/失败/部分成功/无变化/冲突撤销都有真实服务端与文件断言。</li><li>另一知识库文件哈希不变；未托管资源和共享源内容不变。</li></ul><p>实现落点：features/planPreview.js、JobPanel、pages/projects.js、jobs.rs（按契约需要）</p></details></article>
+<article class="canvas-cell" id="ail-126"><header class="cell-label"><div><span class="cell-index">AIL-126 · 待实现</span><h2>资源中心按真实来源分组与引用 Dialog</h2><p>与 AIL-102/119 增量衔接；这张不改变来源存储布局。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-126 布局线稿，可横向滚动"><pre>全局资源中心                    [检查全部更新] [+ 导入]
+[搜索名称/说明/来源_______________] [类型 v]
+owner/repo       Git · main · 有更新      [检查] [更新…]
+  会议记录       摘要说明    3 个目录引用   [管理引用]
+  文档检索       摘要说明    1 个目录引用   [管理引用]
+本地资源（无远端）
+  术语表         摘要说明    0 个目录引用   [管理引用]
+---------------------------------------------------
+会议记录 · 管理项目引用                             ×
+[搜索项目或目录________________________________]
+项目丙 / main / web  已启用·继承 main  [前往管理]
+知识库甲 / 根目录    在此添加           [管理…]
+                             [关闭] [+ 添加到目录]</pre></div><p class="caption">汇合来源合集与个人库的展示模型，按真实来源身份分组；仓库多个 Skill 一组，本地资源单独一组，不因 URL 拼写差异随意合并不同分支/管理模式。</p><details><summary>实现步骤与验收要求</summary><ol><li>汇合来源合集与个人库的展示模型，按真实来源身份分组；仓库多个 Skill 一组，本地资源单独一组，不因 URL 拼写差异随意合并不同分支/管理模式。</li><li>主行用 Skill 名称和说明，内部 resource ID 放详情；Git URL/SSH、版本、更新状态在组头，CC Switch 仅作导入历史次要信息。</li><li>空状态基于全部可见资源；已有本地资源时不再显示整个中心为空或仅强调“导入第一个来源”。</li><li>检查全部更新与更新分开：检查不改内容，更新先展示版本差异、冲突及受影响项目；本地无远端条目不可提供虚假的检查更新。</li><li>管理项目引用必须 Dialog；展示直接引用/继承生效差异。继承行引导选择在该目录停用或去来源层管理，不能删除一个不存在的直接引用。</li><li>全局移除来源与项目停用使用不同危险确认；受影响引用和失败处理沿用已有能力，禁止静默级联删除用户文件。</li></ol><h3>验收</h3><ul><li>单仓库多 Skill、多个仓库、只有本地 Skill、SSH 来源、CC Switch 迁入均可辨认真实来源。</li><li>200 条资源仍紧凑可搜索；来源错误只影响该组；原始长 ID 不挤占主信息。</li><li>引用 Dialog 可取消且零写入；点击项目返回后上下文恢复；检查更新不更改锁定版本。</li></ul><p>实现落点：pages/library.js、features/collectionsPanel.js、resourceReferences.js、资源 DTO（必要时）</p></details></article>
+<article class="canvas-cell" id="ail-127"><header class="cell-label"><div><span class="cell-index">AIL-127 · 待实现</span><h2>旧入口衔接与统一交互收口</h2><p>收口现有入口，不扩张任务与流程业务。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-127 布局线稿，可横向滚动"><pre>项目丙 / main / web
+[高级配置] → 项目丙 · 高级配置
+             当前目标：main / web
+             [返回 web]
+旧 /scopes 直达：
+[选择项目________________v]  未选择前禁用写入
+选定项目 → 同一目录选择器 → 同一资源编辑组件
+错误：目标已失联             [重新检查] [返回项目]</pre></div><p class="caption">盘点 app.js 全部路由及导航；输出入口/目标/返回地址/写入范围矩阵，包括项目、library、sources、scopes、instructions、tasks、workflows、onboarding、samples。</p><details><summary>实现步骤与验收要求</summary><ol><li>盘点 app.js 全部路由及导航；输出入口/目标/返回地址/写入范围矩阵，包括项目、library、sources、scopes、instructions、tasks、workflows、onboarding、samples。</li><li>日常项目不再跳全局 repo-id 表。保留旧 scopes 深链时明确项目上下文；无目标时只允许选择，不靠最近一次全局变量自动写。</li><li>源、指令等重复入口复用本轮组件；流程工作台仅保留既有高级定位，不混入项目配置主流程，不实现 Agent Hub。</li><li>搜索框、HTML Combobox、Dialog、按钮复用现有 tokens/组件；逐页检查原生 select 是否被正确增强、焦点圈、禁用和错误反馈；不引入新 UI 框架。</li><li>正常操作弹窗、页面导航、结果详情各归其位；刷新/后退恢复目标但不意外重放写入，失联目标明确恢复入口。</li></ol><h3>验收</h3><ul><li>每条现有路由都有正常/空/错误/失联处理记录；不能只测新的项目页。</li><li>项目到高级再返回不丢目录；直达旧链接不落到其他项目。</li><li>Dialog 的焦点限制/恢复、Esc、取消零写入、长列表滚动及窄屏按钮可达全部通过。</li></ul><p>实现落点：app.js、pages/scopes.js、scopePicker.js、现有各页面与公共组件</p></details></article>
+<article class="canvas-cell" id="ail-128"><header class="cell-label"><div><span class="cell-index">AIL-128 · 验收门禁</span><h2>按线稿完成真实浏览器与文件验收</h2><p>这是门禁卡，不新建“验收工作台”产品功能。</p></div></header><div class="frame diagram" tabindex="0" data-horizontal-scroll aria-label="AIL-128 布局线稿，可横向滚动"><pre>验收记录（不是产品新页面）
+旅程                         UI   API   文件   证据
+无 Git 知识库根目录           □     □     □     链接
+知识库子目录增删              □     □     □     链接
+Git 两工作树 + web 继承       □     □     □     链接
+项目共享 Markdown            □     □     □     链接
+全局来源 → 引用 Dialog       □     □     □     链接
+慢请求/冲突/失联/取消         □     □     □     链接
+全部通过才可标 Done；宿主未验证须另列。</pre></div><p class="caption">创建隔离夹具：两个非 Git 知识库、Git 两工作树、web/docs 子目录、托管及未托管 Skill；仅在隔离根内测试，不操作用户真实知识库。</p><details><summary>实现步骤与验收要求</summary><ol><li>创建隔离夹具：两个非 Git 知识库、Git 两工作树、web/docs 子目录、托管及未托管 Skill；仅在隔离根内测试，不操作用户真实知识库。</li><li>依 121→127 每张线稿跑真实浏览器，不以 curl 成功替代交互；保存开始/关键 Dialog/结果截图以及有效配置、请求目标与文件差异。</li><li>重点执行项目默认停用→工作树启用→web 继承→web 停用→恢复；验证 UI 状态、计划及磁盘一致，不只检查文字。</li><li>执行新建项目→选目录→添加→预览→应用→刷新→停用→应用完整闭环；非 Git 与 Git 均做，取消路径证明零写入。</li><li>慢响应、失联、越界、部分失败、旧计划、用户后改、200 条长列表逐项跑；复用已有测试夹具与故障注入，注明模拟分支。</li><li>记录每卡通过/失败/未验证；实际 Claude/Codex 加载若没有验证，明确不属于已证明的可用性。更新 cards.json/BACKLOG 状态时附证据，不以旧卡 Done 代替。</li></ol><h3>验收</h3><ul><li>所有前置卡逐条验收勾选且能重复执行；未通过保留 Backlog/进行中。</li><li>桌面与390px 窄屏、键盘、控制台、无跨项目文件修改均有证据。</li><li>交付启动命令、测试地址、操作顺序、已知限制；不擅自关闭其他 Agent 的服务。</li></ul><p>实现落点：tests/ui_browser.mjs、docs/evidence/ 新的隔离验收目录、各卡交付记录</p></details></article>
+</section>
+<footer><p>依据：2026-09-21 Orca 页面走查及 projects.js / services/api.js 核对。详细边界、依赖和交付记录见 docs/cards/AIL-121.md 至 AIL-128.md。</p><p>先修目标与继承契约，再组装 UI。MCP 凭据与宿主指令规则继续由 AIL-116 / AIL-117 单独验收。</p></footer>
+</main>
+</body>
+</html>

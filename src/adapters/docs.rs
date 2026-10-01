@@ -39,6 +39,7 @@ pub fn render_index(
     snapshot_root: &Path,
     targets: &ToolTargets,
     artifacts: &mut Vec<Artifact>,
+    ws_root: &Path,
 ) -> crate::error::Result<()> {
     let _ = snapshot_root;
     let docs: Vec<&crate::resolver::Selected> = desired
@@ -60,10 +61,17 @@ pub fn render_index(
     let rid = "ailoom-internal/doc-index";
     for tool in targets.iter() {
         let entry_file = match tool {
-            Tool::Claude => "CLAUDE.md",
+            Tool::Claude => claude_entry_file(ws_root),
             Tool::Codex => "AGENTS.md",
             Tool::Alva => continue, // alva 文档索引无处安放（不碰其 AGENTS.md），skills-first
         };
+        if let Some(existing) = artifacts
+            .iter_mut()
+            .find(|a| a.resource_id == rid && a.path == Path::new(entry_file))
+        {
+            existing.target_tool = "*".into();
+            continue;
+        }
         artifacts.push(Artifact {
             resource_id: rid.into(),
             target_tool: tool.as_str().into(),
@@ -75,4 +83,25 @@ pub fn render_index(
         });
     }
     Ok(())
+}
+
+/// Default Claude 2.1.277+ fallback. Do not create a CLAUDE.md that shadows AGENTS.md.
+pub fn claude_entry_file(root: &Path) -> &'static str {
+    if root.join("CLAUDE.md").is_file() {
+        return "CLAUDE.md";
+    }
+    if root.join(".claude/CLAUDE.md").is_file() {
+        return ".claude/CLAUDE.md";
+    }
+    if root.ancestors().any(|dir| {
+        ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"]
+            .iter()
+            .any(|file| dir.join(file).is_file())
+    }) {
+        "CLAUDE.md"
+    } else if root.join(".claude/AGENTS.md").is_file() && !root.join("AGENTS.md").is_file() {
+        ".claude/AGENTS.md"
+    } else {
+        "AGENTS.md"
+    }
 }

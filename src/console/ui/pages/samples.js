@@ -79,11 +79,11 @@ export function mount(container, ctx) {
     TriStateSelect(slot, { value: 'inherit', effective: { enabled: true, originLabel: '团队声明' } }));
   row(sTri, 'enable（生效：启用/仓库默认）', (slot) =>
     TriStateSelect(slot, { value: 'enable', effective: { enabled: true, originLabel: '个人仓库默认' } }));
-  row(sTri, 'disable（生效：停用/工作树覆盖）', (slot) =>
-    TriStateSelect(slot, { value: 'disable', effective: { enabled: false, originLabel: '工作树覆盖' } }));
+  row(sTri, 'disable（生效：停用/Worktree 覆盖）', (slot) =>
+    TriStateSelect(slot, { value: 'disable', effective: { enabled: false, originLabel: 'Worktree 覆盖' } }));
   row(sTri, '禁用控件', (slot) => TriStateSelect(slot, { value: 'enable', disabled: true }));
 
-  // StatusBadge：宿主全状态 + 工作树状态
+  // StatusBadge：宿主全状态 + Worktree 状态
   const sBadge = section('StatusBadge');
   for (const st of HOST_STATES) {
     row(sBadge, st, (slot) => StatusBadge(slot, { domain: 'host', status: st }));
@@ -110,7 +110,7 @@ export function mount(container, ctx) {
     rows: [],
     rowKey: (r) => r.id,
     columns: [{ key: 'id', label: 'ID' }],
-    empty: '个人库为空',
+    empty: '资源库为空',
   });
   plainTable(sTable, '加载', { loading: true });
   plainTable(sTable, '失败', { error: '无法连接本地服务（可能已退出）' });
@@ -149,14 +149,14 @@ export function mount(container, ctx) {
     onMerge: () => {},
   }));
 
-  // 计划/任务边界状态文案样例：过期/部分失败/离线/中断
-  const sStates = section('计划/任务边界状态（文案样例）');
+  // 计划/操作边界状态文案样例：过期/部分失败/离线/中断
+  const sStates = section('计划/操作边界状态（文案样例）');
   sStates.insertAdjacentHTML(
     'beforeend',
     `<p><span class="badge bad">stale</span> 计划已过期（配置/源/目标已变化），旧计划拒绝应用</p>
      <p><span class="badge warn">partial</span> 撤销：恢复 2 项，冲突保留 1 项（应用后被用户修改，不覆盖）</p>
-     <p><span class="badge bad">offline</span> 无法连接本地服务；草稿与任务记录已本地保留，恢复后可继续（不自动 POST）</p>
-     <p><span class="badge warn">interrupted</span> 服务重启时任务中断；不自动重放，可重新发起计划/应用</p>`,
+     <p><span class="badge bad">offline</span> 无法连接本地服务；草稿与操作记录已本地保留，恢复后可继续（不自动 POST）</p>
+     <p><span class="badge warn">interrupted</span> 服务重启时操作中断；不自动重放，可重新发起计划/应用</p>`,
   );
 
   return {

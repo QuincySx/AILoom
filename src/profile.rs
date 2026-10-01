@@ -2,7 +2,7 @@
 //! 与分层作用域解析（有效配置）。
 //!
 //! 优先级（低 → 高）：团队声明 → 个人仓库默认 → 仓库子项目模板（浅→深）
-//! → 当前工作树覆盖 → 当前工作树子项目覆盖（浅→深）。资源与宿主开关统一用
+//! → 当前 Worktree 覆盖 → 当前 Worktree 子项目覆盖（浅→深）。资源与宿主开关统一用
 //! 「继承/启用/禁用」三态：禁用是显式值；未设置（无条目）与显式继承都不同。
 //! 每个有效值带来源可追溯；同层重复声明视为冲突，不靠遍历顺序赢。
 //!
@@ -31,6 +31,9 @@ pub enum TriState {
 /// 空表 = 该层未设置任何选择（合法且常见）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ScopeSelection {
+    /// Ignore ancestor resource choices; host/tool choices still inherit.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub independent_resources: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub hosts: BTreeMap<String, TriState>,
     /// key 为完整 ResourceId（source/kind/namespace/name）
@@ -40,11 +43,11 @@ pub struct ScopeSelection {
 
 impl ScopeSelection {
     pub fn is_empty(&self) -> bool {
-        self.hosts.is_empty() && self.resources.is_empty()
+        !self.independent_resources && self.hosts.is_empty() && self.resources.is_empty()
     }
 }
 
-/// 仓库子项目模板 / 工作树子项目覆盖条目。
+/// 仓库子项目模板 / Worktree 子项目覆盖条目。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SubprojectSelection {
     /// 仓库内相对路径（模板按浅→深依次生效；路径不必在当前 worktree 命中）
@@ -60,15 +63,15 @@ pub struct RepoProfile {
     pub default: Option<ScopeSelection>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subprojects: Vec<SubprojectSelection>,
-    /// key = 仓库登记的工作树 id（repo_registry RegistryWorktree.id）
+    /// key = 仓库登记的 Worktree id（repo_registry RegistryWorktree.id）
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub worktrees: BTreeMap<String, ScopeSelection>,
-    /// key = 工作树 id；value = 该工作树内的子项目覆盖
+    /// key = Worktree id；value = 该 Worktree 内的子项目覆盖
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub wt_subprojects: BTreeMap<String, Vec<SubprojectSelection>>,
 }
 
-/// 个人资源库（复用 source manifest 布局；路径是机器绝对路径，仓外）。
+/// 资源库（复用 source manifest 布局；路径是机器绝对路径，仓外）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LibraryRef {
     pub path: PathBuf,
@@ -142,7 +145,7 @@ impl PersonalProfile {
             };
             if current != expect {
                 return Err(Error::new(
-                    code::USER_CONTENT_CONFLICT,
+                    code::PRECONDITION_FAILED,
                     format!(
                         "profile.toml 已被其他会话修改（期望 revision {expect}，当前 {current}）"
                     ),
@@ -284,6 +287,7 @@ pub enum SelectScope {
 pub enum SelectKey {
     Host(String),
     Resource(String),
+    InheritResources,
 }
 
 impl TriState {
@@ -305,7 +309,7 @@ impl TriState {
 }
 
 /// 就地写入一条三态选择：文件锁 + 乐观 revision + toml_edit 格式保留。
-/// 返回新 revision。并发 base 不一致 → USER_CONTENT_CONFLICT（带当前 revision）。
+/// 返回新 revision。并发 base 不一致 → PRECONDITION_FAILED（E4001，带当前 revision）。
 pub fn select_scoped_in_place(
     data_root: &Path,
     repo_id: &str,
@@ -330,7 +334,7 @@ pub fn select_scoped_in_place(
     if let Some(expect) = expect_revision {
         if expect != current_rev {
             return Err(Error::new(
-                code::USER_CONTENT_CONFLICT,
+                code::PRECONDITION_FAILED,
                 format!(
                     "profile.toml 已被其他会话修改（期望 revision {expect}，当前 {current_rev}）"
                 ),
@@ -429,31 +433,39 @@ pub fn select_scoped_in_place(
         }
     };
 
-    let (map_key, value_key) = match key {
-        SelectKey::Host(h) => ("hosts", h.clone()),
-        SelectKey::Resource(r) => ("resources", r.clone()),
-    };
-    if sel_tbl
-        .get(map_key)
-        .and_then(|i: &toml_edit::Item| i.as_table())
-        .is_none()
-    {
-        sel_tbl.insert(map_key, toml_edit::Item::Table(toml_edit::Table::new()));
-    }
-    let map = sel_tbl
-        .get_mut(map_key)
-        .unwrap()
-        .as_table_mut()
-        .ok_or_else(|| Error::new(code::SCHEMA_VERSION, format!("{map_key} 不是表")))?;
-    // AIL-058：恢复继承 = 删除本层显式项（未设置即继承下层）；enable/disable 写显式值。
-    // 空集合与未设置等价（该层不再表态），残壳表一并移除。
-    if state == TriState::Inherit {
-        map.remove(&value_key);
-        if map.is_empty() {
-            sel_tbl.remove(map_key);
-        }
+    if matches!(key, SelectKey::InheritResources) {
+        sel_tbl.insert(
+            "independent_resources",
+            toml_edit::value(state == TriState::Disable),
+        );
     } else {
-        map.insert(&value_key, toml_edit::value(state.as_str()));
+        let (map_key, value_key) = match key {
+            SelectKey::Host(h) => ("hosts", h.clone()),
+            SelectKey::Resource(r) => ("resources", r.clone()),
+            SelectKey::InheritResources => unreachable!(),
+        };
+        if sel_tbl
+            .get(map_key)
+            .and_then(|i: &toml_edit::Item| i.as_table())
+            .is_none()
+        {
+            sel_tbl.insert(map_key, toml_edit::Item::Table(toml_edit::Table::new()));
+        }
+        let map = sel_tbl
+            .get_mut(map_key)
+            .unwrap()
+            .as_table_mut()
+            .ok_or_else(|| Error::new(code::SCHEMA_VERSION, format!("{map_key} 不是表")))?;
+        // AIL-058：恢复继承 = 删除本层显式项（未设置即继承下层）；enable/disable 写显式值。
+        // 空集合与未设置等价（该层不再表态），残壳表一并移除。
+        if state == TriState::Inherit {
+            map.remove(&value_key);
+            if map.is_empty() {
+                sel_tbl.remove(map_key);
+            }
+        } else {
+            map.insert(&value_key, toml_edit::value(state.as_str()));
+        }
     }
 
     // 写回前以类型化模型复验（机器可读性不回退）
@@ -527,8 +539,8 @@ impl ScopeOrigin {
             ScopeOrigin::TeamDeclaration => "团队声明".into(),
             ScopeOrigin::RepoDefault => "个人仓库默认".into(),
             ScopeOrigin::RepoSubproject { path } => format!("仓库子项目模板 {path}"),
-            ScopeOrigin::WorktreeOverride => "当前工作树覆盖".into(),
-            ScopeOrigin::WorktreeSubproject { path } => format!("工作树子项目覆盖 {path}"),
+            ScopeOrigin::WorktreeOverride => "当前 Worktree 覆盖".into(),
+            ScopeOrigin::WorktreeSubproject { path } => format!("Worktree 子项目覆盖 {path}"),
         }
     }
     /// 同层内排序（子项目浅→深由调用方保证顺序；此函数用于展示）
@@ -598,7 +610,7 @@ impl EffectiveConfig {
 pub struct ResolveScopeRequest<'a> {
     pub profile: &'a PersonalProfile,
     pub repo_id: &'a str,
-    /// 仓库登记的工作树 id（repo_registry RegistryWorktree.id）
+    /// 仓库登记的 Worktree id（repo_registry RegistryWorktree.id）
     pub worktree_id: &'a str,
     /// 当前作用域在仓库内的相对路径（None = worktree 根）
     pub active_rel: Option<&'a str>,
@@ -628,7 +640,7 @@ fn subproject_matches(path: &str, active_rel: Option<&str>) -> bool {
     active.starts_with(&prefix)
 }
 
-/// 解析某仓库×工作树×子项目作用域的有效配置（每个值可追溯来源）。
+/// 解析某仓库×Worktree×子项目作用域的有效配置（每个值可追溯来源）。
 /// 同层冲突（重复子项目路径由 validate 拒绝；重复 key 由 TOML 拒绝）之外，
 /// 跨层按优先级覆盖；显式 Inherit 记录 trace 但不改变值。
 pub fn resolve_effective(req: ResolveScopeRequest<'_>) -> EffectiveConfig {
@@ -660,6 +672,43 @@ pub fn resolve_effective(req: ResolveScopeRequest<'_>) -> EffectiveConfig {
         }
     }
 
+    let mut resource_layers: Vec<(ScopeOrigin, &ScopeSelection)> = Vec::new();
+    if let Some(d) = &repo.default {
+        resource_layers.push((ScopeOrigin::RepoDefault, d));
+    }
+    let mut templates: Vec<_> = repo
+        .subprojects
+        .iter()
+        .filter(|sp| subproject_matches(&sp.path, req.active_rel))
+        .collect();
+    templates.sort_by_key(|sp| rel_depth(&sp.path));
+    for sp in templates {
+        resource_layers.push((
+            ScopeOrigin::RepoSubproject {
+                path: sp.path.clone(),
+            },
+            &sp.selection,
+        ));
+    }
+    if let Some(wt) = repo.worktrees.get(req.worktree_id) {
+        resource_layers.push((ScopeOrigin::WorktreeOverride, wt));
+    }
+    if let Some(sps) = repo.wt_subprojects.get(req.worktree_id) {
+        let mut templates: Vec<_> = sps
+            .iter()
+            .filter(|sp| subproject_matches(&sp.path, req.active_rel))
+            .collect();
+        templates.sort_by_key(|sp| rel_depth(&sp.path));
+        for sp in templates {
+            resource_layers.push((
+                ScopeOrigin::WorktreeSubproject {
+                    path: sp.path.clone(),
+                },
+                &sp.selection,
+            ));
+        }
+    }
+
     for rid in all_ids {
         let team_hit = req.team_enabled.iter().any(|x| x == &rid);
         let mut deployed = team_hit;
@@ -672,63 +721,24 @@ pub fn resolve_effective(req: ResolveScopeRequest<'_>) -> EffectiveConfig {
                 effective: true,
             });
         }
-        // 逐层应用（低 → 高）
-        let mut layers: Vec<(ScopeOrigin, TriState)> = Vec::new();
-        if let Some(d) = &repo.default {
-            if let Some(choice) = d.resources.get(&rid) {
-                layers.push((ScopeOrigin::RepoDefault, *choice));
+        for (o, selection) in &resource_layers {
+            if selection.independent_resources {
+                deployed = false;
+                origin = None;
+                trace.clear();
             }
-        }
-        // 仓库子项目模板：浅 → 深
-        let mut repo_templates: Vec<&SubprojectSelection> = repo
-            .subprojects
-            .iter()
-            .filter(|sp| subproject_matches(&sp.path, req.active_rel))
-            .collect();
-        repo_templates.sort_by_key(|sp| rel_depth(&sp.path));
-        for sp in repo_templates {
-            if let Some(choice) = sp.selection.resources.get(&rid) {
-                layers.push((
-                    ScopeOrigin::RepoSubproject {
-                        path: sp.path.clone(),
-                    },
-                    *choice,
-                ));
-            }
-        }
-        if let Some(wt) = repo.worktrees.get(req.worktree_id) {
-            if let Some(choice) = wt.resources.get(&rid) {
-                layers.push((ScopeOrigin::WorktreeOverride, *choice));
-            }
-        }
-        if let Some(sps) = repo.wt_subprojects.get(req.worktree_id) {
-            let mut wt_templates: Vec<&SubprojectSelection> = sps
-                .iter()
-                .filter(|sp| subproject_matches(&sp.path, req.active_rel))
-                .collect();
-            wt_templates.sort_by_key(|sp| rel_depth(&sp.path));
-            for sp in wt_templates {
-                if let Some(choice) = sp.selection.resources.get(&rid) {
-                    layers.push((
-                        ScopeOrigin::WorktreeSubproject {
-                            path: sp.path.clone(),
-                        },
-                        *choice,
-                    ));
+            if let Some(choice) = selection.resources.get(&rid) {
+                let effective = *choice != TriState::Inherit;
+                if effective {
+                    deployed = *choice == TriState::Enable;
+                    origin = Some(o.clone());
                 }
+                trace.push(TraceEntry {
+                    origin: o.clone(),
+                    choice: *choice,
+                    effective,
+                });
             }
-        }
-        for (o, choice) in layers {
-            let effective = choice != TriState::Inherit;
-            if effective {
-                deployed = choice == TriState::Enable;
-                origin = Some(o.clone());
-            }
-            trace.push(TraceEntry {
-                origin: o,
-                choice,
-                effective,
-            });
         }
         out.resources.insert(
             rid,
@@ -858,9 +868,147 @@ mod tests {
 
     fn scope(resources: &[(&str, TriState)]) -> ScopeSelection {
         ScopeSelection {
+            independent_resources: false,
             hosts: Default::default(),
             resources: resources.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         }
+    }
+
+    #[test]
+    fn independent_nodes_cut_future_parent_resources_and_feed_their_children() {
+        let repo_id = "repo-0123456789abcdef";
+        let mut profile = PersonalProfile::new();
+        let mut repo = RepoProfile::default();
+        repo.default = Some(scope(&[("parent", TriState::Enable)]));
+        repo.default
+            .as_mut()
+            .unwrap()
+            .hosts
+            .insert("claude".into(), TriState::Enable);
+        let mut independent = scope(&[("local", TriState::Enable)]);
+        independent.independent_resources = true;
+        repo.worktrees.insert("wt-a".into(), independent);
+        repo.wt_subprojects.insert(
+            "wt-a".into(),
+            vec![
+                SubprojectSelection {
+                    path: "docs".into(),
+                    selection: scope(&[("docs", TriState::Enable)]),
+                },
+                SubprojectSelection {
+                    path: "docs/ui".into(),
+                    selection: ScopeSelection {
+                        independent_resources: true,
+                        ..scope(&[("ui", TriState::Enable)])
+                    },
+                },
+            ],
+        );
+        profile.repos.insert(repo_id.into(), repo);
+        let resolve = |p: &PersonalProfile, wt, rel| {
+            resolve_effective(ResolveScopeRequest {
+                profile: p,
+                repo_id,
+                worktree_id: wt,
+                active_rel: rel,
+                team_enabled: &[],
+                team_hosts: &[],
+            })
+        };
+        assert_eq!(
+            resolve(&profile, "wt-a", Some("docs")).enabled_resources(),
+            vec!["docs", "local"]
+        );
+        assert_eq!(
+            resolve(&profile, "wt-a", Some("docs/ui/deep")).enabled_resources(),
+            vec!["ui"]
+        );
+        profile
+            .repos
+            .get_mut(repo_id)
+            .unwrap()
+            .default
+            .as_mut()
+            .unwrap()
+            .resources
+            .insert("new-parent".into(), TriState::Enable);
+        assert_eq!(
+            resolve(&profile, "wt-a", Some("docs")).enabled_resources(),
+            vec!["docs", "local"]
+        );
+        assert_eq!(
+            resolve(&profile, "wt-b", None).enabled_resources(),
+            vec!["new-parent", "parent"]
+        );
+        assert!(resolve(&profile, "wt-a", Some("docs/ui")).hosts["claude"].enabled);
+        profile
+            .repos
+            .get_mut(repo_id)
+            .unwrap()
+            .worktrees
+            .get_mut("wt-a")
+            .unwrap()
+            .independent_resources = false;
+        assert_eq!(
+            resolve(&profile, "wt-a", Some("docs")).enabled_resources(),
+            vec!["docs", "local", "new-parent", "parent"]
+        );
+    }
+
+    #[test]
+    fn inheritance_switch_persists_an_empty_node_and_preserves_choices() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_id = "repo-0123456789abcdef";
+        let scope = SelectScope::WorktreeSubproject("wt".into(), "docs/ui".into());
+        let rev = select_scoped_in_place(
+            tmp.path(),
+            repo_id,
+            &scope,
+            &SelectKey::InheritResources,
+            TriState::Disable,
+            Some(0),
+        )
+        .unwrap();
+        let loaded = PersonalProfile::load_or_default(tmp.path()).unwrap();
+        assert!(
+            loaded.repos[repo_id].wt_subprojects["wt"][0]
+                .selection
+                .independent_resources
+        );
+        assert!(!loaded.repos[repo_id].wt_subprojects["wt"][0]
+            .selection
+            .is_empty());
+        assert!(select_scoped_in_place(
+            tmp.path(),
+            repo_id,
+            &scope,
+            &SelectKey::InheritResources,
+            TriState::Enable,
+            Some(0)
+        )
+        .is_err());
+        let rev = select_scoped_in_place(
+            tmp.path(),
+            repo_id,
+            &scope,
+            &SelectKey::Resource("example".into()),
+            TriState::Enable,
+            Some(rev),
+        )
+        .unwrap();
+        select_scoped_in_place(
+            tmp.path(),
+            repo_id,
+            &scope,
+            &SelectKey::InheritResources,
+            TriState::Enable,
+            Some(rev),
+        )
+        .unwrap();
+        let loaded = PersonalProfile::load_or_default(tmp.path()).unwrap();
+        let selected = &loaded.repos[repo_id].wt_subprojects["wt"][0].selection;
+        assert!(!selected.independent_resources);
+        assert_eq!(selected.resources["example"], TriState::Enable);
     }
 
     #[test]
@@ -917,6 +1065,47 @@ mod tests {
         assert!(at_deep.resources[&a].deployed, "浅模板对深层生效");
     }
 
+    /// AIL-121 回归：项目默认停用、Worktree 启用、子目录无覆盖时，
+    /// 子目录必须显示「启用、来源 Worktree」——中间层继承不得被项目默认推断吞掉。
+    /// 这正是旧 UI diffOf（只比较 repo_default 与当前层）曾误报「已停用」的场景。
+    #[test]
+    fn middle_layer_inheritance_visible_in_subdirectory() {
+        let a = rid("a");
+        let mut profile = PersonalProfile::new();
+        let mut repo = RepoProfile::default();
+        repo.default = Some(scope(&[(&a, TriState::Disable)]));
+        repo.worktrees
+            .insert("wtm".into(), scope(&[(&a, TriState::Enable)]));
+        profile.repos.insert("repo-0123456789abcdef".into(), repo);
+
+        // web 子目录（无本层覆盖）：生效值应来自 Worktree 层
+        let at_web = resolve_effective(ResolveScopeRequest {
+            profile: &profile,
+            repo_id: "repo-0123456789abcdef",
+            worktree_id: "wtm",
+            active_rel: Some("web"),
+            team_enabled: &[],
+            team_hosts: &[],
+        });
+        let ra = &at_web.resources[&a];
+        assert!(
+            ra.deployed,
+            "web 必须显示启用（继承 Worktree 层），不得按项目默认推断"
+        );
+        assert_eq!(
+            ra.origin.as_ref().unwrap(),
+            &ScopeOrigin::WorktreeOverride,
+            "web 的来源必须是 Worktree 覆盖"
+        );
+        // trace 必须完整记录两层，供 UI 计算「恢复继承后的真实上游」
+        assert_eq!(
+            ra.trace.len(),
+            2,
+            "trace 应含 repo_default 与 worktree_override"
+        );
+        assert!(matches!(ra.trace[1].origin, ScopeOrigin::WorktreeOverride));
+    }
+
     #[test]
     fn worktree_override_and_wt_subproject_top_priority() {
         let a = rid("a");
@@ -952,7 +1141,7 @@ mod tests {
             q(Some("svc")).resources[&a].deployed,
             "worktree 子项目优先级最高"
         );
-        // 其他工作树（wt1）没有工作树层表态：仓库默认仍生效，但不出现 WorktreeOverride
+        // 其他 Worktree（wt1）没有 Worktree 层表态：仓库默认仍生效，但不出现 WorktreeOverride
         let wt1 = resolve_effective(ResolveScopeRequest {
             profile: &profile,
             repo_id: "repo-0123456789abcdef",
@@ -962,13 +1151,13 @@ mod tests {
             team_hosts: &[],
         });
         let ra1 = &wt1.resources[&a];
-        assert!(ra1.deployed, "仓库默认对未覆盖工作树同样生效");
+        assert!(ra1.deployed, "仓库默认对未覆盖 Worktree 同样生效");
         assert_eq!(ra1.origin.as_ref().unwrap(), &ScopeOrigin::RepoDefault);
         assert!(
             ra1.trace
                 .iter()
                 .all(|t| t.origin != ScopeOrigin::WorktreeOverride),
-            "wt1 的 trace 不含工作树覆盖层"
+            "wt1 的 trace 不含 Worktree 覆盖层"
         );
     }
 
@@ -1022,7 +1211,7 @@ mod tests {
             team_hosts: &["codex".into()],
         });
         let rp = &out.resources[&p];
-        assert!(rp.deployed, "个人库资源可独立于团队启用");
+        assert!(rp.deployed, "资源库资源可独立于团队启用");
         assert_eq!(rp.origin.as_ref().unwrap(), &ScopeOrigin::RepoDefault);
         assert!(out.hosts["codex"].enabled);
         assert_eq!(out.hosts["codex"].origin, ScopeOrigin::TeamDeclaration);

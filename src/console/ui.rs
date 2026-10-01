@@ -20,28 +20,120 @@ pub const EDITOR_JS: &str = include_str!("ui/components/editor.js");
 pub const DIFF_JS: &str = include_str!("ui/components/diffView.js");
 pub const CONFLICT_JS: &str = include_str!("ui/components/conflictPanel.js");
 
-pub const SCOPE_PICKER_JS: &str = include_str!("ui/features/scopePicker.js");
-pub const CAPABILITY_MATRIX_JS: &str = include_str!("ui/features/capabilityMatrix.js");
 pub const COLLECTIONS_PANEL_JS: &str = include_str!("ui/features/collectionsPanel.js");
-pub const IMPORT_PREVIEW_JS: &str = include_str!("ui/features/importPreview.js");
-pub const WORKFLOW_LIST_JS: &str = include_str!("ui/features/workflowStageList.js");
-pub const PLAN_PREVIEW_JS: &str = include_str!("ui/features/planPreview.js");
 pub const INSTRUCTIONS_JS: &str = include_str!("ui/features/instructionsPanel.js");
 
 pub const APP_JS: &str = include_str!("ui/app.js");
 pub const PAGE_ONBOARDING_JS: &str = include_str!("ui/pages/onboarding.js");
-pub const PAGE_SCOPES_JS: &str = include_str!("ui/pages/scopes.js");
 pub const PAGE_LIBRARY_JS: &str = include_str!("ui/pages/library.js");
-pub const PAGE_SOURCES_JS: &str = include_str!("ui/pages/sources.js");
-pub const PAGE_WORKFLOWS_JS: &str = include_str!("ui/pages/workflows.js");
 pub const PAGE_TASKS_JS: &str = include_str!("ui/pages/tasks.js");
-pub const PAGE_INSTRUCTIONS_JS: &str = include_str!("ui/pages/instructions.js");
-pub const PAGE_OVERVIEW_JS: &str = include_str!("ui/pages/overview.js");
 pub const PAGE_SAMPLES_JS: &str = include_str!("ui/pages/samples.js");
 
 /// 固定资产表：路径 → (内容, MIME)。
 pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
     let assets: &[(&str, (&str, &str))] = &[
+        (
+            "/ui/components/pathText.js",
+            (
+                include_str!("ui/components/pathText.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/projectDialog.js",
+            (
+                include_str!("ui/features/projectDialog.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/skillActions.js",
+            (
+                include_str!("ui/features/skillActions.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/nativeFiles.js",
+            (
+                include_str!("ui/features/nativeFiles.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/pages/nativeFiles.js",
+            (
+                include_str!("ui/pages/nativeFiles.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/knowledgeRecovery.js",
+            (
+                include_str!("ui/features/knowledgeRecovery.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/knowledgePanel.js",
+            (
+                include_str!("ui/features/knowledgePanel.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/workspace.css",
+            (include_str!("ui/workspace.css"), "text/css; charset=utf-8"),
+        ),
+        (
+            "/ui/pages/workspace.js",
+            (
+                include_str!("ui/pages/workspace.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/resourceReferences.js",
+            (
+                include_str!("ui/features/resourceReferences.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/managedDefinition.js",
+            (
+                include_str!("ui/features/managedDefinition.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/resourcePicker.js",
+            (
+                include_str!("ui/features/resourcePicker.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/directoryPicker.js",
+            (
+                include_str!("ui/features/directoryPicker.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/pages/projectSettings.js",
+            (
+                include_str!("ui/pages/projectSettings.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/importDialog.js",
+            (
+                include_str!("ui/features/importDialog.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
         (
             "/ui/features/ccSwitchImport.js",
             (
@@ -64,17 +156,6 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             "/ui/pages/projects.js",
             (
                 include_str!("ui/pages/projects.js"),
-                "text/javascript; charset=utf-8",
-            ),
-        ),
-        (
-            "/ui/theme.css",
-            (include_str!("ui/theme.css"), "text/css; charset=utf-8"),
-        ),
-        (
-            "/ui/theme.js",
-            (
-                include_str!("ui/theme.js"),
                 "text/javascript; charset=utf-8",
             ),
         ),
@@ -141,26 +222,6 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             (CONFLICT_JS, "text/javascript; charset=utf-8"),
         ),
         (
-            "/ui/features/scopePicker.js",
-            (SCOPE_PICKER_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/features/capabilityMatrix.js",
-            (CAPABILITY_MATRIX_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/features/importPreview.js",
-            (IMPORT_PREVIEW_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/features/workflowStageList.js",
-            (WORKFLOW_LIST_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/features/planPreview.js",
-            (PLAN_PREVIEW_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
             "/ui/features/instructionsPanel.js",
             (INSTRUCTIONS_JS, "text/javascript; charset=utf-8"),
         ),
@@ -170,32 +231,12 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             (PAGE_ONBOARDING_JS, "text/javascript; charset=utf-8"),
         ),
         (
-            "/ui/pages/scopes.js",
-            (PAGE_SCOPES_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
             "/ui/pages/library.js",
             (PAGE_LIBRARY_JS, "text/javascript; charset=utf-8"),
         ),
         (
-            "/ui/pages/sources.js",
-            (PAGE_SOURCES_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/pages/workflows.js",
-            (PAGE_WORKFLOWS_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
             "/ui/pages/tasks.js",
             (PAGE_TASKS_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/pages/instructions.js",
-            (PAGE_INSTRUCTIONS_JS, "text/javascript; charset=utf-8"),
-        ),
-        (
-            "/ui/pages/overview.js",
-            (PAGE_OVERVIEW_JS, "text/javascript; charset=utf-8"),
         ),
         (
             "/ui/pages/samples.js",

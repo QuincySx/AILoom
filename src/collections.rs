@@ -72,18 +72,52 @@ pub struct Catalog {
     pub snapshot: Snapshot,
     pub entries: Vec<ResourceEntry>,
     pub skills_root: String,
+    /// AIL-119：逐项符号链接处置记录（仓内保留 / 外逃忽略 / 悬空忽略），不阻塞其余资源。
+    pub warnings: Vec<String>,
 }
 
 fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
-    // 不跟随上游符号链接；即使只读预览也不读取仓库外文件。
+    // AIL-119（F15）：符号链接逐项处置，不再整源拒绝。
+    // 仓内相对链接（目标仍在本快照内且存在）保留为记录；外逃/悬空/不可解析链接
+    // 记为该条目的 warning 并忽略，其余资源照常可用。从不跟随链接读取内容。
+    let mut warnings: Vec<String> = Vec::new();
+    let root_canon = snapshot
+        .root
+        .canonicalize()
+        .unwrap_or_else(|_| snapshot.root.clone());
     let mut files = Vec::new();
-    for e in walkdir::WalkDir::new(&snapshot.root) {
+    for e in walkdir::WalkDir::new(&snapshot.root).follow_links(false) {
         let e = e.map_err(|e| Error::new(code::SOURCE_CACHE_CORRUPT, e.to_string()))?;
         if e.file_type().is_symlink() {
-            return Err(Error::new(
-                code::PATH_TRAVERSAL,
-                "合集包含符号链接，须在源中改为普通文件后添加",
-            ));
+            let link = e.path();
+            let rel = link
+                .strip_prefix(&snapshot.root)
+                .unwrap_or(link)
+                .display()
+                .to_string();
+            let resolved = std::fs::read_link(link).ok().and_then(|t| {
+                let abs = if t.is_absolute() {
+                    t
+                } else {
+                    link.parent().unwrap_or(Path::new(".")).join(t)
+                };
+                abs.canonicalize().ok()
+            });
+            match resolved {
+                Some(t) if t.starts_with(&root_canon) => {
+                    warnings.push(format!("仓内符号链接（保留原样，不跟随读取）：{rel}"));
+                }
+                Some(t) => {
+                    warnings.push(format!(
+                        "外逃符号链接（已忽略，未读取）：{rel} → {}",
+                        t.display()
+                    ));
+                }
+                None => {
+                    warnings.push(format!("悬空/不可解析符号链接（已忽略）：{rel}"));
+                }
+            }
+            continue;
         }
         if e.file_type().is_file() && e.file_name() == "SKILL.md" {
             files.push(e.path().to_path_buf());
@@ -92,7 +126,7 @@ fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
     let (entries, skills_root) = if snapshot.root.join("ailoom.toml").is_file() {
         let m = crate::manifest::TeamManifest::load_from(&snapshot.root)?;
         (
-            crate::resource::enumerate(&snapshot.root, &m, id)?,
+            crate::resource::enumerate(&snapshot.root, &m, id, &mut warnings)?,
             m.effective_paths().skills,
         )
     } else {
@@ -182,6 +216,7 @@ fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
         snapshot,
         entries,
         skills_root,
+        warnings,
     })
 }
 
@@ -199,13 +234,51 @@ fn external_catalog(path: &Path, id: &str) -> Result<Catalog> {
             "外部 Skill 路径失效或被替换为符号链接，请恢复原目录或重新登记",
         ));
     }
-    for entry in walkdir::WalkDir::new(path) {
+    if id.starts_with("collection-portable-") {
+        if let Some(catalog) = crate::knowledge::state::catalog(path, id)? {
+            return Ok(catalog);
+        }
+    }
+    // 外部 Skill 直接链接原目录，无法过滤其附属链接；不安全链接只拒绝该 Skill。
+    let mut warnings: Vec<String> = Vec::new();
+    let root_canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    for entry in walkdir::WalkDir::new(path).follow_links(false) {
         let entry = entry.map_err(|e| Error::new(code::SOURCE_NOT_CACHED, e.to_string()))?;
         if entry.file_type().is_symlink() {
-            return Err(Error::new(
-                code::PATH_TRAVERSAL,
-                "外部 Skill 内含符号链接，拒绝越界引用",
-            ));
+            let link = entry.path();
+            let rel = link
+                .strip_prefix(path)
+                .unwrap_or(link)
+                .display()
+                .to_string();
+            let resolved = std::fs::read_link(link).ok().and_then(|t| {
+                let abs = if t.is_absolute() {
+                    t
+                } else {
+                    link.parent().unwrap_or(Path::new(".")).join(t)
+                };
+                abs.canonicalize().ok()
+            });
+            match resolved {
+                Some(t) if t.starts_with(&root_canon) => {
+                    warnings.push(format!("仓内符号链接（保留原样，不跟随读取）：{rel}"));
+                }
+                Some(t) => {
+                    return Err(Error::new(
+                        code::SOURCE_NOT_CACHED,
+                        format!(
+                            "外部 Skill 的链接指向目录外，不能直接关联：{rel} → {}",
+                            t.display()
+                        ),
+                    ));
+                }
+                None => {
+                    return Err(Error::new(
+                        code::SOURCE_NOT_CACHED,
+                        format!("外部 Skill 包含悬空链接，不能直接关联：{rel}"),
+                    ));
+                }
+            }
         }
     }
     let raw = std::fs::read_to_string(path.join("SKILL.md"))?;
@@ -254,6 +327,7 @@ fn external_catalog(path: &Path, id: &str) -> Result<Catalog> {
             raw: Some(raw),
         }],
         skills_root: ".".into(),
+        warnings,
     })
 }
 
@@ -319,11 +393,16 @@ pub fn list(data: &Path) -> Result<Value> {
     let mut sources = Vec::new();
     for source in registry.sources.values() {
         let mut v = serde_json::to_value(source)?;
-        v["management"] = json!(if source.external_path.is_some() {
+        v["management"] = json!(if source.external_path.is_some()
+            && source.id.starts_with("collection-portable-")
+        {
+            "knowledge"
+        } else if source.external_path.is_some() {
             "external"
         } else {
             "managed"
         });
+        v["can_update"] = json!(source.external_path.is_none() || portable_remote(source));
         v["references"] = references(data, &format!("{}/", source.id))?;
         v["store_path"] = json!(crate::store::source_bucket(
             &crate::store::resolve_store_root()?,
@@ -361,7 +440,10 @@ pub fn list(data: &Path) -> Result<Value> {
                     .entries
                     .iter()
                     .map(|e| entry_value(e, source))
-                    .collect::<Vec<_>>())
+                    .collect::<Vec<_>>());
+                if !c.warnings.is_empty() {
+                    v["warnings"] = json!(c.warnings);
+                }
             }
             Err(e) => {
                 v["resources"] = json!([]);
@@ -371,6 +453,11 @@ pub fn list(data: &Path) -> Result<Value> {
         sources.push(v);
     }
     Ok(json!({ "revision": registry.revision, "sources": sources }))
+}
+
+fn portable_remote(source: &Collection) -> bool {
+    source.id.starts_with("collection-portable-")
+        && crate::knowledge::portable::portable_url(&source.url)
 }
 
 /// 显式联网预览（新源或已有源更新）。只写隔离缓存，不注册、不启用、不部署。
@@ -384,7 +471,7 @@ pub fn preview(
     let registry = load(data)?;
     if update_id
         .and_then(|id| registry.sources.get(id))
-        .is_some_and(|s| s.external_path.is_some())
+        .is_some_and(|s| s.external_path.is_some() && !portable_remote(s))
     {
         return Err(Error::new(
             code::USAGE,
@@ -394,6 +481,7 @@ pub fn preview(
     if !(url.starts_with("https://")
         || url.starts_with("http://")
         || url.starts_with("ssh://")
+        || url.starts_with("git://")
         || url.starts_with("file://")
         || Path::new(url).is_absolute()
         || url.starts_with("git@"))
@@ -408,10 +496,16 @@ pub fn preview(
         return Err(Error::new(code::USAGE, "合集名称须为 1–128 字节"));
     }
     let git = GitSource::new(url, ref_)?;
-    let id = format!(
-        "collection-{}",
-        crate::ids::sha256_prefix(git.identity.as_bytes(), 16)
-    );
+    let id = update_id
+        .and_then(|id| registry.sources.get(id))
+        .filter(|s| portable_remote(s) && crate::gitx::normalize_remote_url(&s.url) == git.identity)
+        .map(|s| s.id.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "collection-{}",
+                crate::ids::sha256_prefix(git.identity.as_bytes(), 16)
+            )
+        });
     if let Some(update_id) = update_id {
         if update_id != id || !registry.sources.contains_key(&id) {
             return Err(Error::new(
@@ -519,7 +613,7 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
         for preview in &previews {
             if registry.revision != preview.base_revision {
                 return Err(Error::new(
-                    code::USER_CONTENT_CONFLICT,
+                    code::PRECONDITION_FAILED,
                     "合集列表已变更，请重新预览",
                 ));
             }
@@ -528,7 +622,7 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
                 && next.snapshot.content_digest != preview.source.lock.content_digest
             {
                 return Err(Error::new(
-                    code::USER_CONTENT_CONFLICT,
+                    code::PRECONDITION_FAILED,
                     "外部 Skill 在预览后已变化，请重新预览",
                 ));
             }
@@ -540,7 +634,7 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
                         && !references(data, &id)?.as_array().unwrap().is_empty()
                     {
                         return Err(Error::new(
-                            code::USER_CONTENT_CONFLICT,
+                            code::PRECONDITION_FAILED,
                             format!("上游移除了仍被项目引用的资源 {id}；先取消引用或替换后再更新"),
                         ));
                     }
@@ -563,7 +657,7 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
     })
 }
 
-/// 明确启用的引用；同时包含仓库默认、子项目以及工作树覆盖，供更新/移除预览使用。
+/// 明确启用的引用；同时包含仓库默认、子项目以及 Worktree 覆盖，供更新/移除预览使用。
 pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
     let profile = crate::profile::PersonalProfile::load_or_default(data)?;
     let mut refs = Vec::new();
@@ -587,11 +681,11 @@ pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
             scan(&s.selection, format!("子项目 {}", s.path));
         }
         for (wt, s) in &repo.worktrees {
-            scan(s, format!("工作树 {wt}"));
+            scan(s, format!("Worktree {wt}"));
         }
         for (wt, subs) in &repo.wt_subprojects {
             for s in subs {
-                scan(&s.selection, format!("工作树 {wt}/{}", s.path));
+                scan(&s.selection, format!("Worktree {wt}/{}", s.path));
             }
         }
     }
@@ -608,10 +702,10 @@ pub fn check_updates(data: &Path, source_id: Option<&str>) -> Result<Value> {
     for s in registry
         .sources
         .values()
-        .filter(|s| source_id.map_or(true, |id| s.id == id))
+        .filter(|s| source_id.is_none_or(|id| s.id == id))
     {
         let mut status = json!({"source_id":s.id, "name":s.name, "base_commit":s.lock.resolved_commit, "checked_at":crate::ids::now_iso()});
-        if s.external_path.is_some() {
+        if s.external_path.is_some() && !portable_remote(s) {
             status["state"] = json!("external");
             if let Err(e) = catalog(data, s) {
                 status["state"] = json!("error");
@@ -660,7 +754,7 @@ pub fn remove(data: &Path, id: &str, execute: bool) -> Result<Value> {
         if execute {
             if !refs.as_array().unwrap().is_empty() {
                 return Err(Error::new(
-                    code::USER_CONTENT_CONFLICT,
+                    code::PRECONDITION_FAILED,
                     "来源仍被项目启用，请先取消引用并应用",
                 ));
             }

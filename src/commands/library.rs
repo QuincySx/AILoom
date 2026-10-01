@@ -1,4 +1,4 @@
-//! 个人资源库命令（AIL-043）：library init | import | list。
+//! 资源库命令（AIL-043）：library init | import | list。
 
 use crate::error::{code, Error, Result};
 use crate::paths::resolve_data_root;
@@ -12,24 +12,50 @@ pub fn run(
     dir: Option<&Path>,
     name: Option<&str>,
     execute: bool,
-    json: bool,
+    // 输出由调用方统一处理（JSON envelope 或 output::emit_human）。
+    _json: bool,
     data_root: Option<&Path>,
     url: Option<&str>,
     repo_path: Option<&str>,
     git_ref: Option<&str>,
     skill: Option<&str>,
+    preview_id: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let _ = json;
     let data_root = resolve_data_root(data_root)?;
     match action {
+        "recover" => Ok(json!({
+            "action": "recover",
+            "recovery": personal_library::recover_updates(&data_root)?,
+        })),
         "init" => {
             let r = personal_library::ensure_library(&data_root)?;
             Ok(json!({
                 "action": "init",
                 "path": r.path,
                 "created": r.created,
-                "note": "个人库已在机器数据区生成（仓外、离线、无需团队源或 TOML 手写）",
+                "note": "资源库已在机器数据区生成（仓外、离线、无需团队源或 TOML 手写）",
             }))
+        }
+        // AIL-120：CLI 对齐 Web 的个人副本删除（预览默认，--execute 才移入归档）
+        "delete" => {
+            let Some(id) = skill else {
+                return Err(crate::error::Error::new(
+                    crate::error::code::USAGE,
+                    "delete 需要 --skill <资源ID>",
+                ));
+            };
+            if execute {
+                personal_library::delete_execute(&data_root, id)?;
+                Ok(json!({
+                    "action": "delete",
+                    "executed": true,
+                    "id": id,
+                    "note": "已移入本机 library-archive（可手动移回恢复）；不删除上游或项目文件",
+                }))
+            } else {
+                let preview = personal_library::delete_preview(&data_root, id)?;
+                Ok(json!({ "action": "delete", "executed": false, "id": id, "preview": preview }))
+            }
         }
         "list" => {
             // AIL-062：宽容列表——坏条目定位为 issues（文件级），不使列表失败
@@ -103,6 +129,7 @@ pub fn run(
             }
         }
         "sources" => {
+            personal_library::recover_updates(&data_root)?;
             // AIL-063：列出库内 skill 的来源身份/版本
             let lib = personal_library::library_root(&data_root);
             let mut items = Vec::new();
@@ -141,12 +168,15 @@ pub fn run(
                     "note": "预览模式：加 --execute 应用更新",
                 }));
             }
-            let r = personal_library::update_execute(&data_root, skill)?;
+            let r = match preview_id {
+                Some(id) => personal_library::update_execute_checked(&data_root, skill, id)?,
+                None => personal_library::update_execute(&data_root, skill)?,
+            };
             Ok(json!({ "action": "update", "executed": true, "result": r }))
         }
         other => Err(Error::new(
             code::USAGE,
-            format!("未知 library 动作: {other}（支持 init | import | import-git | list | sources | check-update | update）"),
+            format!("未知 library 动作: {other}（支持 init | import | import-git | import-entry | list | sources | check-update | update | delete | recover）"),
         )),
     }
 }

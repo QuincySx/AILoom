@@ -1,0 +1,3 @@
+[ailoom:info] 控制台已启动：http://127.0.0.1:8644/?token=5a2ebf27-8985-4583-9097-19c8143c0f4f（仅本机可访问；Ctrl+C 或 POST /api/shutdown 停止）
+[ailoom:info] 已恢复 6 个持久化任务（其中 0 个标记为中断）
+[ailoom:info] 控制台已启动：http://127.0.0.1:8644/?token=e956b364-b1d6-479f-8176-71dfcd854db2（仅本机可访问；Ctrl+C 或 POST /api/shutdown 停止）

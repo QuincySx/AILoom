@@ -4,13 +4,16 @@ use ailoom::{logging, output};
 use clap::{CommandFactory, Parser};
 
 fn main() {
-    let cli = cli::Cli::parse();
+    let cli = match cli::Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => exit_on_parse_error(e),
+    };
     let code = match run(&cli) {
         Ok(()) => 0,
         Err(err) => {
             if cli.json {
                 // 错误 JSON 只走 stderr，stdout 保持纯净
-                let _ = println_err_json(&err.to_json());
+                output::emit_error_json(&err);
             } else {
                 logging::error(&err);
             }
@@ -20,18 +23,118 @@ fn main() {
     std::process::exit(code);
 }
 
-fn println_err_json(value: &serde_json::Value) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut stderr = std::io::stderr().lock();
-    writeln!(
-        stderr,
-        "{}",
-        serde_json::to_string(value).unwrap_or_default()
-    )
+/// 参数解析失败：help / version 照常输出；`--json` 模式下按契约输出 E0001 错误 JSON（stderr，退出 2），
+/// 否则沿用 clap 的人类提示。
+fn exit_on_parse_error(e: clap::Error) -> ! {
+    use clap::error::ErrorKind;
+    let json = std::env::args().any(|a| a == "--json");
+    if json && !matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+        let message = e.render().to_string();
+        // 只取 clap 的错误段落（第一个空行之前），去掉后面的 Usage 与帮助提示。
+        let summary = message
+            .lines()
+            .take_while(|l| !l.trim().is_empty())
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let summary = summary.trim_start_matches("error: ");
+        output::emit_error_json(
+            &ailoom::error::Error::new(ailoom::error::code::USAGE, summary.to_string())
+                .fix("运行 ailoom --help 或 ailoom <命令> --help 查看用法"),
+        );
+        std::process::exit(2);
+    }
+    e.exit()
+}
+
+/// 复用已在运行的服务时，显式请求的端口可能与实际端口不同：写入结果并提示，而不是静默忽略。
+fn note_port_reuse(value: &mut serde_json::Value, requested: Option<u16>) {
+    let (Some(requested), Some(actual)) = (requested, value["port"].as_u64()) else {
+        return;
+    };
+    if value["reused"] == true && actual != u64::from(requested) {
+        value["requested_port"] = serde_json::json!(requested);
+        logging::warn(format!(
+            "已有网页服务在端口 {actual} 运行，沿用该端口；如需改用 {requested}，先运行 ailoom service stop"
+        ));
+    }
 }
 
 fn run(cli: &cli::Cli) -> Result<()> {
     match &cli.command {
+        Some(Command::Knowledge {
+            action,
+            root,
+            path,
+            expected,
+            execute,
+            sync_after,
+            remote,
+            branch,
+            subdir,
+            file,
+            name,
+            query,
+            limit,
+            ..
+        }) if matches!(
+            action.as_str(),
+            "status"
+                | "init"
+                | "move"
+                | "save"
+                | "recall"
+                | "sync"
+                | "configure"
+                | "recover"
+                | "clone"
+                | "checkpoint"
+        ) =>
+        {
+            let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let root = root.clone().unwrap_or(std::env::current_dir()?);
+            let required = |v: Option<String>, label: &str| {
+                v.ok_or_else(|| {
+                    ailoom::error::Error::new(ailoom::error::code::USAGE, format!("缺少 --{label}"))
+                })
+            };
+            let value = match action.as_str() {
+                "save" => ailoom::knowledge::location::save(
+                    &data,
+                    &root,
+                    file.as_deref().ok_or_else(|| {
+                        ailoom::error::Error::new(ailoom::error::code::USAGE, "缺少 --file")
+                    })?,
+                    &required(name.clone(), "name")?,
+                )?,
+                "recall" => ailoom::knowledge::location::recall(
+                    &data,
+                    &root,
+                    &required(query.clone(), "query")?,
+                    *limit,
+                )?,
+                _ => ailoom::knowledge::location::run(
+                    &data,
+                    &ailoom::knowledge::location::Request {
+                        action: action.clone(),
+                        root,
+                        path: path.clone(),
+                        expected: expected.clone(),
+                        execute: *execute,
+                        sync_after: *sync_after,
+                        remote: remote.clone(),
+                        branch: branch.clone(),
+                        subdir: subdir.clone(),
+                    },
+                )?,
+            };
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                output::emit_text(serde_json::to_string_pretty(&value)?);
+            }
+            Ok(())
+        }
         Some(Command::Version) => {
             let info = cli::version_info();
             if cli.json {
@@ -70,6 +173,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             Ok(())
         }
         Some(Command::Init {
+            knowledge_path,
             url,
             ref_,
             name,
@@ -81,6 +185,39 @@ fn run(cli: &cli::Cli) -> Result<()> {
             no_builtin,
             root,
         }) => {
+            if let Some(path) = knowledge_path {
+                if url.is_some()
+                    || local_path.is_some()
+                    || !projects.is_empty()
+                    || !roles.is_empty()
+                    || !targets.is_empty()
+                    || *refresh
+                    || *no_builtin
+                    || ref_.is_some()
+                    || name.is_some()
+                {
+                    return Err(ailoom::error::Error::new(
+                        ailoom::error::code::USAGE,
+                        "--knowledge-path 单独初始化知识库；团队资源与工具设置请另行执行 init",
+                    ));
+                }
+                let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+                let value = ailoom::knowledge::location::run(
+                    &data,
+                    &ailoom::knowledge::location::Request {
+                        action: "init".into(),
+                        root: root.clone().unwrap_or(std::env::current_dir()?),
+                        path: Some(path.clone()),
+                        ..Default::default()
+                    },
+                )?;
+                if cli.json {
+                    output::emit_json(&value);
+                } else {
+                    output::emit_text("项目知识库已初始化");
+                }
+                return Ok(());
+            }
             let args = ailoom::commands::init::InitArgs {
                 url: url.clone(),
                 ref_: ref_.clone(),
@@ -140,6 +277,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             text,
             feedback_id,
             root,
+            ..
         }) => {
             let args = ailoom::knowledge::feedback::KnowledgeArgs {
                 action: action.clone(),
@@ -175,7 +313,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 }
                 Err(e) => {
                     if cli.json {
-                        let _ = println_err_json(&e.to_json());
+                        output::emit_error_json(&e);
                     } else {
                         logging::error(&e);
                     }
@@ -301,6 +439,8 @@ fn run(cli: &cli::Cli) -> Result<()> {
             let value = ailoom::data::run(&args, cli.json, cli.data_root.as_deref())?;
             if cli.json {
                 output::emit_json(&value);
+            } else {
+                output::emit_human(&value);
             }
             Ok(())
         }
@@ -432,10 +572,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             if cli.json {
                 output::emit_json(&value);
             } else {
-                crate::logging::info(format!(
-                    "同仓贡献：{}",
-                    serde_json::to_string(&value).unwrap_or_default()
-                ));
+                output::emit_human(&value);
             }
             Ok(())
         }
@@ -467,6 +604,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             path,
             git_ref,
             skill,
+            preview_id,
         }) => {
             let value = ailoom::commands::library::run(
                 action,
@@ -479,14 +617,19 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 path.as_deref(),
                 git_ref.as_deref(),
                 skill.as_deref(),
+                preview_id.as_deref(),
             )?;
             if cli.json {
                 output::emit_json(&value);
+            } else {
+                output::emit_human(&value);
             }
             Ok(())
         }
         Some(Command::Personal {
             action,
+            id,
+            sub,
             resource,
             host,
             state,
@@ -512,12 +655,17 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     cli.data_root.as_deref(),
                     &data_root_resolved,
                 )?,
-                "sync" => ailoom::commands::personal::sync(
-                    root.as_deref(),
+                // AIL-120：CLI sync 与 Web 应用同一管道，并持久化撤销清单（可 undo）
+                "sync" => ailoom::console::jobs::cli_sync(
+                    &data_root_resolved,
+                    root.as_deref().unwrap_or(&std::env::current_dir()?),
                     scope.clone(),
                     cli.data_root.as_deref(),
                     &data_root_resolved,
-                )?,
+                )
+                .map_err(|e| {
+                    ailoom::error::Error::new(ailoom::error::code::INTERNAL, e)
+                })?,
                 "select" => {
                     let args = ailoom::commands::personal::SelectArgs {
                         resource: resource.clone(),
@@ -537,9 +685,45 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 }
                 "deploy-status" => ailoom::commands::personal::deploy_status(
                     root.as_deref(),
+                    None,
                     cli.data_root.as_deref(),
                     &data_root_resolved,
                 )?,
+                // AIL-120：CLI 撤销持久化 Apply 任务（Web 与 CLI sync 均可撤销）
+                "undo" => {
+                    let id = id.clone().ok_or_else(|| {
+                        ailoom::error::Error::new(ailoom::error::code::USAGE, "undo 需要 --id <任务ID>")
+                    })?;
+                    if ailoom::console::jobs::load_job(&data_root_resolved, &id).is_none() {
+                        return Err(ailoom::error::Error::new(
+                            ailoom::error::code::USAGE,
+                            format!("任务不存在: {id}"),
+                        )
+                        .fix("在网页「操作记录」中查看可撤销的任务 ID"));
+                    }
+                    ailoom::console::jobs::undo_persisted(&data_root_resolved, &id).map_err(
+                        |e| ailoom::error::Error::new(ailoom::error::code::INTERNAL, e),
+                    )?
+                }
+                // AIL-120：CLI 只读扫描（与控制台 /api/project/scan-skills 共用实现）
+                "scan-skills" => {
+                    let root_path = root.clone().ok_or_else(|| {
+                        ailoom::error::Error::new(ailoom::error::code::USAGE, "scan-skills 需要 --root")
+                    })?;
+                    let store_root = ailoom::paths::resolve_store_root()?;
+                    let store_root = store_root.canonicalize().unwrap_or(store_root);
+                    let root_canon = root_path.canonicalize().map_err(|e| {
+                        ailoom::error::Error::new(ailoom::error::code::USAGE, format!("路径不可用: {e}"))
+                    })?;
+                    let mut v = ailoom::commands::scan_skills::scan_project_skills(
+                        &root_canon,
+                        sub.as_deref(),
+                        &store_root,
+                    );
+                    v["root"] = serde_json::json!(root_canon.display().to_string());
+                    v["scanned_sub"] = serde_json::json!(sub);
+                    v
+                }
                 "migrate-nongit" => ailoom::commands::personal::migrate_nongit(
                     repo.as_deref(),
                     &data_root_resolved,
@@ -554,13 +738,15 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     return Err(ailoom::error::Error::new(
                         ailoom::error::code::USAGE,
                         format!(
-                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync | migrate-nongit）"
+                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit）"
                         ),
                     ))
                 }
             };
             if cli.json {
                 output::emit_json(&value);
+            } else {
+                output::emit_personal(action, &value);
             }
             Ok(())
         }
@@ -605,11 +791,85 @@ fn run(cli: &cli::Cli) -> Result<()> {
             if cli.json {
                 output::emit_json(&value);
             } else {
-                println!("{}", serde_json::to_string_pretty(&value)?);
+                output::emit_collection(action, &value);
+            }
+            Ok(())
+        }
+        Some(Command::Web { port, no_open }) => {
+            let root = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let mut value = ailoom::service::web(
+                &root,
+                port.unwrap_or(ailoom::console::DEFAULT_PORT),
+                !*no_open,
+            )?;
+            note_port_reuse(&mut value, *port);
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                println!("{}", value["url"].as_str().unwrap_or_default());
+            }
+            Ok(())
+        }
+        Some(Command::Service { action }) => {
+            use ailoom::cli::ServiceCommand;
+            let root = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let value = match action {
+                ServiceCommand::Start { port } => {
+                    let mut v = ailoom::service::start(
+                        &root,
+                        port.unwrap_or(ailoom::console::DEFAULT_PORT),
+                    )?;
+                    note_port_reuse(&mut v, *port);
+                    v
+                }
+                ServiceCommand::Stop => ailoom::service::stop(&root)?,
+                ServiceCommand::Status => ailoom::service::status(&root)?,
+                ServiceCommand::Enable { port } => {
+                    ailoom::service::set_autostart(&root, true, *port)?
+                }
+                ServiceCommand::Disable => {
+                    ailoom::service::set_autostart(&root, false, ailoom::console::DEFAULT_PORT)?
+                }
+                ServiceCommand::Run { port } => {
+                    return ailoom::service::run(&root, *port, false, false)
+                }
+            };
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                match action {
+                    ServiceCommand::Enable { .. } => {
+                        println!("已开启登录自启动，下次登录生效；当前运行状态不变。")
+                    }
+                    ServiceCommand::Disable => println!("已关闭登录自启动；当前运行状态不变。"),
+                    _ => {
+                        let state = match value["state"].as_str() {
+                            Some("running") => "运行中",
+                            Some("stopping") => "正在停止，等待任务完成",
+                            Some("unreachable") => "暂时无响应",
+                            _ => "已停止",
+                        };
+                        println!("网页服务：{state}");
+                        println!(
+                            "登录自启动：{}",
+                            if value["autostart"]["enabled"] == true {
+                                "已开启"
+                            } else {
+                                "已关闭"
+                            }
+                        );
+                        if let Some(port) = value["port"].as_u64() {
+                            println!("端口：{port}；打开网页：ailoom web");
+                        }
+                    }
+                }
             }
             Ok(())
         }
         Some(Command::Console { port, no_open }) => {
+            logging::info(
+                "ailoom console 是前台调试入口；日常使用请运行 ailoom web（后台服务，可复用）",
+            );
             let data_root = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
             let opts = ailoom::console::ConsoleOptions {
                 port: *port,
@@ -618,11 +878,14 @@ fn run(cli: &cli::Cli) -> Result<()> {
             };
             ailoom::console::run_blocking(&opts)
         }
-        Some(Command::Doctor { root }) => {
+        Some(Command::Doctor { root, strict }) => {
             let args = ailoom::commands::doctor::DoctorArgs { root: root.clone() };
             let value = ailoom::commands::doctor::run(&args, cli.json, cli.data_root.as_deref())?;
             if cli.json {
                 output::emit_json(&value);
+            }
+            if *strict && value["ok"] == false {
+                std::process::exit(10);
             }
             Ok(())
         }
@@ -641,7 +904,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
         None => {
             // 无子命令：打印帮助到 stderr，用法退出码 2
             let mut cmd = cli::Cli::command();
-            let _ = cmd.print_help();
+            eprintln!("{}", cmd.render_help());
             std::process::exit(2);
         }
     }

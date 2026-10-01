@@ -208,7 +208,8 @@ fn agents_render_for_claude_and_unsupported_for_codex() {
     assert!(agent.is_file(), "Claude agent 落盘");
     let text = std::fs::read_to_string(&agent).unwrap();
     assert!(text.starts_with("---\nname: release-helper"));
-    assert!(text.contains("description: 发布辅助"));
+    let (meta, _) = ailoom::resource::parse_frontmatter(&text).unwrap();
+    assert_eq!(meta.unwrap().description.as_deref(), Some("发布辅助"));
     assert!(text.contains("tools: Read"));
     assert!(text.contains("model: inherit"));
     assert!(text.contains("permission-mode: plan"), "tool_extras 透传");
@@ -632,4 +633,94 @@ fn ail041_legacy_codex_path_migrates_on_resync() {
         cfg.contains("path = \".agents/skills/a-deploy/SKILL.md\""),
         "config 条目更新为新形态: {cfg}"
     );
+}
+
+#[test]
+fn extra_hosts_sync_native_entries_and_keep_user_config() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "extra-hosts");
+    let src = c.tmp.path().join("team-extra");
+    let team = common::make_team_source_full(&src);
+    std::fs::write(team.join("resources/agents/release-helper.toml"), "name='release-helper'\nshared=true\nnamespace='common'\ndescription='Review releases'\ninstructions='Check the release'\n").unwrap();
+    std::fs::write(
+        team.join("resources/mcp/files.toml"),
+        "name='files'\nshared=true\nnamespace='common'\ntype='stdio'\ncommand='cat'\nargs=[]\n",
+    )
+    .unwrap();
+    common::commit_only(&team, "portable resources");
+    std::fs::create_dir_all(ws.join(".cursor")).unwrap();
+    std::fs::write(
+        ws.join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"user-server":{"command":"user-tool"}},"custom":true}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        ws.join("opencode.jsonc"),
+        "{ // user config\n\"model\":\"user/model\"\n}",
+    )
+    .unwrap();
+    let url = common::file_url(&team);
+    let dr = c.dr();
+    let (code, _, err) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            &url,
+            "--target",
+            "grok",
+            "--target",
+            "pi",
+            "--target",
+            "opencode",
+            "--target",
+            "cursor",
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    assert_eq!(code, 0, "{err}");
+    let (code, _, err) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "{err}");
+    for host in ["grok", "pi", "opencode", "cursor"] {
+        assert!(
+            ws.join(format!(".{host}/skills/common-greet/SKILL.md"))
+                .is_file(),
+            "{host} skill"
+        );
+    }
+    for host in ["grok", "opencode", "cursor", "pi"] {
+        assert!(
+            ws.join(format!(".{host}/agents/release-helper.md"))
+                .is_file(),
+            "{host} agent"
+        );
+    }
+    let cursor: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".cursor/mcp.json")).unwrap())
+            .unwrap();
+    assert_eq!(cursor["mcpServers"]["user-server"]["command"], "user-tool");
+    assert_eq!(cursor["mcpServers"]["files"]["command"], "cat");
+    assert_eq!(cursor["custom"], true);
+    let open: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join(".opencode/opencode.json")).unwrap())
+            .unwrap();
+    assert_eq!(open["mcp"]["files"]["type"], "local");
+    assert!(std::fs::read_to_string(ws.join("opencode.jsonc"))
+        .unwrap()
+        .contains("// user config"));
+    let grok: toml::Value = std::fs::read_to_string(ws.join(".grok/config.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(
+        grok["mcp_servers"]["files"]["command"].as_str(),
+        Some("cat")
+    );
+    let (code, _, err) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "repeat sync: {err}");
 }

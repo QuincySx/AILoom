@@ -9,6 +9,7 @@ dependencies = [
  "chrono",
  "clap",
  "fs2",
+ "libc",
  "proc-macro2",
  "serde",
  "serde_json",

@@ -508,7 +508,7 @@ pub mod a {
     const _: () = assert!(graph::GRAPH_SCHEMA_VERSION >= 3);
 }
 
-/// RW-11/R08：未提交的工作树内容变化（修改/删除/新增）必须让 query 报过期；
+/// RW-11/R08：未提交的 Worktree 内容变化（修改/删除/新增）必须让 query 报过期；
 /// 重建恢复新鲜；指纹只取内容（同内容重写不变化），不依赖 Git 或 mtime。
 #[test]
 fn uncommitted_worktree_changes_stale_query_and_rebuild_recovers() {
@@ -605,7 +605,7 @@ fn uncommitted_worktree_changes_stale_query_and_rebuild_recovers() {
     let r = query_json(&run);
     assert_eq!(r["graph_stale"], false, "构图后应新鲜: {r}");
 
-    // 未提交修改（HEAD 不变、源锁不变）→ 过期，且注明是工作树内容原因
+    // 未提交修改（HEAD 不变、源锁不变）→ 过期，且注明是 Worktree 内容原因
     write(
         &ws.join("src/lib.rs"),
         "/// 缓存入口\npub fn warm() {}\npub fn cold() {}\n",

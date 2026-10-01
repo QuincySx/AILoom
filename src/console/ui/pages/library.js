@@ -1,64 +1,48 @@
 // AIL-095（库部分）：资源库页 —— 列表/编辑（指纹+保存前校验）/删除（影响预览）/
 // 来源导入（本地/GitHub/入口）。保存 ≠ 应用 ≠ 贡献；秘密不回显明文。
 
+import { ManagedDefinition } from '../features/managedDefinition.js';
 import { api, esc } from '../services/api.js';
-import { DataTable } from '../components/dataTable.js';
 import { Editor } from '../components/editor.js';
 import { CollectionsPanel } from '../features/collectionsPanel.js';
 import { notify } from '../state/store.js';
-import { confirmAction } from '../components/dialog.js';
+import { Dialog, confirmAction } from '../components/dialog.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
+  root.className = 'library-page';
   container.appendChild(root);
   root.innerHTML = `
     <div data-collections></div>
-    <div class="step"><h2>个人副本</h2><p class="muted">本地文件夹和 skills.sh 单项导入的资源。点击资源查看、编辑或删除；修改副本不会提交上游。</p>
-      <p><a href="#/sources">检查与更新个人副本</a></p><div data-table></div>
       <div data-issues></div>
       <div data-editor class="hidden">
         <h2>编辑 <span data-id></span></h2>
         <div data-box></div><br>
-        <button data-save>保存（指纹校验 + 保存前校验）</button>
-        <button data-delete class="danger">删除个人副本…</button>
-        <span data-msg class="muted"></span>
-      </div></div>`;
+        <button data-save>保存修改</button>
+        <button data-delete class="danger">删除…</button>
+        <span data-edit-msg class="muted" role="status" aria-live="polite"></span>
+      </div>`;
 
-  const tableSlot = root.querySelector('[data-table]');
   const issuesSlot = root.querySelector('[data-issues]');
   const editorBox = root.querySelector('[data-editor]');
   const editor = Editor(root.querySelector('[data-box]'), { title: '资源正文', content: '' });
-  const editMsg = root.querySelector('[data-msg]');
+  const editMsg = root.querySelector('[data-edit-msg]');
   let currentFp = null;
   let currentId = null;
   let loadGeneration = 0;
 
-  const table = DataTable(tableSlot, { loading: true });
+  const editorDialog = Dialog(root, {title:'编辑能力',content:editorBox,open:false,keepMounted:true,canClose:()=>!root.querySelector('[data-save]').disabled,dirty:()=>editor.isDirty(),onClose:()=>{++loadGeneration;currentId=null;editor.setValue('');}});
 
   async function refresh() {
     try {
       const v = await api.libraryList();
-      const rows = (v.entries ?? []).map((e) => ({
-        id: e.id, kind: e.kind, description: e.description,
-      }));
-      table.update({
-        rows,
-        rowKey: (r) => r.id,
-        empty: '还没有个人副本。上方「导入资源」可选择本地文件夹或 skills.sh。Git 合集中的资源显示在来源目录中。',
-        columns: [
-          { key: 'id', label: '资源 ID' },
-          { key: 'kind', label: '类型' },
-          { key: 'description', label: '说明' },
-        ],
-        onSelect: (row) => openResource(row.id),
-      });
       const issues = v.issues ?? [];
       issuesSlot.innerHTML = issues.length
-        ? `<p class="badge warn">坏条目（其余资源仍可用，修复后自动恢复）：</p><ul>` +
+        ? `<p class="badge warn">以下能力无法读取：</p><ul>` +
           issues.map((i) => `<li class="muted">${esc(i.path)}：${esc(i.error)}</li>`).join('') + `</ul>`
         : '';
     } catch (e) {
-      table.update({ error: e.message });
+      issuesSlot.textContent = '无法读取本地能力：' + e.message;
     }
   }
 
@@ -69,7 +53,8 @@ export function mount(container, ctx) {
       const v = await api.libraryResource(id);
       if (generation !== loadGeneration) return;
       editorBox.classList.remove('hidden');
-      root.querySelector('[data-id]').textContent = id;
+      root.querySelector('[data-id]').textContent = id.split('/').pop();
+      editorDialog.show();
       editor.setValue(v.content);
       currentFp = v.fingerprint;
       currentId = id;
@@ -89,7 +74,7 @@ export function mount(container, ctx) {
       const v = await api.librarySave(savedId, content, currentFp);
       if (currentId !== savedId) return;
       editor.markSaved(content);
-      editMsg.textContent = '已保存（未部署；部署走预览+应用）';
+      editMsg.textContent = '已保存。到项目中应用更新。';
       currentFp = v.fingerprint;
     } catch (e) {
       editMsg.textContent = (e.kind === 'conflict' ? '文件已被外部修改：' : '校验未通过：') + e.message;
@@ -105,22 +90,26 @@ export function mount(container, ctx) {
     try {
       const p = await api.libraryDelete(id, false);
       const preview = p.preview ?? p;
-      if (!await confirmAction('删除个人副本 ' + id + '？\n涉及作用域：' + (preview.affected_scopes || []).join('、') + '\n副本会移入本机 library-archive，不删除上游或项目文件。仍启用时会阻止删除。', {title:'删除个人副本', confirmLabel:'移入归档', destructive:true})) return;
+      if (!await confirmAction('删除 ' + id.split('/').pop() + '？\n使用位置：' + (preview.affected_scopes || []).join('、') + '\n将移入归档。正在使用的能力不能删除。', {title:'删除个人副本', confirmLabel:'移入归档', destructive:true})) return;
       await api.libraryDelete(id, true);
       if (currentId === id) { currentId = null; editor.setValue(''); editorBox.classList.add('hidden'); }
-      notify('个人副本已移入本机归档，可恢复。'); await refresh();
+      editorDialog.close();notify('已删除，可从归档恢复。'); await refresh();await collections.refresh?.();
     } catch (e) { notify(e.message); }
   };
-  // 导入区
+  // 导入区（AIL-126：搜索上下文跨页保留）
   const collections = CollectionsPanel(root.querySelector('[data-collections]'), {
-    title: '全局资源中心',
-    description: '统一管理来源、下载和更新。项目按需引用，导入不会自动启用。',
+    title: '资源库',
+    compactLibrary: true,
+    onEdit: async id=>{if(/^personal\/(rule|agent)\//.test(id)){await ManagedDefinition(root,{id});await refresh();await collections.refresh();}else await openResource(id);},
+    onCreate: async()=>{const result=await ManagedDefinition(root);if(result){await refresh();await collections.refresh();}},
+    description: '收集可复用的 Skill、MCP 和 Agent，再添加到需要的目录。',
+    searchKey: 'ailoom-library-search',
     onChanged: refresh,
   });
 
   refresh();
   return {
     isDirty: () => editor.isDirty(),
-    destroy() { ++loadGeneration; collections.destroy(); root.remove(); },
+    destroy() { ++loadGeneration; collections.destroy(); editorDialog.destroy(); root.remove(); },
   };
 }

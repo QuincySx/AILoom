@@ -1,6 +1,6 @@
 # 参考能力覆盖表
 
-当前共 51 张主卡；新增 AIL-039～051 本地控制台/个人配置/Onboarding。状态见 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md)，新需求映射见 [本地控制台计划](initiatives/local-console.md)。本表仅映射能力，不代表全部功能已验收。
+本表把参考产品的能力映射到 AILoom 卡片，只表示能力归属，不代表已验收；卡片数量与状态以 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md) 为准。本地控制台相关映射的历史背景见 [本地控制台计划](archive/initiatives/local-console.md)。
 
 | 能力 | AILoom卡 |
 |---|---|

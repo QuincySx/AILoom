@@ -81,7 +81,10 @@ pub fn render(
             let mut fm = String::new();
             fm.push_str("---\n");
             fm.push_str(&format!("name: {}\n", spec.name));
-            fm.push_str(&format!("description: {}\n", spec.description));
+            fm.push_str(&format!(
+                "description: {}\n",
+                serde_json::to_string(&spec.description).unwrap()
+            ));
             if !spec.tools.is_empty() {
                 fm.push_str(&format!("tools: {}\n", spec.tools.join(", ")));
             }

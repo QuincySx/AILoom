@@ -116,12 +116,12 @@ pub fn git_meta(
 }
 
 /// 上游检查结果（AIL-066）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateStatus {
     pub skill: String,
     pub source_kind: String,
     pub discovery_entry: String,
-    /// up-to-date | local-modified | upstream-new | conflict | upstream-missing | not-applicable(unknown/local)
+    /// up-to-date | local-modified | upstream-new | conflict | upstream-missing | stale | error | not-applicable(unknown/local)
     pub state: String,
     pub imported_digest: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,10 +130,35 @@ pub struct UpdateStatus {
     pub upstream_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
+impl UpdateStatus {
+    pub(crate) fn for_skill(skill: &str, source: Option<&SkillSourceMeta>) -> Self {
+        Self {
+            skill: skill.into(),
+            source_kind: source.map_or("unknown", |s| s.source_kind.as_str()).into(),
+            discovery_entry: source.map_or("", |s| s.discovery_entry.as_str()).into(),
+            state: "not-applicable".into(),
+            imported_digest: source.map_or("", |s| s.imported_digest.as_str()).into(),
+            local_digest: None,
+            upstream_digest: None,
+            upstream_commit: None,
+            preview_id: None,
+            note: None,
+        }
+    }
+
+    pub(crate) fn failed(skill: &str, source: Option<&SkillSourceMeta>, note: String) -> Self {
+        let mut status = Self::for_skill(skill, source);
+        status.state = "error".into();
+        status.note = Some(note);
+        status
+    }
+}
 /// 校验更新状态可否直接更新（本地未改才允许静默替换；冲突需显式处理）。
 pub fn ensure_updatable(status: &UpdateStatus) -> Result<()> {
     match status.state.as_str() {
@@ -152,7 +177,11 @@ pub fn ensure_updatable(status: &UpdateStatus) -> Result<()> {
             code::UNKNOWN_REFERENCE,
             "上游已不存在该 skill（可能被删除/改名）；确认后可删除库内副本",
         )),
-        _ => Ok(()),
+        "upstream-new" => Ok(()),
+        _ => Err(Error::new(
+            code::SOURCE_CONFLICT,
+            "此 Skill 没有可应用的上游更新，请重新检查",
+        )),
     }
 }
 

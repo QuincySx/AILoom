@@ -1,0 +1,58 @@
+      ┌─────────┐  mr boxington
+     ╱ ═══════ ╱│
+    ╱─────────╱ │
+    │ •    (◉)│≡│
+    │  ◟▄▄▄◞  │ ╱
+    │   ◀◆▶   │╱
+    └─────────┘
+   Compiling ailoom v0.1.0 (<repo>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running tests/console_e2e.rs (target/debug/deps/console_e2e-d69401d61b2bda3c)
+
+running 2 tests
+test ail051_offline_then_existing_library_across_worktrees ... ok
+test ail051_existing_team_declaration_overlay ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+
+     Running tests/rework_2026_09_17.rs (target/debug/deps/rework_2026_09_17-7954b69de8f00f70)
+
+running 13 tests
+test ail070_artifact_history_recoverable ... ok
+test ail062_import_transaction_and_tolerant_list ... ok
+test cli_sync_from_subdirectory_records_workspace_root_for_undo ... ok
+test ail057_nongit_path_mode_closed_loop ... ok
+test ail053_undo_preserves_user_edits_and_is_reentrant ... ok
+test ail060_profile_format_preserving_and_conflict ... ok
+test ail069_mcp_missing_env_ref_surfaces_in_plan_notes ... ok
+test ail055_select_targets_explicit_repo ... ok
+test ail058_sequential_worktree_selections_merge ... ok
+test ail056_relink_validates_identity_and_preserves_config ... ok
+test ail052_tracked_managed_entry_not_deleted ... ok
+test ail076_baseline_change_resynthesizes_view ... ok
+test ail061_disabled_host_blocks_team_artifacts ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+
+     Running tests/sync_apply.rs (target/debug/deps/sync_apply-7b1e781a98b29e7b)
+
+running 14 tests
+test concurrent_apply_only_one_wins_lock ... ok
+test pending_journal_blocks_new_apply ... ok
+test happy_path_creates_files_and_advances_manifest ... ok
+test recovery_protects_later_user_edits ... ok
+test repeated_apply_is_noop ... ok
+test recover_skips_user_modified_and_is_idempotent ... ok
+test missing_backup_reports_failure ... ok
+test corrupt_backup_reports_failure_and_keeps_journal ... ok
+test json_multi_entry_recovery_keeps_user_entries ... ok
+test multi_fragment_same_file_recovery_restores_original_bytes ... ok
+test user_change_after_plan_rejects_execution ... ok
+test injected_failure_leaves_journal_and_recovery_restores ... ok
+test toml_array_entry_create_resync_update_and_remove ... ok
+test cli_sync_failure_then_recover_restores_agents_md ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+mbx[cache]: 0 hits, 0 misses, 2 incremental; 0 B downloaded, 0 B uploaded, 0 B stored locally
+mbx[savings]: 1h 7m unspent across 436 builds. compounding, in a sense.

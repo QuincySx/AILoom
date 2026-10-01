@@ -73,7 +73,7 @@ pub fn scan_directory(data: &Path, directory: &Path) -> Result<Value> {
             .map_err(|_| invalid("SQLite 组件未返回有效的来源数据"))
     };
     let schema = query("SELECT type, sql FROM sqlite_schema WHERE name = 'skills';")?;
-    if schema.as_array().map_or(true, |rows| rows.len() != 1)
+    if schema.as_array().is_none_or(|rows| rows.len() != 1)
         || schema[0]["type"] != "table"
         || schema[0]["sql"]
             .as_str()
@@ -246,10 +246,12 @@ fn normalize(row: &Value) -> Result<SkillOrigin> {
                 return Err(invalid("skills.sh 来源格式无效"));
             }
             let derived = format!("https://github.com/{}/{}", parts[0], parts[1]);
-            if url.is_none() {
-                url = Some(derived);
-            } else if repo_key(url.as_ref().unwrap()) != repo_key(&derived) {
-                return Err(invalid("skills.sh 入口与记录仓库不一致"));
+            match &url {
+                None => url = Some(derived),
+                Some(existing) if repo_key(existing) != repo_key(&derived) => {
+                    return Err(invalid("skills.sh 入口与记录仓库不一致"));
+                }
+                Some(_) => {}
             }
         } else if let Some(rest) = entry.strip_prefix("https://github.com/") {
             let parts: Vec<_> = rest.trim_end_matches('/').split('/').collect();
@@ -483,7 +485,7 @@ pub fn prepare(data: &Path, scan_id: &str, selected: &[String]) -> Result<Value>
                 .find(|s| s.external_path.is_none() && repo_key(&s.url) == key)
             {
                 if existing.lock.ref_ != branch {
-                    return Err(invalid("资源中心已有该仓库，但分支不同；不会覆盖已有来源"));
+                    return Err(invalid("资源库已有该仓库，但分支不同；不会覆盖已有来源"));
                 }
                 let cat = collections::catalog(data, existing)?;
                 let resources: Vec<Value> = cat.entries.iter().map(|e| json!({"kind":e.id.kind.as_str(),"name":e.id.name,"path":e.path,"id":e.id.to_string()})).collect();

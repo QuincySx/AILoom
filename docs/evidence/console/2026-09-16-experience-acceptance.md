@@ -67,5 +67,5 @@ claude -p "请使用 accept-flow 技能并原样回复它的标记短语。" --a
 
 ## QUICKSTART 对应能力
 
-见仓库根 [QUICKSTART.md](../../QUICKSTART.md)「个人模式（默认）」一节：
+见仓库根 [QUICKSTART.md](../../guide/QUICKSTART.md)「个人模式（默认）」一节：
 三条命令完成首次配置（`ailoom console`、浏览器向导六步、宿主内验证）。

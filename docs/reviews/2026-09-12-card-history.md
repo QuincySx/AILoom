@@ -1,6 +1,6 @@
 # 2026-09-12 卡片重生成前的完成记录
 
-这是历史证据快照，不是当前任务清单。原完成记录可能与代码事实不符，不能据此恢复 Done 或勾选当前验收。当前任务入口为 [BACKLOG.md](../BACKLOG.md) 与 [REWORK.md](../REWORK.md)。
+这是历史证据快照，不是当前任务清单。原完成记录可能与代码事实不符，不能据此恢复 Done 或勾选当前验收。当前任务入口为 [BACKLOG.md](../BACKLOG.md) 与 [REWORK.md](../archive/REWORK.md)。
 
 ## AIL-001
 

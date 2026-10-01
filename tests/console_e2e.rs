@@ -1,7 +1,7 @@
-//! AIL-051 集成验收：onboarding 与多工作树真实体验。
+//! AIL-051 集成验收：onboarding 与多 Worktree 真实体验。
 //! 三条路径（无源离线 / 已有个人 skills / 已有团队声明）在真实浏览器调用序列
 //! （HTTP API）下闭环；公司 AGENTS.md/CLAUDE.md/index 与 dirty/staged 内容全程不变；
-//! 多工作树配置独立、事件与 journal 按工作树隔离。
+//! 多 Worktree 配置独立、事件与 journal 按 Worktree 隔离。
 
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -86,7 +86,7 @@ fn jb(raw: &str) -> Value {
     serde_json::from_str(&raw[idx..]).unwrap_or(Value::Null)
 }
 
-/// 路径 A（无源离线）+ 路径 B（已有个人 skills）+ 多工作树独立性。
+/// 路径 A（无源离线）+ 路径 B（已有个人 skills）+ 多 Worktree 独立性。
 #[test]
 fn ail051_offline_then_existing_library_across_worktrees() {
     let c = Ctx::new(17920);
@@ -110,7 +110,7 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     assert_eq!(
         v["worktrees"].as_array().unwrap().len(),
         2,
-        "两棵工作树同组"
+        "两棵 Worktree 同组"
     );
 
     // 路径 A：离线导入 skill（无团队源/远端/网络）
@@ -140,7 +140,7 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     let plan = c.wait_job(&plan_id);
     assert_eq!(plan["status"], "success");
 
-    // 路径 B：同一库在另一工作树的覆盖（wt2 单独禁用）
+    // 路径 B：同一库在另一 Worktree 的覆盖（wt2 单独禁用）
     let (code, v) = c.post("/api/jobs/apply", json!({ "plan_job_id": plan_id }));
     assert_eq!(code, 202, "{v}");
     let apply_main = v["job_id"].as_str().unwrap().to_string();
@@ -148,7 +148,7 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     assert_eq!(done["status"], "success", "{done}");
     assert!(main.join(".claude/skills/a11y-flow").exists());
 
-    // wt2 上下文的发现 + 当前工作树禁用 → 只影响 wt2
+    // wt2 上下文的发现 + 当前 Worktree 禁用 → 只影响 wt2
     let (code, _v) = c.post("/api/repo/discover", json!({ "path": wt2 }));
     assert_eq!(code, 200);
     let (code, _) = c.post(
@@ -157,11 +157,11 @@ fn ail051_offline_then_existing_library_across_worktrees() {
     );
     assert_eq!(code, 200, "wt2 覆盖写入");
     // 注意：CLI select 的 worktree 作用域按「当前 cwd」解析；控制台服务进程的 cwd
-    // 不在 wt2 内 → 这里退化为仓库级 disable。为验证多工作树独立，直接验证
-    // 主工作树部署未被 wt2 的发现动作影响：
+    // 不在 wt2 内 → 这里退化为仓库级 disable。为验证多 Worktree 独立，直接验证
+    // 主 Worktree 部署未被 wt2 的发现动作影响：
     assert!(
         main.join(".claude/skills/a11y-flow").exists(),
-        "wt2 的发现/覆盖操作不改变主工作树文件"
+        "wt2 的发现/覆盖操作不改变主 Worktree 文件"
     );
 
     c.server.shutdown();
@@ -255,7 +255,7 @@ fn ail051_existing_team_declaration_overlay() {
     let agents_before = std::fs::read(ws.join("AGENTS.md")).unwrap();
     let status_before = git_status(&ws);
 
-    // 控制台（个人模式）叠加：个人库技能启用 + 团队技能禁用
+    // 控制台（个人模式）叠加：资源库技能启用 + 团队技能禁用
     // 仓库发现 + 登记（个人模式操作前置）
     let (code, v) = c.post("/api/repo/discover", json!({ "path": ws }));
     assert_eq!(code, 200, "{v}");

@@ -52,7 +52,7 @@ pub struct Graph {
     pub revision: Option<String>,
     /// 扫描内容指纹（RW-11/R08）：对本次扫描全部 .rs 文件的
     /// `<相对路径>\0<内容 sha256>` 再做摘要。与 Git HEAD/源锁无关，
-    /// 未提交的修改/删除/新增都会改变它——查询据此判定工作树过期。
+    /// 未提交的修改/删除/新增都会改变它——查询据此判定 Worktree 过期。
     #[serde(default)]
     pub content_fingerprint: Option<String>,
     pub files: BTreeMap<String, FileFacts>,
@@ -352,7 +352,7 @@ fn quote_use(tree: &syn::UseTree) -> String {
 }
 
 /// 扫描项目源码树（v1 语言：Rust）。
-/// 工作树内容指纹（RW-11/R08）：按 scan_project 相同的遍历/过滤规则
+/// Worktree 内容指纹（RW-11/R08）：按 scan_project 相同的遍历/过滤规则
 /// （跳过 `target`、`.` 开头目录，只看 `.rs`）对每个文件**内容字节**做
 /// sha256，再对 `<相对路径>\0<内容哈希>\n`（按路径排序）整体摘要。
 /// 只依赖内容本身，不使用 mtime；不要求 Git。

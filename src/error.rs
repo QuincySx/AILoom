@@ -37,16 +37,36 @@ pub mod code {
     pub const USER_CONTENT_CONFLICT: &str = "E5004";
     pub const INDEX_CORRUPT: &str = "E6001";
     pub const LEARNING_SCOPE_INVALID: &str = "E6002";
+    /// 知识库位置/可迁移恢复状态无效或与本机已有状态冲突（v1.4）。
+    pub const KNOWLEDGE_STATE_CONFLICT: &str = "E6003";
     pub const EVENT_PAYLOAD_INVALID: &str = "E7001";
     pub const REPORT_NOT_CONFIRMED: &str = "E8001";
     pub const IMPORT_OUT_OF_SCOPE: &str = "E8002";
     pub const CONTRIBUTION_DIVERGED: &str = "E8101";
     pub const PR_CREATE_FAILED: &str = "E8102";
     pub const INTERNAL: &str = "E9000";
+    /// 本地网页服务（启动/停止/状态/自启动）操作失败（v1.4，退出码沿用 1）。
+    pub const SERVICE_FAILED: &str = "E9101";
+}
+
+/// 「冲突」类错误：前置条件/版本不符、目标冲突、用户内容冲突、知识库状态冲突。
+/// 控制台据此返回 409，前端提示重新预览或核对，而不是当作输入错误。
+pub fn is_conflict(code: &str) -> bool {
+    matches!(
+        code,
+        code::PRECONDITION_FAILED
+            | code::TARGET_CONFLICT
+            | code::USER_CONTENT_CONFLICT
+            | code::KNOWLEDGE_STATE_CONFLICT
+    )
 }
 
 /// 按契约退出的稳定退出码映射：码段前缀决定类。
 pub fn exit_code_for(code: &str) -> i32 {
+    // E8100-E8199 贡献/PR 是 E8 段内单独的类（契约 §5）。
+    if code.starts_with("E81") {
+        return 18;
+    }
     let seg = code.get(1..2).unwrap_or("9");
     match seg {
         "0" => 2,  // 用法
@@ -57,7 +77,7 @@ pub fn exit_code_for(code: &str) -> i32 {
         "5" => 14, // 宿主/适配
         "6" => 15, // 知识
         "7" => 16, // 事件
-        "8" => 17, // 上报/导入/贡献
+        "8" => 17, // 上报/导入
         _ => 1,    // 未分类
     }
 }
@@ -168,9 +188,38 @@ impl From<serde_yaml::Error> for Error {
 mod tests {
     use super::*;
 
+    /// 码表一致性：每个错误码常量都必须登记在 CONTRACTS §5，并能映射到非 0 退出码。
+    #[test]
+    fn every_code_is_registered_in_contract() {
+        let src = include_str!("error.rs");
+        let contract = include_str!("../docs/CONTRACTS.md");
+        let start = contract.find("## 5. 错误码与退出码").unwrap();
+        let section = &contract[start..start + contract[start..].find("## 6.").unwrap()];
+        let mut missing = Vec::new();
+        for line in src.lines() {
+            let Some(rest) = line.trim().strip_prefix("pub const ") else {
+                continue;
+            };
+            let Some(value) = rest
+                .split('"')
+                .nth(1)
+                .filter(|v| v.starts_with('E') && v.len() == 5)
+            else {
+                continue;
+            };
+            if !section.contains(value) {
+                missing.push(value.to_string());
+            }
+            assert_ne!(exit_code_for(value), 0);
+        }
+        assert!(missing.is_empty(), "CONTRACTS §5 未登记: {missing:?}");
+    }
+
     #[test]
     fn exit_codes_follow_segment_table() {
         assert_eq!(exit_code_for("E0001"), 2);
+        assert_eq!(exit_code_for("E8001"), 17);
+        assert_eq!(exit_code_for("E8102"), 18);
         assert_eq!(exit_code_for("E1001"), 10);
         assert_eq!(exit_code_for("E2003"), 11);
         assert_eq!(exit_code_for("E3003"), 12);
@@ -178,7 +227,7 @@ mod tests {
         assert_eq!(exit_code_for("E5001"), 14);
         assert_eq!(exit_code_for("E6001"), 15);
         assert_eq!(exit_code_for("E7001"), 16);
-        assert_eq!(exit_code_for("E8101"), 17);
+        assert_eq!(exit_code_for("E8101"), 18);
         assert_eq!(exit_code_for("E9000"), 1);
     }
 

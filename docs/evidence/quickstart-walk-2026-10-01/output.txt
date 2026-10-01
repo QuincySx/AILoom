@@ -1,0 +1,23 @@
+library import --execute                         exit=0  导入时间 2026-10-01T13:32:54Z；脚本仅复制未执行；源目录未修改
+personal effective                               exit=0  }
+personal select --host claude                    exit=0  }
+personal select --resource                       exit=0  }
+personal plan                                    exit=0  create   .claude/skills/my-skill  [symlink]
+personal sync                                    exit=0  }
+  ✓ .claude/skills/my-skill 已部署
+personal instructions --file                     exit=0  已保存到机器数据区；运行 ailoom personal sync 应用到当前工作树
+collection apply                                 exit=0  }
+personal select collection skill                 exit=0  }
+personal sync (collection)                       exit=0  }
+  ✓ 合集 Skill 已部署
+collection check                                 exit=0  }
+init --url (local git) --project a               exit=0  已绑定工作区 <tmp>/biz（项目 a，
+plan                                             exit=0  create   AGENTS.md  [fragment:ailoom-builtin/recall-hint]
+sync                                             exit=0  同步完成：写入 6 项，无操作 0 项，冲突跳过 0 项
+recall --query                                   exit=0    skill team/skill/common/common-greet                    …hi…
+doctor                                           exit=0  OK host-codex
+doctor --strict                                  exit=0  OK host-codex
+uninstall (preview)                              exit=0  这是预览。确认后运行 ailoom uninstall --execute
+uninstall --execute                              exit=0  卸载完成：移除 6 项，保留（冲突）0 项
+  ✓ 卸载移除了托管 Skill
+work dir: <tmp>

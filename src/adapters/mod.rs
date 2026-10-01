@@ -6,9 +6,11 @@ pub mod alva_agents;
 pub mod builtin;
 pub mod capability;
 pub mod common;
+pub mod discovery;
 pub mod docs;
 pub mod env;
 pub mod hooks_team;
+pub mod hosts;
 pub mod mcp;
 pub mod registry;
 pub mod rules;
@@ -16,7 +18,7 @@ pub mod skills;
 
 /// 非 claude/codex 的额外宿主：`alva`，或 rules 注册表中的名（cursor/antigravity…）。
 pub fn is_extra_target(name: &str) -> bool {
-    name == "alva" || registry::lookup(name).is_some()
+    name == "alva" || hosts::lookup(name).is_some() || registry::lookup(name).is_some()
 }
 
 use crate::error::Result;
@@ -157,27 +159,33 @@ pub fn render(
         }
     }
 
-    // 声明式 rules 宿主（registry 驱动）：rule 资源 ∩ extra targets
     for selected in desired.deployable() {
         let entry = &selected.entry;
-        if entry.id.kind != ResourceKind::Rule {
-            continue;
-        }
-        let resource_targets = common::resource_targets(entry.raw.as_deref());
+        let declared = common::resource_targets(entry.raw.as_deref());
         for tool in &targets.extra {
-            if let Some(list) = &resource_targets {
-                if !list.iter().any(|t| t == tool) {
-                    continue;
-                }
+            if declared.as_ref().is_some_and(|list| !list.contains(tool)) {
+                continue;
             }
-            if let Some(spec) = registry::lookup(tool) {
-                registry::render_rules(entry, spec, &mut artifacts)?;
+            if let Some(host) = hosts::lookup(tool) {
+                hosts::render(
+                    host,
+                    entry,
+                    desired,
+                    snapshot_root,
+                    ws_root,
+                    &mut artifacts,
+                    &mut unsupported,
+                )?;
+            } else if entry.id.kind == ResourceKind::Rule {
+                if let Some(spec) = registry::lookup(tool) {
+                    registry::render_rules(entry, spec, &mut artifacts)?;
+                }
             }
         }
     }
 
     // 文档索引片段（每工具最多一个）
-    docs::render_index(desired, snapshot_root, targets, &mut artifacts)?;
+    docs::render_index(desired, snapshot_root, targets, &mut artifacts, ws_root)?;
 
     Ok((artifacts, unsupported))
 }

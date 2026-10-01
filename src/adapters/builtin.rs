@@ -12,6 +12,11 @@ const RECALL_AGENT_MD: &str = include_str!("res/recall-agent.md");
 const SHARE_LEARNING_SKILL_MD: &str = include_str!("res/share-learning-skill.md");
 
 /// 渲染内置资源产物（目标工具启用且未被声明关闭时）。
+/// 文件内容与 AILoom 内置 Skill 完全一致：说明它由同步部署且未被改动（扫描时按托管展示）。
+pub fn is_builtin_skill(content: &str) -> bool {
+    content == SHARE_LEARNING_SKILL_MD
+}
+
 pub fn render(targets: &ToolTargets, builtins_enabled: bool) -> Vec<Artifact> {
     if !builtins_enabled {
         return Vec::new();

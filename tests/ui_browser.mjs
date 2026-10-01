@@ -1,7 +1,15 @@
-// Local browser acceptance; needs an independently launched Chrome on :9231.
+// 本地浏览器验收。需要先启动一个独立的 Chrome 调试实例与控制台：
+//   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+//     --remote-debugging-port=9231 --user-data-dir=<临时目录> about:blank
+//   ailoom console --port <端口> --no-open      # 用隔离的 HOME / XDG 变量
+// 运行：CDP_PORT=9231 node tests/ui_browser.mjs <控制台URL> <截图前缀> [模式] [模式参数…]
+// 模式：current（默认，资源库导入）| grouped | cc-switch [CC Switch 目录] | projects <项目目录>
+//       | onboarding <项目目录> <本地 Skill 目录> | design [<项目目录> <本地 Skill 目录>]
 import { writeFile } from 'node:fs/promises';
 const [url, output, mode = 'current'] = process.argv.slice(2);
-const tab = await (await fetch('http://127.0.0.1:9231/json/new?' + encodeURIComponent(url), { method: 'PUT' })).json();
+const CDP = process.env.CDP_PORT || '9231';
+// 新标签页先停在 about:blank，再用 Page.navigate 显式导航：较新的 Chrome 不再按 json/new 的查询串打开页面。
+const tab = await (await fetch(`http://127.0.0.1:${CDP}/json/new?about:blank`, { method: 'PUT' })).json();
 const socket = new WebSocket(tab.webSocketDebuggerUrl);
 await new Promise(resolve => socket.addEventListener('open', resolve, { once: true }));
 let seq = 0;
@@ -12,7 +20,13 @@ socket.addEventListener('message', event => {
   if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text + ': ' + JSON.stringify(m.params.exceptionDetails.exception));
 });
 function send(method, params = {}) {
-  return new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params })); });
+  // 每条 CDP 命令最多等 30 秒：卡住时明确报错，而不是让外层超时静默杀掉进程。
+  return new Promise((resolve, reject) => {
+    const id = ++seq;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP ${method} 30 秒无响应`)); }, 30000);
+    pending.set(id, { resolve: v => { clearTimeout(timer); resolve(v); }, reject: e => { clearTimeout(timer); reject(e); } });
+    socket.send(JSON.stringify({ id, method, params }));
+  });
 }
 async function evaluate(expression) {
   const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
@@ -20,12 +34,18 @@ async function evaluate(expression) {
   return r.result.value;
 }
 async function waitFor(expression) {
+  // 页面导航中求值可能抛错（文档尚未就绪）：视为「还没满足」继续等待，超时后报出最后一次错误。
+  let lastError = null;
   for (let n = 0; n < 100; n++) {
-    if (await evaluate(expression)) return;
+    try {
+      if (await evaluate(expression)) return;
+      lastError = null;
+    } catch (e) { lastError = e; }
     await new Promise(r => setTimeout(r, 100));
   }
   await screenshot(output + '-failed.png');
-  throw new Error('Timed out: ' + expression + '\n' + await evaluate('document.querySelector("#app").innerText'));
+  const text = await evaluate('document.querySelector("#app")?.innerText ?? ""').catch(() => '');
+  throw new Error('Timed out: ' + expression + (lastError ? '\n最后一次求值错误: ' + lastError.message : '') + '\n' + text);
 }
 async function screenshot(path) {
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
@@ -34,8 +54,36 @@ async function screenshot(path) {
 await send('Runtime.enable');
 await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+await send('Page.navigate', { url });
 await waitFor('!!document.querySelector("#app")?.textContent.trim()');
 await screenshot(output + '-desktop.png');
+if (mode === 'grouped') {
+  await evaluate(`(async()=>{
+    const {api}=await import('/ui/services/api.js');
+    const {repositoryGroups}=await import('/ui/features/collectionsPanel.js');
+    const make=(id,url,n,management='managed')=>({id,url,name:'CC Switch · legacy',management,lock:{ref:'main',resolved_commit:'1234567890abcdef'},references:[],store_path:'/synthetic/store/'+id,resources:Array.from({length:n},(_,i)=>({id:id+i,kind:'skill',name:['computer-use','orca-cli','code-review'][i]||'skill-'+i,description:['控制桌面应用，检查窗口与界面状态。','管理项目工作区、终端和浏览器。','审查代码质量与实现是否符合需求。'][i]||'用于验证资源展示的模拟说明。',path:'skills/'+id+'/'+i}))});
+    const sources=[make('a','https://github.com/example/tools.git',3),make('b','git@github.com:example/tools',1,'external'),make('c','https://gitlab.com/example/tools',2)];
+    if(repositoryGroups(sources).length!==2) throw Error('Repository alias grouping failed');
+    if(repositoryGroups([make('d','/tmp/one',0),make('e','/tmp/two',0)]).length!==2) throw Error('Local paths merged');
+    api.collections=async()=>({sources});
+    location.hash='#/library';
+  })()`);
+  // 资源库为平铺目录：同一仓库的多个来源合并为一个来源标签，按资源去重展示。
+  // 只统计 mock 来源的条目：本机个人副本也会出现在同一目录里。
+  const mocked = "[...document.querySelectorAll('.repository-resource')].filter(li=>li.querySelector('.library-entry-source')?.textContent.endsWith('example/tools'))";
+  await waitFor(`${mocked}.length===6`);
+  // 同名仓库分属两个平台：标签带平台名，两组可区分
+  if (await evaluate("new Set([...document.querySelectorAll('.library-entry-source')].map(e=>e.textContent).filter(t=>t.endsWith('example/tools'))).size") !== 2) throw new Error('Same-named repositories on different hosts must be distinguishable');
+  if (await evaluate("[...document.querySelectorAll('.library-entry-source')].some(e=>e.textContent.includes('CC Switch'))")) throw new Error('Catalog source labels must come from repository identity');
+  await screenshot(output + '-grouped-desktop.png');
+  await evaluate("document.querySelector('[data-search]').value='code-review'; document.querySelector('[data-search]').dispatchEvent(new Event('input'))");
+  if (!await evaluate(`${mocked}.length===1`)) throw new Error('Resource search failed');
+  await evaluate("document.querySelector('[data-search]').value=''; document.querySelector('[data-search]').dispatchEvent(new Event('input'))");
+  await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:false});
+  await screenshot(output + '-grouped-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Grouped library mobile overflow');
+  await send('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+}
 if (mode === 'cc-switch') {
   await evaluate("location.hash='#/library'");
   await waitFor("!!document.querySelector('[data-cc-switch]')");
@@ -58,7 +106,7 @@ if (mode === 'cc-switch') {
       await evaluate("document.querySelector('[data-cc-apply]').click()");
       await waitFor("document.querySelector('[data-cc-status]').textContent.includes('已登记') && !document.querySelector('[data-cc-read]').disabled");
     }
-    if (!await evaluate("document.querySelector('[data-sources]').textContent.includes('CC Switch 管理') && !document.querySelector('[data-sources] [data-check-one]')")) throw new Error('Externally managed source must not expose Git update controls');
+    if (!await evaluate("document.querySelector('[data-sources]').textContent.includes('原目录维护') && !document.querySelector('[data-sources] [data-check-one]')")) throw new Error('Externally managed source must not expose Git update controls');
   }
   await evaluate("document.querySelector('[data-cc-fallback]').open=true");
   await evaluate("document.querySelector('[data-cc-json]').value='invalid'; document.querySelector('[data-cc-scan]').click()");
@@ -90,43 +138,41 @@ if (mode === 'cc-switch') {
   if (!await evaluate("document.activeElement===document.querySelector('[data-cc-switch]')")) throw new Error('Migration focus not restored');
 }
 if (mode === 'projects' || mode === 'design') {
+  // 目录优先工作台：添加项目 Dialog → 目录页 → 宿主开关 → 管理列表搜索/分类。
   const [project] = process.argv.slice(5);
-  await waitFor("location.hash === '#/projects' && !!document.querySelector('[data-new]')");
+  await waitFor("location.hash === '#/projects' && !!document.querySelector('[data-add-project]')");
+  await evaluate("document.querySelector('[data-add-project]').focus(); document.querySelector('[data-add-project]').click()");
+  await waitFor("document.querySelector('input[name=root]')?.closest('dialog')?.matches(':modal')");
+  await screenshot(output + '-new-project-dialog.png');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+  await waitFor("!document.querySelector('dialog:modal')");
+  if (!await evaluate("document.activeElement === document.querySelector('[data-add-project]')")) throw new Error('New-project focus not restored');
+  await evaluate("document.querySelector('[data-add-project]').click()");
+  await waitFor("!!document.querySelector('dialog:modal input[name=root]')");
+  await evaluate(`const root=document.querySelector('dialog:modal input[name=root]'); root.value=${JSON.stringify(project)}; root.dispatchEvent(new Event('change'))`);
+  await waitFor("!document.querySelector('dialog:modal [type=submit]').disabled");
+  await evaluate("const f=document.querySelector('dialog:modal form'); f.elements.name.value='浏览器验收项目'; f.elements.category.value='验收'; f.requestSubmit()");
+  await waitFor("!document.querySelector('dialog:modal') && /^#\\/projects\\/.+/.test(location.hash) && document.querySelector('#app').innerText.includes('浏览器验收项目')");
+  await waitFor("!!document.querySelector('[data-host=claude]')");
+  const before = await evaluate("document.querySelector('[data-host=claude]').getAttribute('aria-pressed')");
+  await evaluate("document.querySelector('[data-host=claude]').click()");
+  await waitFor(`document.querySelector('[data-host=claude]')?.getAttribute('aria-pressed') === ${JSON.stringify(before === 'true' ? 'false' : 'true')}`);
+  await screenshot(output + '-workspace.png');
+  await send('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:false });
+  await screenshot(output + '-workspace-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Workspace overflow');
+  await send('Emulation.setDeviceMetricsOverride', { width:1440,height:1000,deviceScaleFactor:1,mobile:false });
+  // 未知项目 id：显示「找不到这个项目」，而不是首次使用引导（U-05）
+  await evaluate("location.hash='#/projects/does-not-exist'");
+  await waitFor("document.querySelector('#app').innerText.includes('找不到这个项目') && !document.querySelector('#app').innerText.includes('添加你的第一个目录')");
+  await evaluate("location.hash='#/projects/manage'");
+  await waitFor("!!document.querySelector('[data-search]') && !!document.querySelector('[data-list] article')");
   if (mode === 'design') {
     await waitFor("!!document.querySelector('[data-filter]')?.parentElement.querySelector('[role=combobox]')");
     const fields = await evaluate("[document.querySelector('[data-search]'), document.querySelector('[data-filter]').parentElement.querySelector('[role=combobox]'), document.querySelector('[data-kind]').parentElement.querySelector('[role=combobox]')].map(e=>{const s=getComputedStyle(e);return [e.getBoundingClientRect().height,s.borderRadius,s.borderColor,s.backgroundColor,s.paddingLeft,s.fontSize,s.appearance]})");
     if (fields.some(f => JSON.stringify(f)!==JSON.stringify(fields[0]))) throw new Error('Search and select styles differ: '+JSON.stringify(fields));
     await screenshot(output + '-toolbar.png');
   }
-  await evaluate("document.querySelector('[data-new]').focus(); document.querySelector('[data-new]').click()");
-  await waitFor("document.querySelector('[data-create]')?.closest('dialog')?.matches(':modal')");
-  await screenshot(output + '-new-project-dialog.png');
-  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-  await waitFor("!document.querySelector('dialog:modal')");
-  if (!await evaluate("document.activeElement === document.querySelector('[data-new]')")) throw new Error('New-project focus not restored');
-  await evaluate("document.querySelector('[data-new]').click()");
-  await evaluate(`document.querySelector('[data-path]').value=${JSON.stringify(project)}; document.querySelector('[data-name]').value='浏览器验收项目'; document.querySelector('[data-category]').value='验收'; document.querySelector('[data-create]').requestSubmit()`);
-  await waitFor("!!document.querySelector('[data-tab]') && document.querySelector('[data-content]').textContent.includes('claude')");
-  if (mode === 'design') {
-    await evaluate("document.querySelector('[data-settings]').click()");
-    await waitFor("document.querySelector('[data-meta]').closest('dialog').matches(':modal')");
-    await screenshot(output + '-settings-dialog.png');
-    await evaluate("document.querySelector('[data-meta-cancel]').click()");
-    await waitFor("!document.querySelector('dialog:modal')");
-  }
-  await evaluate("document.querySelector('[data-entries] select').value='enable'; [...document.querySelectorAll('[data-entries] button')].find(b=>b.textContent==='保存').click()");
-  await waitFor("document.querySelector('[data-message]')?.textContent.includes('已保存') && document.querySelector('[data-entries]')?.textContent.includes('当前有效：启用')");
-  await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
-  await waitFor("!!document.querySelector('[data-save]') && !document.querySelector('[data-save]').disabled");
-  await evaluate("document.querySelector('textarea').value='仅当前项目的验收指令'; document.querySelector('textarea').dispatchEvent(new Event('input')); document.querySelector('[data-save]').click()");
-  await waitFor("document.querySelector('[data-msg]').textContent.includes('已保存')");
-  await evaluate("document.querySelector('[data-tab=\"0\"]').click()");
-  await waitFor("!!document.querySelector('[data-entries]')");
-  await evaluate("document.querySelector('[data-tab=\"4\"]').click()");
-  await waitFor("document.querySelector('textarea')?.value === '仅当前项目的验收指令'");
-  await screenshot(output + '-instructions.png');
-  await evaluate("location.hash='#/projects'");
-  await waitFor("!!document.querySelector('[data-search]')");
   await evaluate("document.querySelector('[data-search]').value='不存在的项目'; document.querySelector('[data-search]').dispatchEvent(new Event('input'))");
   await waitFor("document.querySelector('[data-list]').textContent.includes('没有匹配')");
   await evaluate("document.querySelector('[data-search]').value=''; document.querySelector('[data-search]').dispatchEvent(new Event('input')); document.querySelector('[data-filter]').value='验收'; document.querySelector('[data-filter]').dispatchEvent(new Event('change'))");
@@ -135,50 +181,23 @@ if (mode === 'projects' || mode === 'design') {
   await send('Emulation.setDeviceMetricsOverride', { width:390,height:844,deviceScaleFactor:1,mobile:false });
   await screenshot(output + '-projects-mobile.png');
   if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Project list overflow');
-  await evaluate("document.querySelector('[data-list] a').click()");
-  await waitFor("!!document.querySelector('[data-entries]')");
-  await screenshot(output + '-detail-mobile.png');
-  if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Project detail overflow');
+  await send('Emulation.setDeviceMetricsOverride', { width:1440,height:1000,deviceScaleFactor:1,mobile:false });
 }
 if (mode === 'onboarding') {
-  const [project, skill] = process.argv.slice(5);
-  const click = async text => evaluate(`[...document.querySelectorAll('#app button')].find(b => b.textContent === ${JSON.stringify(text)}).click()`);
-  await evaluate("location.hash='#/onboarding'");
-  await waitFor("!!document.querySelector('.wizard-steps')");
-  await click('1 选择项目');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent==='批准此目录')");
-  await evaluate(`document.querySelector('#app input').value=${JSON.stringify(project)}`);
-  await click('批准此目录');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent === '识别当前目录')");
-  await click('识别当前目录');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent === '确认项目，下一步')");
-  await click('确认项目，下一步');
-  await waitFor('!!document.querySelector("[data-h=claude]")');
-  await evaluate("document.querySelector('[data-h=claude]').checked=true; document.querySelector('[data-inline-import]').parentElement.open=true");
-  await waitFor("!document.querySelector('[data-resource-options]').textContent.includes('正在读取')");
-  if (!await evaluate("!!document.querySelector('[data-resource-options] input')")) {
-  await evaluate("document.querySelector('[data-add]').click(); document.querySelector('[data-provider]').value='local'; document.querySelector('[data-provider]').dispatchEvent(new Event('change'))");
-  await evaluate(`document.querySelector('[data-url]').value=${JSON.stringify(skill)}; document.querySelector('[data-form]').requestSubmit()`);
-  await waitFor("!!document.querySelector('[data-confirm]') && !document.querySelector('[data-confirm]').disabled");
-  await click('确认导入');
-  await waitFor("!!document.querySelector('[data-resource-options] input')");
+  // 三步引导页只做讲解与直达入口，不承载配置动作。
+  for (const [index, target] of [[0, '#/projects/manage'], [1, '#/library'], [2, '#/projects']]) {
+    await evaluate("location.hash='#/onboarding'");
+    await waitFor("document.querySelectorAll('.wizard .step').length === 3 && document.querySelectorAll('.wizard .step button').length === 3");
+    if (index === 0) await screenshot(output + '-onboarding.png');
+    await evaluate(`document.querySelectorAll('.wizard .step button')[${index}].click()`);
+    await waitFor(`location.hash === ${JSON.stringify(target)}`);
   }
-  await evaluate("const selectedResource = document.querySelector('[data-resource-options] input'); selectedResource.checked=true; selectedResource.dispatchEvent(new Event('change'))");
-  await click('保存选择，下一步预览');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent==='生成预览')");
-  await click('生成预览');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent==='应用' && !b.disabled)");
-  await click('应用');
-  await waitFor("[...document.querySelectorAll('#app button')].some(b=>b.textContent==='完成设置，进入资源库')");
-  await screenshot(output + '-applied.png');
-  await click('完成设置，进入资源库');
-  await waitFor("location.hash === '#/library'");
 }
 if (mode !== 'before') {
   await evaluate('location.hash = "#/library"');
   await waitFor('!!document.querySelector("[data-add]")');
   await evaluate('document.querySelector("[data-add]").click()');
-  await waitFor('document.querySelector("[data-import]")?.closest("dialog")?.matches(":modal")');
+  await waitFor('document.querySelector("[data-provider]")?.closest("dialog")?.matches(":modal")');
   if(mode === 'design') {
     await waitFor("!!document.querySelector('[data-provider]').parentElement.querySelector('[role=combobox]')");
     await evaluate("document.querySelector('[data-provider]').parentElement.querySelector('[role=combobox]').click()");
@@ -211,7 +230,10 @@ if (mode !== 'before') {
     await evaluate(`document.querySelector('[data-url]').value=${JSON.stringify(process.argv[6])}; document.querySelector('[data-form]').requestSubmit()`);
     await waitFor("!!document.querySelector('[data-confirm]') && !document.querySelector('[data-confirm]').disabled");
     await evaluate("document.querySelector('[data-confirm]').click()");
-    await waitFor("!document.querySelector('dialog:modal') && document.querySelector('[data-msg]').textContent.includes('已加入资源库')");
+    // 成功后对话框关闭，资源库列表出现新资源，并有页面级成功提示。
+    const skillName = process.argv[6].split('/').filter(Boolean).pop();
+    await waitFor(`!document.querySelector('dialog:modal') && [...document.querySelectorAll('.repository-resource h3')].some(h=>h.textContent.includes(${JSON.stringify(skillName)}))`);
+    if (!await evaluate("document.querySelector('#toast')?.textContent.includes('已加入资源库')")) throw new Error('导入成功提示不可见');
   }
 }
 if (mode === 'design') {
@@ -257,5 +279,5 @@ if (mode === 'design') {
 }
 console.log(JSON.stringify({ title: await evaluate('document.title'), errors, screenshots:output }));
 socket.close();
-await fetch('http://127.0.0.1:9231/json/close/' + tab.id);
+await fetch(`http://127.0.0.1:${CDP}/json/close/` + tab.id);
 if (errors.length) process.exitCode = 1;

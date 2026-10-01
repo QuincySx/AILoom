@@ -46,11 +46,14 @@ function qs(params) {
 }
 
 export const api = {
+  nativeFiles: body => request('POST', '/api/native-files', body),
+  serviceStatus: () => request('POST', '/api/service/status', {}),
+  serviceAutostart: enabled => request('POST', '/api/service/autostart', {enabled}),
+  knowledge: body => request('POST', '/api/knowledge', body),
   // 通用
   serverInfo: () => request('GET', '/api/server-info'),
   state: () => request('GET', '/api/state'),
   capabilities: () => request('GET', '/api/capabilities'),
-  detectHosts: () => request('POST', '/api/hosts/detect', {}),
   shutdown: () => request('POST', '/api/shutdown', {}),
   // 文件系统（授权根内）
   approveDir: (path) => request('POST', '/api/fs/approve', { path }),
@@ -60,18 +63,23 @@ export const api = {
   fsRead: (path) => request('GET', '/api/fs/read' + qs({ path })),
   // 仓库/作用域
   repoDiscover: (path) => request('POST', '/api/repo/discover', { path }),
-  relink: (repoId, wtId, newPath) => request('POST', '/api/repo/relink', { repo_id: repoId, wt_id: wtId, new_path: newPath }),
   select: (body) => request('POST', '/api/profile/select', body),
-  effective: (root, scope) => request('GET', '/api/effective' + qs({ root, scope })),
-  previewRepoDefault: () => request('POST', '/api/preview/repo-default', {}),
+  effective: (root, scope, view) => request('GET', '/api/effective' + qs({ root, scope, view })),
+  configureScope: body => request('POST', '/api/profile/scope', body),
+  discoverDirectories: (root, depth=3) => request('GET', '/api/project/discover-directories' + qs({ root, depth })),
+  projectDirs: (root) => request('GET', '/api/project/dirs' + qs({ root })),
   instructions: (body) => request('POST', '/api/profile/instructions', body),
-  deployStatus: (root) => request('GET', '/api/deploy-status' + qs({ root })),
+  deployStatus: (root, scope) => request('GET', '/api/deploy-status' + qs({ root, scope })),
   // 草稿
   getDraft: () => request('GET', '/api/draft'),
   putDraft: (baseRevision, draft) => request('PUT', '/api/draft', { base_revision: baseRevision, draft }),
-  // 个人库
+  // 资源库
   libraryList: () => request('GET', '/api/library/list'),
   resources: () => request('GET', '/api/resources'),
+  scanProjectSkills: (root, sub) => request('GET', '/api/project/scan-skills' + qs({ root, sub })),
+  projectDeletePreview: (root, sub, path) => request('POST', '/api/project/delete-skill', { root, sub, path, execute: false }),
+  projectDeleteExecute: (root, sub, token, name) => request('POST', '/api/project/delete-skill', { root, sub, token, name, execute: true }),
+  mcpDetail: (id) => request('GET', '/api/resources/mcp-detail' + qs({ id })),
   collections: () => request('GET', '/api/collections'),
   ccSwitchScan: (manifest) => request('POST', '/api/migrations/cc-switch/scan', { manifest }),
   ccSwitchLocation: () => request('GET', '/api/migrations/cc-switch/location'),
@@ -84,33 +92,21 @@ export const api = {
   collectionPreview: (body) => request('POST', '/api/collections/preview', body),
   collectionApply: (previewId) => request('POST', '/api/collections/apply', { preview_id: previewId }),
   libraryImport: (dir, name, execute) => request('POST', '/api/library/import', { dir, name, execute }),
-  libraryImportGit: (url, repoPath, ref, name, execute) => request('POST', '/api/library/import-git', { url, path: repoPath, ref, name, execute }),
   libraryImportEntry: (entry, name, execute) => request('POST', '/api/library/import-entry', { entry, name, execute }),
-  librarySources: () => request('GET', '/api/library/sources'),
   libraryDelete: (id, execute) => request('POST', '/api/library/delete', { id, execute }),
   libraryResource: (id) => request('GET', '/api/library/resource' + qs({ id })),
+  libraryDefinitionSave: (id, definition, baseFingerprint) => request('PUT', '/api/library/resource', {id,definition,base_fingerprint:baseFingerprint}),
+  libraryCreate: (fields) => request('POST', '/api/library/resource', fields),
   librarySave: (id, content, baseFingerprint) => request('PUT', '/api/library/resource', { id, content, base_fingerprint: baseFingerprint }),
   checkUpdate: (skill) => request('POST', '/api/library/check-update', { skill }),
-  updateSkill: (skill, execute) => request('POST', '/api/library/update', { skill, execute }),
+  updateSkill: (skill, execute, previewId) => request('POST', '/api/library/update', { skill, execute, preview_id:previewId }),
   // 任务
   plan: (root, scope, idempotencyKey) => request('POST', '/api/jobs/plan', { root, scope, idempotency_key: idempotencyKey }),
   apply: (planJobId, idempotencyKey) => request('POST', '/api/jobs/apply', { plan_job_id: planJobId, idempotency_key: idempotencyKey }),
   job: (id) => request('GET', '/api/jobs/' + encodeURIComponent(id)),
   jobs: () => request('GET', '/api/jobs'),
-  cancel: (id) => request('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`, {}),
   undo: (id) => request('POST', '/api/jobs/undo', { id }),
   // 流程
-  workflows: () => request('GET', '/api/workflows'),
-  workflowShow: (id) => request('GET', '/api/workflows/show' + qs({ id })),
-  workflowNew: (name) => request('POST', '/api/workflows/new', { name }),
-  workflowBind: (id, bindings) => request('POST', '/api/workflows/bind', { id, bindings }),
-  workflowArtifact: (id, stage, title, content, baseVersion) => request('POST', '/api/workflows/artifact', { id, stage, title, content, base_version: baseVersion }),
-  workflowArtifactRead: (id, artifactId, version) => request('GET', '/api/workflows/artifact' + qs({ id, artifact_id: artifactId, version })),
-  workflowRename: (id, artifactId, title) => request('POST', '/api/workflows/rename', { id, artifact_id: artifactId, title }),
-  workflowReviewed: (id) => request('POST', '/api/workflows/reviewed', { id }),
-  workflowRecordInput: (id, resourceId) => request('POST', '/api/workflows/record-input', { id, resource_id: resourceId }),
-  exportPreview: (id, artifactId, target) => request('POST', '/api/workflows/export', { id, artifact_id: artifactId, target }),
-  exportExecute: (id, artifactId, target, fingerprint) => request('POST', '/api/workflows/export', { id, artifact_id: artifactId, target, execute: true, target_fingerprint: fingerprint }),
 };
 
 export function esc(s) {

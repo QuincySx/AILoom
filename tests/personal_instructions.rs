@@ -247,7 +247,7 @@ fn exclude_refcount_across_two_worktrees() {
     reg.save(&data).unwrap();
 
     let pattern = pi::CLAUDE_PERSONAL_RULE_FILE.to_string();
-    // 两个工作树先后部署同一 pattern → 一行，计数 2
+    // 两个 Worktree 先后部署同一 pattern → 一行，计数 2
     for wid in ["main-id", wt_id.as_str()] {
         let _ = wid;
         ailoom::git_exclude::add_patterns(
@@ -260,7 +260,7 @@ fn exclude_refcount_across_two_worktrees() {
     }
     let text = std::fs::read_to_string(ailoom::git_exclude::exclude_file(&common)).unwrap();
     assert_eq!(text.matches(pattern.as_str()).count(), 1);
-    // 卸载一个工作树 → 行保留；两个都卸载 → 行移除，用户行不受影响
+    // 卸载一个 Worktree → 行保留；两个都卸载 → 行移除，用户行不受影响
     ailoom::git_exclude::remove_patterns(
         &common,
         &data,

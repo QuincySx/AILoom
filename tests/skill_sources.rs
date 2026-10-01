@@ -637,7 +637,16 @@ fn ail067_library_update_to_selected_worktrees_flow() {
     );
     let v = c.run_json(
         &repo,
-        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "sync",
+            "--root",
+            repo.to_str().unwrap(),
+        ],
     );
     assert_eq!(v["ok"], serde_json::json!(true));
     assert!(repo.join(".claude/skills/flow").exists());
@@ -653,6 +662,52 @@ fn ail067_library_update_to_selected_worktrees_flow() {
         ],
     );
     assert_eq!(v["items"][0]["state"], serde_json::json!("current"), "{v}");
+
+    // Inherited selections can be applied to an unregistered directory.
+    // Later root or parent plans must leave that directory's files alone.
+    std::fs::create_dir_all(repo.join("web/docs")).unwrap();
+    for scope in ["web", "web/docs"] {
+        let v = c.run_json(
+            &repo,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "personal",
+                "--action",
+                "sync",
+                "--root",
+                repo.to_str().unwrap(),
+                "--scope",
+                scope,
+            ],
+        );
+        assert_eq!(v["ok"], serde_json::json!(true), "{v}");
+    }
+    for scope in ["", "web"] {
+        let mut args = vec![
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "plan",
+            "--root",
+            repo.to_str().unwrap(),
+        ];
+        if !scope.is_empty() {
+            args.extend(["--scope", scope]);
+        }
+        let v = c.run_json(&repo, &args);
+        assert!(
+            v["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|a| a["action"] == "noop"),
+            "parent must preserve children: {v}"
+        );
+    }
 
     // 上游 v2 → 库更新 → wt1 变 stale（待同步），wt2 从未部署
     std::fs::write(
@@ -691,7 +746,7 @@ fn ail067_library_update_to_selected_worktrees_flow() {
             .as_str()
             .unwrap()
             .starts_with("stale"),
-        "库更新后当前工作树显示待同步: {v}"
+        "库更新后当前 Worktree 显示待同步: {v}"
     );
     let v = c.run_json(
         &wt2,
@@ -707,13 +762,22 @@ fn ail067_library_update_to_selected_worktrees_flow() {
     assert_eq!(
         v["items"][0]["state"],
         serde_json::json!("not-deployed"),
-        "未选择的工作树保持原样"
+        "未选择的 Worktree 保持原样"
     );
 
     // 仅选择 wt1 重新应用 → current；wt2 仍 not-deployed
     let v = c.run_json(
         &repo,
-        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "sync",
+            "--root",
+            repo.to_str().unwrap(),
+        ],
     );
     assert_eq!(v["ok"], serde_json::json!(true));
     assert!(
@@ -736,10 +800,10 @@ fn ail067_library_update_to_selected_worktrees_flow() {
     assert_eq!(v["items"][0]["state"], serde_json::json!("current"));
     assert!(
         !wt2.join(".claude/skills/flow").exists(),
-        "未选择的工作树不被写入"
+        "未选择的 Worktree 不被写入"
     );
 
-    // B 工作树随后选择部署 → 追上 v2
+    // B Worktree 随后选择部署 → 追上 v2
     let _ = c.run_json(
         &wt2,
         &[
@@ -772,7 +836,16 @@ fn ail067_library_update_to_selected_worktrees_flow() {
     );
     let v = c.run_json(
         &wt2,
-        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "sync",
+            "--root",
+            wt2.to_str().unwrap(),
+        ],
     );
     assert_eq!(v["ok"], serde_json::json!(true));
     assert!(wt2.join(".claude/skills/flow").exists(), "B 部署");
@@ -788,4 +861,395 @@ fn ail067_library_update_to_selected_worktrees_flow() {
         ],
     );
     assert_eq!(v["items"][0]["state"], serde_json::json!("current"));
+    // A missing entry must not remain "current" merely because the manifest
+    // remembers a successful deployment (for example after undo).
+    std::fs::remove_file(wt2.join(".claude/skills/flow")).unwrap();
+    let v = c.run_json(
+        &wt2,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "deploy-status",
+        ],
+    );
+    assert_eq!(v["items"][0]["state"], serde_json::json!("not-deployed"));
+    assert_eq!(v["items"][0]["deployed"], serde_json::json!(false));
+}
+
+fn update_fixture() -> (Ctx, PathBuf, PathBuf) {
+    let c = Ctx::new();
+    let cwd = c.tmp.path().join("project");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let upstream = make_upstream(&c, &[("solo", "version-one")]);
+    c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "import-git",
+            "--url",
+            &format!("file://{}", upstream.display()),
+            "--path",
+            "skills/solo",
+            "--execute",
+        ],
+    );
+    (c, cwd, upstream)
+}
+
+fn skill_version(upstream: &Path, name: &str, body: &str) {
+    std::fs::write(upstream.join("skills/solo/SKILL.md"), format!("---\nname: {name}\ndescription: solo\nnamespace: personal\nshared: true\n---\n\n{body}\n")).unwrap();
+}
+
+#[test]
+fn update_applies_checked_commit_and_rejects_later_local_edits() {
+    let (c, cwd, upstream) = update_fixture();
+    skill_version(&upstream, "solo", "version-two");
+    upstream_commit(&c, &upstream, "two");
+    let checked = c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    let token = checked["status"]["preview_id"].as_str().unwrap();
+    let commit = checked["status"]["upstream_commit"].clone();
+    skill_version(&upstream, "solo", "version-three");
+    upstream_commit(&c, &upstream, "three");
+    let updated = c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--preview-id",
+            token,
+            "--execute",
+        ],
+    );
+    assert_eq!(
+        updated["result"]["to_commit"], commit,
+        "must apply exactly what was checked"
+    );
+    let target = c
+        .tmp
+        .path()
+        .join("data/library/resources/skills/solo/SKILL.md");
+    assert!(std::fs::read_to_string(&target)
+        .unwrap()
+        .contains("version-two"));
+    let checked = c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    assert_eq!(checked["status"]["state"], "upstream-new");
+    let token = checked["status"]["preview_id"].as_str().unwrap();
+    let content = std::fs::read_to_string(&target)
+        .unwrap()
+        .replace("version-two", "user-edited");
+    std::fs::write(&target, &content).unwrap();
+    let cached = ailoom::personal_library::cached_update(&c.tmp.path().join("data"), "solo")
+        .unwrap()
+        .unwrap();
+    assert_eq!(cached.state, "stale");
+    assert!(cached.preview_id.is_none());
+    let (code, _, _) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--preview-id",
+            token,
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert_eq!(std::fs::read_to_string(target).unwrap(), content);
+}
+
+#[test]
+fn failed_skill_validation_restores_entire_old_directory() {
+    let (c, cwd, upstream) = update_fixture();
+    let target = c.tmp.path().join("data/library/resources/skills/solo");
+    let before = std::fs::read(target.join("SKILL.md")).unwrap();
+    let meta = std::fs::read(target.join(".ailoom-import.json")).unwrap();
+    // A valid checkout with an invalid Skill name reaches the replacement validation.
+    skill_version(&upstream, "wrong-name", "broken-update");
+    upstream_commit(&c, &upstream, "invalid");
+    c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    let (code, _, stderr) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(stderr.contains("恢复旧版"), "{stderr}");
+    assert_eq!(std::fs::read(target.join("SKILL.md")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(target.join(".ailoom-import.json")).unwrap(),
+        meta
+    );
+}
+
+#[test]
+fn a_new_check_invalidates_previous_skill_preview() {
+    let (c, cwd, upstream) = update_fixture();
+    skill_version(&upstream, "solo", "version-two");
+    upstream_commit(&c, &upstream, "two");
+    let args = [
+        "--json",
+        "--data-root",
+        &c.dr(),
+        "library",
+        "--action",
+        "check-update",
+        "--skill",
+        "solo",
+    ];
+    let first = c.run_json(&cwd, &args);
+    let second = c.run_json(&cwd, &args);
+    assert_ne!(
+        first["status"]["preview_id"],
+        second["status"]["preview_id"]
+    );
+    let (code, _, _) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--preview-id",
+            first["status"]["preview_id"].as_str().unwrap(),
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(std::fs::read_to_string(
+        c.tmp
+            .path()
+            .join("data/library/resources/skills/solo/SKILL.md")
+    )
+    .unwrap()
+    .contains("version-one"));
+}
+
+#[test]
+fn incomplete_update_cache_never_overwrites_local_content() {
+    for field in ["local_digest", "snapshot", "upstream_commit"] {
+        let (c, cwd, upstream) = update_fixture();
+        skill_version(&upstream, "solo", "version-two");
+        upstream_commit(&c, &upstream, "two");
+        let checked = c.run_json(
+            &cwd,
+            &[
+                "--json",
+                "--data-root",
+                &c.dr(),
+                "library",
+                "--action",
+                "check-update",
+                "--skill",
+                "solo",
+            ],
+        );
+        let cache = c.tmp.path().join("data/library-updates/solo.json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        if field == "local_digest" || field == "upstream_commit" {
+            record["status"][field] = serde_json::Value::Null;
+        } else {
+            record[field] = serde_json::Value::Null;
+        }
+        std::fs::write(cache, serde_json::to_vec(&record).unwrap()).unwrap();
+        let target = c
+            .tmp
+            .path()
+            .join("data/library/resources/skills/solo/SKILL.md");
+        let before = std::fs::read_to_string(&target).unwrap();
+        let content = if field == "local_digest" {
+            before.replace("version-one", "user-edited")
+        } else {
+            before
+        };
+        std::fs::write(&target, &content).unwrap();
+        let (code, _, stderr) = c.run(
+            &cwd,
+            &[
+                "--json",
+                "--data-root",
+                &c.dr(),
+                "library",
+                "--action",
+                "update",
+                "--skill",
+                "solo",
+                "--preview-id",
+                checked["status"]["preview_id"].as_str().unwrap(),
+                "--execute",
+            ],
+        );
+        assert_ne!(code, 0, "missing {field} must fail");
+        assert!(stderr.contains("重新检查"), "{stderr}");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), content);
+    }
+}
+
+#[test]
+fn failed_recheck_retires_old_candidate_and_persists_error() {
+    let (c, cwd, upstream) = update_fixture();
+    skill_version(&upstream, "solo", "version-two");
+    upstream_commit(&c, &upstream, "two");
+    let checked = c.run_json(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    let target = c
+        .tmp
+        .path()
+        .join("data/library/resources/skills/solo/SKILL.md");
+    let before = std::fs::read(&target).unwrap();
+    std::fs::rename(&upstream, c.tmp.path().join("unavailable-upstream")).unwrap();
+    let (code, _, _) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    assert_ne!(code, 0);
+    let data = c.tmp.path().join("data");
+    let saved = ailoom::personal_library::cached_update(&data, "solo")
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.state, "error");
+    assert!(saved.preview_id.is_none());
+    let (entries, issues) = ailoom::personal_library::list_tolerant(&data);
+    assert!(issues.is_empty(), "{issues:?}");
+    let entry = entries.iter().find(|e| e.name == "solo").unwrap();
+    assert!(entry.can_check_update);
+    assert_eq!(entry.update.as_ref().unwrap().state, "error");
+    let (code, _, _) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--preview-id",
+            checked["status"]["preview_id"].as_str().unwrap(),
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0);
+    let (code, _, _) = c.run(
+        &cwd,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "library",
+            "--action",
+            "update",
+            "--skill",
+            "solo",
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert_eq!(std::fs::read(&target).unwrap(), before);
+}
+
+#[test]
+fn corrupt_check_is_visible_without_hiding_a_valid_skill() {
+    let (c, _, _) = update_fixture();
+    let data = c.tmp.path().join("data");
+    std::fs::create_dir_all(data.join("library-updates")).unwrap();
+    std::fs::write(data.join("library-updates/solo.json"), "broken-json").unwrap();
+    let (entries, issues) = ailoom::personal_library::list_tolerant(&data);
+    let entry = entries.iter().find(|e| e.name == "solo").unwrap();
+    assert!(entry.can_check_update);
+    let status = entry.update.as_ref().unwrap();
+    assert_eq!(status.state, "error");
+    assert!(status.preview_id.is_none());
+    assert!(issues
+        .iter()
+        .any(|i| i.error.contains("更新检查记录不可用")));
 }

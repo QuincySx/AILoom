@@ -83,7 +83,7 @@ pub fn run(
         .unwrap_or(false);
     if non_empty && !args.force && dir.join(crate::manifest::MANIFEST_FILE).is_file() {
         return Err(Error::new(
-            code::USER_CONTENT_CONFLICT,
+            code::TARGET_CONFLICT,
             format!(
                 "{} 已存在 ailoom.toml；确认要合并生成请加 --force",
                 dir.display()
@@ -146,7 +146,7 @@ pub fn run(
 
     // 自校验：真实清单加载器 + 资源枚举必须通过，否则本次脚手架就是坏的
     let manifest = crate::manifest::TeamManifest::load_from(&dir)?;
-    let entries = crate::resource::enumerate(&dir, &manifest, "scaffold")?;
+    let entries = crate::resource::enumerate(&dir, &manifest, "scaffold", &mut Vec::new())?;
     if !args.minimal {
         assert!(
             entries.iter().any(|e| e.id.name == "common-greet"),
@@ -203,11 +203,11 @@ pub fn run(
         ),
     });
     if !json {
-        crate::logging::info(format!(
+        println!(
             "团队源骨架已生成：{}（{} 个文件，清单自校验通过）",
             dir.display(),
             written.len()
-        ));
+        );
     }
     Ok(value)
 }
@@ -262,7 +262,7 @@ fn write_file(
             return Ok(());
         }
         return Err(Error::new(
-            code::USER_CONTENT_CONFLICT,
+            code::TARGET_CONFLICT,
             format!("拒绝覆盖已有文件: {}", path.display()),
         )
         .fix("确认内容或换目录；合并生成请加 --force"));

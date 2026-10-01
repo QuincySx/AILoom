@@ -72,44 +72,7 @@ pub fn prepare(
             })?
     };
 
-    let (snapshot, identity) = match declaration.source.kind.as_str() {
-        "git" => {
-            let url = declaration.source.url.clone().unwrap_or_default();
-            let src = GitSource::new(&url, declaration.source.ref_.as_deref())?;
-            let cache = ctx.source_cache(&src.identity);
-            let snap = src.resolve(&cache, Some(&entry))?;
-            (snap, src.identity.clone())
-        }
-        "local" | "self" => {
-            // self 模式（AIL-036）：团队资源保存在业务仓库子树（默认 .ailoom-team/），机器数据外置
-            let p = if declaration.source.kind == "self"
-                && declaration
-                    .source
-                    .path
-                    .as_deref()
-                    .unwrap_or_default()
-                    .is_empty()
-            {
-                ".ailoom-team".to_string()
-            } else {
-                declaration.source.path.clone().unwrap_or_default()
-            };
-            let base = if PathBuf::from(&p).is_absolute() {
-                PathBuf::from(&p)
-            } else {
-                ctx.workspace.workspace_root.join(&p)
-            };
-            let src = LocalSource::new(&base)?;
-            let snap = src.resolve()?;
-            (snap, src.identity.clone())
-        }
-        other => {
-            return Err(Error::new(
-                code::MANIFEST_MISSING_FIELD,
-                format!("未知 source.type: {other}"),
-            ))
-        }
-    };
+    let (snapshot, identity) = primary_snapshot(&ctx, &declaration, &entry)?;
 
     let manifest = TeamManifest::load_from(&snapshot.root)?;
     let desired: DesiredSet = resolve(ResolveRequest {
@@ -274,6 +237,11 @@ pub fn prepare(
         snapshot.resolved_commit.clone(),
     )?;
 
+    // 团队层只清理自己拥有的托管条目：个人层（资源库/合集/个人指令）由 personal 同步负责，
+    // 否则两条同步路径会互相删除对方的部署（C-01）。
+    plan.actions
+        .retain(|a| !(is_cleanup(a) && layer_of(&a.resource_id) == Layer::Personal));
+
     // Unsupported 显式进入计划
     for u in &unsupported {
         plan.actions.push(PlanAction {
@@ -301,6 +269,75 @@ pub fn prepare(
         managed,
         managed_path,
     })
+}
+
+/// 按声明的源类型解析主源快照（git / local / self），返回快照与源身份。
+/// plan/sync、recall、import、contribute 共用，避免各自假定为 Git 源（C-03）。
+pub fn primary_snapshot(
+    ctx: &AppContext,
+    declaration: &ProjectDeclaration,
+    entry: &crate::source::SourceLock,
+) -> Result<(crate::source::Snapshot, String)> {
+    match declaration.source.kind.as_str() {
+        "git" => {
+            let url = declaration.source.url.clone().unwrap_or_default();
+            let src = GitSource::new(&url, declaration.source.ref_.as_deref())?;
+            let cache = ctx.source_cache(&src.identity);
+            let snap = src.resolve(&cache, Some(entry))?;
+            Ok((snap, src.identity.clone()))
+        }
+        "local" | "self" => {
+            // self 模式（AIL-036）：团队资源保存在业务仓库子树（默认 .ailoom-team/），机器数据外置
+            let p = match declaration.source.path.as_deref() {
+                Some(p) if !p.is_empty() => p.to_string(),
+                _ if declaration.source.kind == "self" => ".ailoom-team".to_string(),
+                _ => String::new(),
+            };
+            let base = if PathBuf::from(&p).is_absolute() {
+                PathBuf::from(&p)
+            } else {
+                ctx.workspace.workspace_root.join(&p)
+            };
+            let src = LocalSource::new(&base)?;
+            let snap = src.resolve()?;
+            Ok((snap, src.identity.clone()))
+        }
+        other => Err(Error::new(
+            code::MANIFEST_MISSING_FIELD,
+            format!("未知 source.type: {other}"),
+        )),
+    }
+}
+
+/// 托管条目归属的同步层。两条同步路径共用一份托管清单，清理动作只针对本层条目。
+#[derive(Debug, PartialEq, Eq)]
+pub enum Layer {
+    /// 团队源、额外订阅源与只由团队同步部署的内置资源。
+    Team,
+    /// 只由团队同步部署、个人同步刻意不渲染的条目（内置 Agent/Skill、Codex 汇总配置、文档索引片段）。
+    TeamOnly,
+    /// 资源库、合集引用与个人指令。
+    Personal,
+}
+
+pub fn layer_of(resource_id: &str) -> Layer {
+    if resource_id.starts_with("ailoom-builtin/") || resource_id == "ailoom-internal/doc-index" {
+        Layer::TeamOnly
+    } else if resource_id.starts_with("ailoom-personal/")
+        || resource_id.starts_with("collection-")
+        || resource_id
+            .strip_prefix(crate::personal_library::LIBRARY_TEAM_ID)
+            .is_some_and(|rest| rest.starts_with('/'))
+    {
+        Layer::Personal
+    } else {
+        Layer::Team
+    }
+}
+
+/// 计划中的清理动作：已托管但不在本次期望集合中。
+pub fn is_cleanup(a: &PlanAction) -> bool {
+    a.desired_hash.is_empty() && a.manifest_hash.is_some()
 }
 
 fn resource_allows_tool(raw: Option<&str>, tool: &str) -> bool {

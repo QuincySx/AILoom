@@ -7,7 +7,7 @@ use crate::knowledge::index::{self, KnowledgeIndex};
 use crate::knowledge::search::{search, SearchHit};
 use crate::manifest::TeamManifest;
 use crate::resolver::{resolve, ResolveRequest};
-use crate::source::{GitSource, SourcesLock};
+use crate::source::SourcesLock;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -21,6 +21,22 @@ pub struct RecallArgs {
 
 pub fn run(args: &RecallArgs, json: bool, data_root: Option<&std::path::Path>) -> Result<Value> {
     let cwd = std::env::current_dir()?;
+    let data = crate::paths::resolve_data_root(data_root)?;
+    let root = args.root.as_deref().unwrap_or(&cwd);
+    if crate::knowledge::location::is_initialized(&data, root)? {
+        let value = crate::knowledge::location::recall_filtered(
+            &data,
+            root,
+            &args.query,
+            args.limit,
+            args.kind.as_deref(),
+        )?;
+        if !json {
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        return Ok(value);
+    }
+
     let ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
     let decl_path = ctx.declaration_path().ok_or_else(|| {
         Error::new(code::WORKSPACE_INVALID, "工作区未绑定").fix("先运行 ailoom init")
@@ -38,43 +54,7 @@ pub fn run(args: &RecallArgs, json: bool, data_root: Option<&std::path::Path>) -
         .and_then(|l| l.sources.get(&declaration.source.name).cloned())
         .ok_or_else(|| Error::new(code::SOURCE_NOT_CACHED, "源未锁定").fix("先运行 ailoom init"))?;
 
-    let (snapshot, identity) = match declaration.source.kind.as_str() {
-        "git" => {
-            let src = GitSource::new(
-                entry.identity.trim_start_matches("git+"),
-                entry.ref_.as_deref(),
-            )?;
-            let snap = src.resolve(&ctx.source_cache(&src.identity), Some(&entry))?;
-            (snap, src.identity.clone())
-        }
-        "local" | "self" => {
-            let p = if declaration.source.kind == "self"
-                && declaration
-                    .source
-                    .path
-                    .as_deref()
-                    .unwrap_or_default()
-                    .is_empty()
-            {
-                ".ailoom-team".to_string()
-            } else {
-                declaration.source.path.clone().unwrap_or_default()
-            };
-            let base = if PathBuf::from(&p).is_absolute() {
-                PathBuf::from(&p)
-            } else {
-                ctx.workspace.workspace_root.join(&p)
-            };
-            let src = crate::source::LocalSource::new(&base)?;
-            (src.resolve()?, src.identity.clone())
-        }
-        other => {
-            return Err(Error::new(
-                code::MANIFEST_MISSING_FIELD,
-                format!("未知 source.type: {other}"),
-            ))
-        }
-    };
+    let (snapshot, identity) = super::sync_core::primary_snapshot(&ctx, &declaration, &entry)?;
 
     let manifest = TeamManifest::load_from(&snapshot.root)?;
     let desired = resolve(ResolveRequest {

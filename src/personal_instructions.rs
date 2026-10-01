@@ -35,7 +35,7 @@ pub fn entry_base(data_root: &Path, repo_id: &str) -> PathBuf {
     data_root.join("profile").join("instructions").join(repo_id)
 }
 
-/// 读取有效个人指令：工作树条目优先于仓库默认（覆盖语义，来源可解释）。
+/// 读取有效个人指令：Worktree 条目优先于仓库默认（覆盖语义，来源可解释）。
 pub fn load_entry(data_root: &Path, repo_id: &str, worktree_id: Option<&str>) -> Option<String> {
     if let Some(wt) = worktree_id {
         let p = entry_path(data_root, repo_id, Some(wt));
@@ -60,7 +60,8 @@ pub fn save_entry(
 ) -> Result<()> {
     let p = entry_path(data_root, repo_id, worktree_id);
     std::fs::create_dir_all(p.parent().unwrap_or_else(|| Path::new(".")))?;
-    crate::sync_common::atomic_write(&p, content.as_bytes())
+    crate::sync_common::atomic_write(&p, content.as_bytes())?;
+    crate::knowledge::location::checkpoint_project(data_root, repo_id)
 }
 
 /// 删除条目（清空 = 删除文件）。
@@ -69,7 +70,7 @@ pub fn clear_entry(data_root: &Path, repo_id: &str, worktree_id: Option<&str>) -
     if p.is_file() {
         std::fs::remove_file(&p)?;
     }
-    Ok(())
+    crate::knowledge::location::checkpoint_project(data_root, repo_id)
 }
 
 /// 公司文件保护检查结果。
@@ -79,7 +80,7 @@ pub struct SkippedTarget {
     pub reason: String,
 }
 
-/// 路径是否已被 Git 跟踪（工作树根相对路径；非 Git 目录恒为 false）。
+/// 路径是否已被 Git 跟踪（Worktree 根相对路径；非 Git 目录恒为 false）。
 /// 个人模式守卫的基础判断：对 create/update/delete/restore/undo 全部生效。
 pub fn path_is_git_tracked(ws_root: &Path, rel: &str) -> bool {
     if !ws_root.join(".git").exists() && find_git_boundary(ws_root).is_none() {
@@ -147,7 +148,7 @@ pub fn render_claude_additive(entry_content: &str) -> Artifact {
     }
 }
 
-/// 公司 AGENTS.md 当前工作树内容摘要（不存在 → None）。
+/// 公司 AGENTS.md 当前 Worktree 内容摘要（不存在 → None）。
 pub fn codex_baseline_digest(ws_root: &Path) -> Result<Option<String>> {
     let p = ws_root.join("AGENTS.md");
     if !p.is_file() {
@@ -199,6 +200,14 @@ pub fn render(ws_root: &Path, hosts: &[String], entry_content: &str) -> Result<V
         match h.as_str() {
             "claude" => out.push(render_claude_additive(entry_content)),
             "codex" => out.push(render_codex_view(ws_root, entry_content)?),
+            other if crate::adapters::hosts::lookup(other).is_some() => {
+                out.extend(crate::adapters::hosts::instructions(
+                    other,
+                    &format!("ailoom-personal/instructions/{other}"),
+                    entry_content,
+                    ws_root,
+                )?);
+            }
             other => {
                 return Err(Error::new(
                     code::HOST_UNSUPPORTED,
@@ -216,6 +225,8 @@ pub fn render(ws_root: &Path, hosts: &[String], entry_content: &str) -> Result<V
 pub fn exclude_patterns(artifacts: &[Artifact]) -> Vec<String> {
     artifacts
         .iter()
+        // Grok honors gitignore for project rules, including info/exclude.
+        .filter(|a| !(a.target_tool == "grok" && a.kind == "rule"))
         .map(|a| a.path.display().to_string())
         .collect()
 }

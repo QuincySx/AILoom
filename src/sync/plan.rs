@@ -71,7 +71,11 @@ impl SyncPlan {
                 n += 1;
                 continue;
             }
-            c.push_str(&format!("{tag:8} {}\n", a.path));
+            // 同一文件的多个受管片段 / 键：附上 item_key 的 `#` 后缀以区分（C-17）
+            match a.item_key.split_once('#') {
+                Some((_, sub)) => c.push_str(&format!("{tag:8} {}  [{sub}]\n", a.path)),
+                None => c.push_str(&format!("{tag:8} {}\n", a.path)),
+            }
         }
         if n > 0 {
             c.push_str(&format!("noop     {n} 项已是期望内容\n"));

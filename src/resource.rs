@@ -75,7 +75,7 @@ pub struct ResourceMeta {
 }
 
 /// 统一资源条目。skill 的 path 为目录，其余为文件（相对快照根）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceEntry {
     pub id: ResourceId,
     pub meta: ResourceMeta,
@@ -333,22 +333,43 @@ fn check_dup(items: &[String], resource: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
-/// 拒绝资源目录中出现任何符号链接（外跳 symlink 防御，AIL-006 必测）。
-fn reject_symlinks(dir: &Path, context: &str) -> Result<()> {
+/// 符号链接策略（AIL-119）：仓内链接（目标仍在本快照根内且存在）放行；
+/// 外逃/悬空/不可解析的链接返回 false 并记录具体路径（调用方跳过该资源，不阻塞其他资源）。
+fn reject_symlinks(dir: &Path, context: &str, root: &Path, warnings: &mut Vec<String>) -> bool {
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     for entry in WalkDir::new(dir)
         .follow_links(false)
         .into_iter()
         .filter_map(|e| e.ok())
     {
         if entry.file_type().is_symlink() {
-            return Err(Error::new(
-                code::PATH_TRAVERSAL,
-                format!("资源目录含符号链接，已拒绝: {}", entry.path().display()),
-            )
-            .context(serde_json::json!({ "resource_root": context })));
+            let link = entry.path();
+            let resolved = std::fs::read_link(link).ok().and_then(|t| {
+                let abs = if t.is_absolute() {
+                    t
+                } else {
+                    link.parent().unwrap_or(Path::new(".")).join(t)
+                };
+                abs.canonicalize().ok()
+            });
+            let ok = resolved
+                .as_ref()
+                .map(|t| t.starts_with(&root_canon))
+                .unwrap_or(false);
+            if !ok {
+                warnings.push(format!(
+                    "资源 `{context}` 含不安全符号链接（外逃/悬空），该资源已跳过: {} → {}",
+                    link.display(),
+                    resolved
+                        .as_ref()
+                        .map(|t| t.display().to_string())
+                        .unwrap_or_else(|| "(不可解析)".into())
+                ));
+                return false;
+            }
         }
     }
-    Ok(())
+    true
 }
 
 /// 枚举快照内全部资源（先 schema 校验再逐项解析；结果按 ResourceId 排序）。
@@ -356,6 +377,7 @@ pub fn enumerate(
     snapshot_root: &Path,
     manifest: &TeamManifest,
     source: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<ResourceEntry>> {
     let paths = manifest.effective_paths();
     let mut entries = Vec::new();
@@ -368,7 +390,14 @@ pub fn enumerate(
             if !path.is_dir() || dir.file_name().to_string_lossy().starts_with('.') {
                 continue;
             }
-            reject_symlinks(&path, dir.file_name().to_string_lossy().as_ref())?;
+            if !reject_symlinks(
+                &path,
+                dir.file_name().to_string_lossy().as_ref(),
+                snapshot_root,
+                warnings,
+            ) {
+                continue;
+            }
             let skill_md = path.join("SKILL.md");
             if !skill_md.is_file() {
                 return Err(Error::new(

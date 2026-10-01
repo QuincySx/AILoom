@@ -1,0 +1,554 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AILoom · 知识如何积累与维护</title><style>:root {
+  color-scheme: light;
+  --vc-paper: #f5f6f6;
+  --vc-paper-strong: #ffffff;
+  --vc-ink: #1f2428;
+  --vc-muted: #667078;
+  --vc-muted-soft: #9099a0;
+  --vc-line: #dce1e3;
+  --vc-line-strong: #aeb6ba;
+  --vc-primary: #2c7f5e;
+  --vc-primary-strong: #1f6449;
+  --vc-primary-soft: #e7f1ec;
+  --vc-secondary: #bb4b36;
+  --vc-secondary-soft: #f6e7e2;
+  --vc-success: #2c7f5e;
+  --vc-success-soft: #e7f1ec;
+  --vc-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", Helvetica, Arial, sans-serif;
+  --vc-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", Helvetica, Arial, sans-serif;
+  --vc-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --vc-font-micro: 13px;
+  --vc-font-caption: 14px;
+  --vc-font-control: 15px;
+  --vc-font-body: 17px;
+  --vc-control-min-height: 44px;
+  --vc-radius-sm: 8px;
+  --vc-radius: 12px;
+  --vc-radius-lg: 18px;
+  --vc-space-1: 4px;
+  --vc-space-2: 8px;
+  --vc-space-3: 12px;
+  --vc-space-4: 16px;
+  --vc-space-5: 24px;
+  --vc-space-6: 32px;
+  --vc-space-7: 48px;
+  --vc-space-8: 64px;
+  --vc-space-9: 96px;
+  --vc-duration-press: 140ms;
+  --vc-duration-micro: 160ms;
+  --vc-duration-exit: 180ms;
+  --vc-duration-state: 200ms;
+  --vc-duration-enter: 240ms;
+  --vc-duration-scene: 420ms;
+  --vc-delay-stagger: 48ms;
+  --vc-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --vc-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --vc-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --vc-press-scale: 0.97;
+  --vc-enter-distance: 8px;
+  --vc-shadow-sm: 0 1px 2px rgba(31, 36, 40, 0.035);
+  --vc-shadow: 0 18px 48px rgba(31, 36, 40, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--vc-paper);
+  color: var(--vc-ink);
+  font-family: var(--vc-sans);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--vc-paper);
+  color: var(--vc-ink);
+  font-size: var(--vc-font-body);
+  letter-spacing: -0.012em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--vc-primary-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: color var(--vc-duration-micro) ease, text-decoration-color var(--vc-duration-micro) ease;
+}
+
+figure {
+  margin: 0;
+}
+
+img,
+svg,
+canvas,
+video {
+  display: block;
+  max-width: 100%;
+}
+
+.vc-shell {
+  width: min(1360px, calc(100% - 64px));
+  margin-inline: auto;
+  padding-block: var(--vc-space-7) 112px;
+}
+
+.vc-kicker,
+.vc-label,
+.vc-meta,
+.vc-source-mark {
+  font-family: var(--vc-mono);
+  font-size: var(--vc-font-micro);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+
+.vc-kicker,
+.vc-source-mark {
+  color: var(--vc-primary);
+}
+
+.vc-display {
+  max-width: 13ch;
+  margin: 0;
+  font-family: var(--vc-display);
+  font-size: clamp(48px, 6.5vw, 92px);
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+  text-wrap: balance;
+}
+
+.vc-title {
+  margin: 0;
+  font-family: var(--vc-display);
+  font-size: clamp(32px, 3.8vw, 54px);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 1.02;
+  text-wrap: balance;
+}
+
+.vc-subtitle {
+  max-width: 720px;
+  margin: var(--vc-space-5) 0 0;
+  color: var(--vc-muted);
+  font-size: clamp(18px, 1.8vw, 24px);
+  letter-spacing: -0.018em;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.vc-body {
+  color: var(--vc-ink);
+  font-size: var(--vc-font-body);
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.vc-rule {
+  border: 0;
+  border-top: 1px solid var(--vc-line);
+  margin: var(--vc-space-7) 0;
+}
+
+.vc-panel,
+.vc-panel-strong {
+  border: 1px solid var(--vc-line);
+  border-radius: var(--vc-radius);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.vc-panel-strong {
+  background: var(--vc-paper-strong);
+  box-shadow: none;
+}
+
+.vc-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--vc-space-5);
+}
+
+.vc-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid var(--vc-line);
+  border-radius: 999px;
+  background: var(--vc-paper-strong);
+  color: var(--vc-ink);
+  font-family: var(--vc-mono);
+  font-size: var(--vc-font-micro);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vc-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vc-primary);
+}
+
+.vc-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.vc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--vc-control-min-height);
+  padding: 10px 16px;
+  border: 1px solid var(--vc-ink);
+  border-radius: var(--vc-radius-sm);
+  background: var(--vc-ink);
+  color: var(--vc-paper-strong);
+  cursor: pointer;
+  font-size: var(--vc-font-control);
+  font-weight: 650;
+  line-height: 1;
+  text-decoration: none;
+  transition: transform var(--vc-duration-press) var(--vc-ease-out), background-color var(--vc-duration-micro) ease, border-color var(--vc-duration-micro) ease;
+}
+
+.vc-button:active {
+  transform: scale(var(--vc-press-scale));
+}
+
+.vc-button:disabled,
+.vc-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+}
+
+.vc-button:focus-visible,
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+[data-horizontal-scroll]:focus-visible {
+  outline: 3px solid rgba(44, 127, 94, 0.22);
+  outline-offset: 3px;
+}
+
+.vc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--vc-font-control);
+  font-weight: 620;
+  text-decoration-color: transparent;
+}
+
+.vc-link[aria-disabled="true"] {
+  color: var(--vc-muted-soft);
+  cursor: default;
+  text-decoration: none;
+}
+
+.vc-link .vc-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--vc-duration-micro) var(--vc-ease-out);
+}
+
+.vc-figure {
+  overflow: hidden;
+  border: 1px solid var(--vc-line);
+  border-radius: var(--vc-radius);
+  background: #eef1ed;
+  box-shadow: var(--vc-shadow-sm);
+}
+
+.vc-placeholder {
+  display: grid;
+  min-height: 300px;
+  padding: var(--vc-space-6);
+  place-items: center;
+  background:
+    linear-gradient(90deg, rgba(170, 180, 188, 0.16) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(rgba(170, 180, 188, 0.16) 1px, transparent 1px) 0 0 / 24px 24px,
+    #eef1f2;
+  color: var(--vc-muted);
+  font-family: var(--vc-mono);
+  font-size: var(--vc-font-micro);
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  line-height: 1.5;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.vc-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vc-space-4);
+  min-height: 46px;
+  padding: 10px var(--vc-space-4);
+  border-top: 1px solid var(--vc-line);
+  background: var(--vc-paper-strong);
+  color: var(--vc-muted);
+  font-size: var(--vc-font-caption);
+  line-height: 1.4;
+}
+
+.vc-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--vc-line);
+  border-radius: var(--vc-radius);
+  background: var(--vc-paper-strong);
+  box-shadow: none;
+}
+
+.vc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--vc-font-control);
+}
+
+.vc-table th,
+.vc-table td {
+  padding: 17px 20px;
+  border-bottom: 1px solid var(--vc-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.vc-table th {
+  background: #f7f9fa;
+  color: var(--vc-muted);
+  font-family: var(--vc-mono);
+  font-size: var(--vc-font-micro);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.vc-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.vc-callout {
+  padding: var(--vc-space-5);
+  border: 1px solid #eed6cf;
+  border-left: 3px solid var(--vc-secondary);
+  border-radius: var(--vc-radius-sm);
+  background: var(--vc-secondary-soft);
+}
+
+.vc-scroll-progress {
+  --vc-scroll-progress: 0;
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 100;
+  height: 2px;
+  background: var(--vc-primary);
+  pointer-events: none;
+  transform: scaleX(var(--vc-scroll-progress));
+  transform-origin: left;
+}
+
+.vc-motion-ready [data-reveal] {
+  opacity: 0;
+  transform: translateY(var(--vc-enter-distance));
+  transition: opacity var(--vc-duration-enter) var(--vc-ease-out), transform var(--vc-duration-enter) var(--vc-ease-out);
+  transition-delay: var(--vc-reveal-delay, 0ms);
+}
+
+.vc-motion-ready [data-reveal="fade"] {
+  transform: none;
+}
+
+.vc-motion-ready [data-reveal].is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.vc-delay-1 { --vc-reveal-delay: var(--vc-delay-stagger); }
+.vc-delay-2 { --vc-reveal-delay: calc(var(--vc-delay-stagger) * 2); }
+.vc-delay-3 { --vc-reveal-delay: calc(var(--vc-delay-stagger) * 3); }
+.vc-delay-4 { --vc-reveal-delay: calc(var(--vc-delay-stagger) * 4); }
+
+@media (hover: hover) and (pointer: fine) {
+  .vc-button:not(:disabled):not([aria-disabled="true"]):hover {
+    border-color: #2c3237;
+    background: #2c3237;
+  }
+
+  .vc-link:not([aria-disabled="true"]):hover {
+    text-decoration-color: currentColor;
+  }
+
+  .vc-link:not([aria-disabled="true"]):hover .vc-icon {
+    transform: translate(1px, -1px);
+  }
+}
+
+@media (max-width: 760px) {
+  .vc-shell {
+    width: calc(100% - 32px);
+    padding-block: var(--vc-space-6) var(--vc-space-8);
+  }
+
+  .vc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vc-caption {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  .vc-motion-ready [data-reveal] {
+    transform: none;
+    transition: opacity var(--vc-duration-state) ease;
+  }
+
+  .vc-motion-ready [data-reveal].is-visible,
+  .vc-button:active,
+  .vc-link .vc-icon {
+    transform: none;
+  }
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  .vc-shell {
+    width: auto;
+    padding: 0;
+  }
+
+  .vc-scroll-progress {
+    display: none;
+  }
+}
+
+body{margin:0;font-size:var(--vc-font-body)}button,input,select,textarea{font:inherit}button,select,input{min-height:44px}button{cursor:pointer;border:1px solid var(--vc-line);border-radius:6px;background:white;padding:8px 14px;color:var(--vc-ink);font-size:var(--vc-font-control)}button:disabled{opacity:.45;cursor:default}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid var(--vc-primary);outline-offset:3px}button.primary{background:var(--vc-primary);color:white;border-color:var(--vc-primary)}button.active{background:var(--vc-primary-soft);color:var(--vc-primary-strong);border-color:var(--vc-primary)}header{background:white;border-bottom:1px solid var(--vc-line);padding:20px 32px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.brand{font-size:22px;font-weight:750} .muted,small{color:var(--vc-muted)}small{font-size:var(--vc-font-caption)}h1{font-size:30px;line-height:1.3;margin:24px 0 12px;letter-spacing:-.03em}h2{font-size:22px;margin:24px 0 12px}h3{font-size:18px;margin:0 0 10px}p{line-height:1.7;margin:8px 0 16px}nav{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.tag{display:inline-block;padding:3px 8px;background:var(--vc-paper);border-radius:4px;font-size:var(--vc-font-caption)}.good{color:var(--vc-primary-strong);background:var(--vc-primary-soft)}.gap{color:var(--vc-secondary);background:var(--vc-secondary-soft)}main{max-width:1360px;margin:auto;padding:24px 32px 48px}.page[hidden]{display:none}.lede{max-width:900px}.rule{border-top:1px solid var(--vc-line);margin-top:28px;padding-top:20px}.split{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr);gap:32px}.paper{background:white;border:1px solid var(--vc-line);border-radius:8px;padding:24px;min-width:0}.banner{padding:14px 18px;border-left:3px solid var(--vc-primary);background:var(--vc-primary-soft);margin:16px 0 24px}.warning{border-color:var(--vc-secondary);background:var(--vc-secondary-soft)}.rows{list-style:none;padding:0;margin:0}.rows>li{border-bottom:1px solid var(--vc-line);padding:14px 0}.rows strong{display:block;margin-bottom:4px}.flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:24px 0}.node{padding:16px;border:1px solid var(--vc-line);background:white;position:relative}.node b{display:block;margin:8px 0}.node p{font-size:var(--vc-font-control);margin:0}.node .num{color:var(--vc-primary);font-family:var(--vc-mono);font-size:var(--vc-font-caption)}.node+.node:before{content:'→';position:absolute;left:-10px;top:15px;background:var(--vc-paper);z-index:1}.branch{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}.branch>div{padding:16px;border-left:2px solid var(--vc-line-strong)}.branch b{display:block}.app{border:1px solid var(--vc-line-strong);background:white;border-radius:8px;overflow:hidden}.app-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--vc-line);flex-wrap:wrap}.app-body{display:grid;grid-template-columns:180px minmax(0,1fr)}.tree{padding:16px 10px;background:var(--vc-paper);border-right:1px solid var(--vc-line)}.tree button{display:block;width:100%;text-align:left;margin-bottom:4px}.tree .child{padding-left:28px}.workspace{padding:20px;min-width:0}.stats{display:flex;gap:20px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--vc-line);font-size:var(--vc-font-caption)}.stats b{color:var(--vc-ink)}.record{display:grid;grid-template-columns:1fr auto;gap:12px;padding:16px 0;border-bottom:1px solid var(--vc-line)}.record p{font-size:var(--vc-font-control);margin:4px 0}.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.record .actions{justify-content:flex-end}.notice{min-height:50px;margin-top:12px;font-size:var(--vc-font-control);color:var(--vc-primary-strong)}.scenario{display:grid;grid-template-columns:210px minmax(0,1fr);gap:24px;margin:24px 0}.scenario-nav{display:grid;gap:4px;align-content:start}.scenario-nav button{text-align:left}.steps{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.steps button{max-width:100%;text-align:left}.state{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.state div{border-bottom:1px solid var(--vc-line);padding-bottom:12px}.state dt{font-size:var(--vc-font-caption);color:var(--vc-muted)}.state dd{margin:4px 0 0;font-size:var(--vc-font-control);overflow-wrap:anywhere}.free{margin:16px 0}.free summary,details summary{cursor:pointer;min-height:44px;padding:10px 0}.form{display:grid;gap:14px}.form label{display:grid;gap:6px;font-size:var(--vc-font-control)}input,textarea,select{border:1px solid var(--vc-line-strong);padding:9px 12px;background:white;border-radius:6px;max-width:100%;width:100%}textarea{min-height:150px;resize:vertical}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:var(--vc-font-control)}th,td{padding:14px 12px;border-bottom:1px solid var(--vc-line);vertical-align:top}th{color:var(--vc-muted);font-weight:600}code{font-size:var(--vc-font-caption);overflow-wrap:anywhere}.feedback{display:grid;gap:16px}.choice{border-bottom:1px solid var(--vc-line);padding-bottom:16px}.choice label{display:flex;gap:8px;align-items:center;min-height:44px;font-size:var(--vc-font-control)}.choice input{width:18px;min-height:18px}.choice strong{display:block;margin-bottom:8px}a{color:var(--vc-primary-strong)}.hidden{display:none!important}.edited{border-left:3px solid var(--vc-primary);padding-left:12px}#editor{margin:16px 0;background:var(--vc-paper);padding:18px}footer{color:var(--vc-muted);font-size:var(--vc-font-caption);margin-top:28px}.legend{display:flex;gap:8px;flex-wrap:wrap}.history{font-size:var(--vc-font-caption);line-height:1.8}.route{padding:16px 0;border-bottom:1px solid var(--vc-line)}.route strong{display:block}.empty{padding:28px 0;color:var(--vc-muted)}@media(hover:hover) and (pointer:fine){button:not(:disabled):hover{border-color:var(--vc-primary)}a:hover{text-decoration:underline}}@media(max-width:800px){header{padding:16px}main{padding:16px}.split,.scenario,.branch{grid-template-columns:1fr}.flow{grid-template-columns:1fr 1fr}.scenario-nav{grid-template-columns:1fr 1fr}.app-body{grid-template-columns:1fr}.tree{display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--vc-line);gap:4px}.tree button{width:auto}.tree .child{padding-left:14px}.record{grid-template-columns:1fr}.record .actions{justify-content:flex-start}.state{grid-template-columns:1fr 1fr}h1{font-size:26px}.paper{padding:16px}}@media(max-width:420px){.flow{grid-template-columns:1fr}.node+.node:before{content:'↓';top:-13px;left:20px}.state{grid-template-columns:1fr}.workspace{padding:14px}.scenario-nav{grid-template-columns:1fr 1fr}button{padding:8px 10px}}
+</style></head><body>
+<header><div class="top"><span class="brand">AILoom <span class="muted">/ 知识使用与维护</span></span><span class="tag">需求对齐原型 · 2026.09.29</span></div><nav aria-label="内容导航"><button data-page="overview" class="active">先看结论</button><button data-page="flow">完整流程</button><button data-page="demo">场景演练</button><button data-page="boundaries">软件分工</button><button data-page="decisions">你的选择</button></nav></header>
+<main>
+<section class="page" id="overview"><h1>知识应在工作中积累，维护时找得到、改得动。</h1><p class="lede">这份原型验证：你是否可以照常使用 AI，AILoom 负责把有价值的内容留在正确的项目里；你偶尔打开网页，就能修正错误、整理旧内容、带到另一台电脑。</p><div class="banner warning"><strong>目前还没有完整实现这个闭环。</strong><br>Hooks 已有事件采集和提醒；自动提炼、持续更新知识、网页编辑仍有缺口。下面的可点击页面是提案，不是已上线功能。</div><div class="split"><article><h2>现在的代码实际做了什么</h2><ul class="rows"><li><strong>使用 AI 时：采集事件，不等于记录知识</strong>现有内置 Hook 针对 Claude，记录标准事件；出错或反复纠正较多时提醒沉淀经验。没有在这里调用模型总结会话。<small> [S1]</small></li><li><strong>编写经验：AI 或你主动执行</strong>内置 Skill 先生成草稿、请用户确认，再执行 contribute。检索 Agent 也需要被调用；不是每次对话都保证自动召回。<small> [S2]</small></li><li><strong>存储、迁移、恢复已有基础</strong>保存和检索可用；同项目 Worktree 共用绑定。网页能管理保存位置，但不能管理知识正文。<small> [S3]</small></li><li><strong>更新旧知识：流程没有统一</strong>新知识库保存入口遇到同名不同内容会拒绝；contribute 在此分支也直接走保存，尚未形成稳定的修改闭环。<small> [S4]</small></li></ul></article><aside class="paper"><h2 style="margin-top:0">建议的使用感受</h2><p>日常工作不需要反复进入管理页，也不需要手工搬文件。</p><ol><li>初始化时选保存目录和自动记录方式。</li><li>AI 提炼有价值的结论，附来源和适用范围。</li><li>下一次工作按需检索，区分候选与已确认。</li><li>遇到重复或矛盾，合并建议留给你处理。</li><li>修改、归档、恢复，都留下可追溯记录。</li></ol><p class="muted">自动保存到候选区是本稿假设；不是已经替你决定的默认值。</p><button class="primary" data-page="demo">点一遍日常使用</button></aside></div><footer>“box”暂按 Hooks 理解；如果你指另一个组件，可在“你的选择”里写下。</footer></section>
+<section class="page" id="flow" hidden><h1>从一次工作，到下一次少踩一个坑</h1><p>提案中的职责划分：Hooks 触发，AI 提炼，CLI 落盘，网页管理。同一套知识不因入口不同而分成两份。</p><div class="flow"><div class="node"><span class="num">01 · 用户 / AI</span><b>完成一次任务</b><p>修复问题、澄清约定，或完成规格与设计。</p></div><div class="node"><span class="num">02 · AI + 触发入口</span><b>判断是否值得保留</b><p>有可复用结论才提炼；没有就结束。不把完整聊天当成知识。</p></div><div class="node"><span class="num">03 · AILoom CLI</span><b>写入当前项目</b><p>核对归属、查重、保存来源；按你的记录策略进入候选或正式区。</p></div><div class="node"><span class="num">04 · 下次使用</span><b>按任务召回</b><p>返回相关内容、出处及状态。候选内容不能被说成已确认约定。</p></div></div><div class="branch"><div><b>新结论，与已有内容无冲突</b><p>自动候选 / 自动正式 / 每次确认，由你选策略。自动正式仍需保留修订记录。</p></div><div><b>重复、相互矛盾或适用范围变化</b><p>不静默覆盖；提出合并或替换建议，确认后更新同一条知识。</p></div></div><div class="flow"><div class="node"><span class="num">05 · 用户 / AI</span><b>反馈或纠错</b><p>这条有用、已过时、结论不对，或直接编辑 Markdown。</p></div><div class="node"><span class="num">06 · AILoom</span><b>维护同一条知识</b><p>更新保留旧版本；归档停止召回；恢复重新参与召回。</p></div><div class="node"><span class="num">07 · 独立动作</span><b>同步与备份</b><p>本地保存完成不等于 Git 已提交或远端已同步；冲突单独处理。</p></div><div class="node"><span class="num">08 · 另一台电脑</span><b>恢复关联</b><p>读取随项目走的声明，选择本机位置，再拉取或关联知识库。</p></div></div><div class="split rule"><div><h2>当前的实际分支</h2><p>Claude Hook → 事件文件 → 达到条件时提示。<br>用户 / AI 调用 Skill → 草稿审阅 → contribute → 已初始化的知识库。<br>用户 / AI 调用 recall → 返回检索结果。</p><p class="muted">Hook 中的 auto_sync 是刷新与应用能力配置，不代表自动提炼知识，也不代表知识库已经推送到远端。[S1–S4]</p></div><div><h2>需要补上的连接</h2><p>AI 提炼触发机制、候选状态、冲突与重复处理、原位更新和版本恢复、网页正文管理、Skill 产物归档规则。</p><p>不能只做一个“自动保存”开关，就声称这些步骤已经存在。</p></div></div></section>
+<section class="page" id="demo" hidden><div class="top"><div><h1>按真实场景，试一遍行为</h1><p class="muted">全部为示例数据。只在当前页面内存中变化；刷新即重置，不接触你的项目。</p></div><button id="reset">重置当前场景</button></div><div class="scenario"><div class="scenario-nav" id="scenario-nav" aria-label="选择场景"></div><div><h2 id="scenario-title" style="margin-top:0"></h2><p id="scenario-description"></p><div id="steps" class="steps"></div><p id="scenario-caveat" class="muted"></p></div></div>
+<div class="app"><div class="app-head"><strong>我的目录 / 知识库</strong><span class="tag gap">建议交互 · 非当前产品</span></div><div class="app-body"><aside class="tree"><button data-context="APP A · main">APP A</button><button class="child" data-context="APP A · main">main</button><button class="child" data-context="APP A · feature">feature</button><button class="child" data-context="APP A · feature / web">feature / web</button><button data-context="设计资料 · 文件夹">设计资料</button><small>Worktree 与管理子目录属于同一项目。切换到“设计资料”按独立项目演示。</small></aside><div class="workspace"><div class="top"><h3 id="context"></h3><span id="sync-state" class="tag"></span></div><div class="stats" id="stats"></div><div class="actions" style="margin-top:16px"><label for="policy">记录方式</label><select id="policy" style="width:auto"><option value="candidate">自动存为候选</option><option value="automatic">自动存为正式</option><option value="confirm">每次确认</option></select><button id="recall">模拟下次检索</button></div><div id="records"></div><form id="editor" class="hidden"><h3>编辑知识</h3><label for="body">Markdown 正文</label><textarea id="body" required></textarea><div class="actions"><button type="submit" class="primary">保存新版本</button><button type="button" id="cancel-edit">取消</button></div><small>提案：保留稳定身份与上一版，不另建重复条目。</small></form><div class="notice" id="notice" role="status" aria-live="polite"></div><details><summary>查看最近变更</summary><ol id="history" class="history"></ol></details></div></div></div>
+<details class="free"><summary>自由试用：跳出步骤，试试边界</summary><div class="actions" id="free-actions"></div></details><h2>当前状态</h2><dl class="state" id="state"></dl></section>
+<section class="page" id="boundaries" hidden><h1>AILoom 管理什么，哪些事情交给 AI？</h1><div class="split"><div><ul class="rows"><li><strong>AI 工具：理解和编写</strong>Claude、Codex 等负责提炼结论、生成文档、提出更新。是否能自动触发，需要逐个宿主适配，不能假设都一样。</li><li><strong>AILoom CLI：一致的文件操作</strong>解析项目、保存与检索、验证更新、维护记录和恢复位置。独立使用，不要求网页常驻。</li><li><strong>AILoom 网页：管理入口</strong>看内容、编辑、处理冲突、看保存与同步状态。网页服务运行时可访问。</li><li><strong>ORCA 插件：另一种入口</strong>调用同一 CLI，利用当前项目上下文。不会取代独立 CLI / 网页；插件方案仍需另行验收。</li></ul></div><div class="paper"><h3>不要混在一起的三类内容</h3><div class="route"><strong>能力配置</strong>Skill、Rules、Agents 和项目说明：告诉 AI 怎么做。</div><div class="route"><strong>积累的知识</strong>经验、约定、决策和纠错：告诉 AI 已经知道什么。</div><div class="route"><strong>工作产物</strong>规格、任务、ADR、原型：工作本身生成的文件。可以进入检索，但不要复制成另一份经验正文。</div><p class="muted">知识库可随业务仓库保存，也可放独立 Git 或本地目录。位置和是否 Git 同步，是不同选择。</p></div></div><h2>整个软件的另外两条日常路径</h2><div class="branch"><div><b>给项目装能力</b><p>导入本地 / Git 来源或迁移 CC Switch → 能力库看到资源与更新 → 在项目里选 Skill、Rules、Agents → 预览文件变更 → 应用到 AI 工具。</p><p class="muted">本地原有内容与 AILoom 托管内容分开展示；子环境默认继承，必要时独立选择。能力库的更新不等于知识内容同步。</p></div><div><b>管理现有规则与项目说明</b><p>读取已有文件 → 查看来源和生效范围 → 编辑 → 选择写回方式 → 预览并应用。</p><p class="muted">“仅本机生效”必须按文件是否已被 Git 跟踪区分。Git ignore 不能隐藏已跟踪文件的修改，不能让一个勾选项制造这种保证；这条路径需单独验证。</p></div></div><h2>六个 Skill 的产物：建议规则，尚未实现</h2><div class="table-wrap" data-horizontal-scroll tabindex="0" aria-label="Skill 产物目录建议"><table><thead><tr><th>Skill</th><th>产物</th><th>本稿示例位置</th></tr></thead><tbody><tr><td>to-spec</td><td>规格文档</td><td>artifacts/specs/</td></tr><tr><td>to-tickets</td><td>任务拆分</td><td>artifacts/tickets/</td></tr><tr><td>grill-me / grill-with-docs</td><td>对齐结论、未决问题</td><td>artifacts/discovery/</td></tr><tr><td>domain-modeling</td><td>领域模型、ADR</td><td>artifacts/domain/ · artifacts/adr/</td></tr><tr><td>prototype</td><td>HTML 原型</td><td>artifacts/prototypes/</td></tr></tbody></table></div><p class="muted">路径只是提案；须检查各 Skill 的真实文件约定，再通过规则适配。已有文档不能仅靠一条提示就保证改写输出路径。</p><h2>实现范围核对</h2><div class="table-wrap" data-horizontal-scroll tabindex="0" aria-label="实现范围"><table><thead><tr><th>流程</th><th>当前实际</th><th>原型演示</th></tr></thead><tbody><tr><td>初始化 / 保存目录</td><td>已有</td><td>选目录与记录策略；策略为提案</td></tr><tr><td>保存 / 检索</td><td>CLI 已有；AI 需调用入口</td><td>自动积累与下一次召回</td></tr><tr><td>修改 / 版本</td><td>新知识库存储分支缺少统一更新入口</td><td>原位编辑、历史版本</td></tr><tr><td>维护</td><td>CLI 有反馈、维护建议、归档与恢复 [S5]</td><td>网页操作和候选处理</td></tr><tr><td>迁移 / 恢复</td><td>已有基础；已做隔离验证</td><td>Git 拉取或选本机目录</td></tr><tr><td>跨项目隔离</td><td>选同一知识库根时当前会共用内容</td><td>默认按项目隔离，等待你的确认</td></tr><tr><td>远端同步</td><td>显式 CLI 操作，需配置；选 Git 目录不等于已同步</td><td>本地保存、待同步、冲突分开显示</td></tr></tbody></table></div><details class="rule"><summary>代码依据与验收记录</summary><p>[S1] <code>src/events/hooks.rs · src/commands/hook_reg.rs · src/events/auto_sync.rs</code><br>[S2] <code>src/adapters/res/share-learning-skill.md · recall-agent.md</code><br>[S3] <code>src/console/ui/features/knowledgePanel.js · src/knowledge/location.rs</code><br>[S4] <code>src/commands/contribute.rs · src/knowledge/location.rs::save</code><br>[S5] <code>src/knowledge/feedback.rs</code></p><p>本稿基于本地代码读取与 2026-09-29 验收记录，不代表已完成各宿主的最新兼容性核实。</p></details></section>
+<section class="page" id="decisions" hidden><h1>用具体选择，对齐你的预期</h1><p>可以先去“场景演练”点一遍，再回来选。不会修改 AILoom 设置；导出文本发回来即可。</p><div class="split"><form id="decisions-form" class="feedback"><div class="choice"><strong>1. 使用 AI 时怎么积累？</strong><label><input type="radio" name="capture" value="自动保存候选，之后集中整理">自动保存候选，之后集中整理</label><label><input type="radio" name="capture" value="自动写入正式知识，仅冲突时确认">自动写入正式知识，仅冲突时确认</label><label><input type="radio" name="capture" value="每次确认后再保存">每次确认后再保存</label></div><div class="choice"><strong>2. 新结论与旧知识矛盾时？</strong><label><input type="radio" name="conflict" value="保留旧版，提出更新让我确认">保留旧版，提出更新让我确认</label><label><input type="radio" name="conflict" value="明确纠错时自动更新，保留历史">明确纠错时自动更新，保留历史</label></div><div class="choice"><strong>3. 多个项目使用同一知识仓库？</strong><label><input type="radio" name="scope" value="默认按项目隔离，另有共享区">默认按项目隔离，另有共享区</label><label><input type="radio" name="scope" value="库内全部共享">库内全部共享</label></div><div class="choice"><strong>4. Skill 产物优先放哪里？</strong><label><input type="radio" name="artifacts" value="跟项目知识库走，可按项目调整">跟项目知识库走，可按项目调整</label><label><input type="radio" name="artifacts" value="留在业务目录，只关联索引">留在业务目录，只关联索引</label></div><label for="feedback">哪里不像你想要的？</label><textarea id="feedback" placeholder="例如：场景 03 中，AI 明确纠错后应该直接替换，不要让我再点确认。"></textarea><button class="primary" type="submit">生成对齐意见</button></form><aside><div class="paper"><h3>从这几个问题判断是否好用</h3><ul><li>日常写代码时要不要不断确认？</li><li>错的知识会不会反复被 AI 引用？</li><li>同一条知识会不会越改越多份？</li><li>不打开网页时，还能否正常积累？</li><li>换电脑后，是否需要重做配置？</li><li>保存失败或 Git 冲突，会不会丢掉刚写的内容？</li></ul></div><div id="feedback-result" class="hidden rule"><h3>可复制或下载</h3><textarea id="feedback-output" readonly aria-label="对齐意见文本"></textarea><button id="download-feedback">下载意见.txt</button><p role="status" id="download-status"></p></div></aside></div></section>
+<footer>可点击的建议流程 ≠ 已完成的产品能力。所有演示均为内存状态；无需联网，无真实写入。</footer></main><noscript><style>.page[hidden]{display:block}nav,#demo,#decisions{display:none}</style><p>交互需要 JavaScript；当前仍可阅读结论、流程及实现范围。</p></noscript>
+<script>
+const scenarios=[
+{id:'daily',title:'01 日常积累与召回',description:'你修好了一个重试问题。AI 提炼出一条经验，下次 feature 分支遇到相同问题时能找到它。',caveat:'待对齐：候选是否参与召回？本稿参与，但始终标注“未确认”。自动提炼尚未接通。',seed:'empty',steps:[['capture','结束任务，提炼经验'],['recall','下次工作，检索经验'],['approve','确认成为正式知识']]},
+{id:'edit',title:'02 编写、纠错与版本',description:'之前写了“重试 3 次”，现在验证应该重试 2 次。修改的是同一条知识，不再生成一个同名副本。',caveat:'提案：修改保留身份与历史；冲突不直接覆盖。当前新知识库 save 不支持不同内容原位更新。',seed:'ready',steps:[['conflict','发现与旧知识矛盾'],['resolve','确认替换为 2 次'],['rollback','恢复到上一版']]},
+{id:'archive',title:'03 维护过时知识',description:'接口已改版，旧经验不再适用。先归档，再检索；如果判断错了，还能恢复。',caveat:'CLI 已有归档与恢复；网页入口是提案。低使用频率本身不应该触发删除。',seed:'ready',steps:[['archive','把旧经验归档'],['recall','再次检索'],['restore','恢复知识'],['recall','重新检索']]},
+{id:'worktree',title:'04 Worktree 与子目录',description:'main、feature 与 feature/web 共用 APP A 的知识。切到独立的“设计资料”项目，则不会混入 APP A。',caveat:'同项目共用已有；不同项目即使选同一库也隔离，是待确认提案，当前实现尚不隔离。',seed:'ready',steps:[['feature','切换到 feature'],['subdir','切换到 feature/web'],['recall','检索项目知识'],['other','切到设计资料'],['recall','检索另一个项目']]},
+{id:'init',title:'05 第一次添加项目',description:'在第一次添加时看见保存位置，选定记录方式，再开始使用。保存位置不要求你填写 Git 远端。',caveat:'选择目录和 Git 检测已有基础。记录策略与一体化知识正文页为提案。',seed:'unbound',steps:[['inside','选业务项目内目录'],['detect','查看已有 Git 信息'],['capture','保存第一条经验']]},
+{id:'recover',title:'06 换电脑或目录暂不可用',description:'带着项目配置来到另一台电脑，先恢复知识库。缺少本机路径时明确提示，不偷偷创建另一份空库。',caveat:'恢复底层已有；此处分别模拟独立 Git 拉取和本地目录重新关联。权限失败由你处理，不修改远端权限。',seed:'missing',steps:[['capture','路径未恢复，尝试保存'],['recover','选择新目录并关联'],['recall','确认旧知识可检索']]},
+{id:'sync',title:'07 已保存，但尚未同步',description:'知识已经落在本机，Git 同步遇到远端冲突。保留本地内容，处理后再同步；不把失败显示为成功。',caveat:'已有显式 CLI 同步；这里演示的网页状态与冲突处理入口尚未完整实现。',seed:'ready',steps:[['conflictSync','模拟 Git 同步冲突'],['resolveSync','模拟冲突已解决'],['sync','再次同步']]},
+{id:'artifacts',title:'08 Skill 生成工作产物',description:'to-spec 生成规格，to-tickets 生成任务。它们留在项目选定的位置，按类型管理，不作为两条聊天记忆重复保存。',caveat:'产物规则尚未实现；以下路径是本稿建议，不是已经修改过这些 Skill。',seed:'empty',steps:[['spec','生成规格文档'],['tickets','生成任务文档'],['recall','下次任务检索产物']]}
+];
+function initial(seed){return{context:'APP A · main',bound:!['unbound','missing'].includes(seed),location:seed==='unbound'?'尚未选择':seed==='missing'?'原设备路径不可用':'/knowledge/app-a',policy:'candidate',git:false,sync:'未设置同步',conflict:false,editing:false,notes:['ready','missing'].includes(seed)?[{id:'retry',title:'支付接口重试约定',body:'请求失败后最多重试 3 次；仅重试可恢复错误。',status:'正式',version:1,previous:null}]:[],artifacts:[],notice:'选择步骤开始；也可使用下方自由操作。',history:[],result:'尚未检索',pending:false};}
+// Pure in-memory model; no filesystem, network or DOM access.
+function transition(state,action,value){const s=structuredClone(state),n=s.notes[0];let msg='';const app=s.context.startsWith('APP A');
+if(!app&&!['context','feature','subdir','other','policy','recall'].includes(action)){s.notice='这是独立项目；本演示只操作 APP A，请先选回 APP A。';return s;}
+if(['capture','approve','conflict','resolve','rollback','archive','restore','edit','spec','tickets'].includes(action)&&(!s.bound||!app)){s.notice=!s.bound?'尚未写入：先恢复或选择知识库位置。此次经验需要保留在当前会话草稿中。':'此演示没有向“设计资料”写入；先选回 APP A。';return s;}
+switch(action){case'policy':s.policy=value;msg='已切换本次演示的记录策略；已有知识状态不变。';break;
+case'context':s.context=value;msg=value.startsWith('APP A')?'仍然使用 APP A 的同一份知识。':'独立项目：本稿按项目隔离展示。';s.result='尚未检索';break;
+case'feature':s.context='APP A · feature';msg='切换 Worktree；知识不复制，继续共用。';break;
+case'subdir':s.context='APP A · feature / web';msg='子目录仍使用 APP A 的知识，可另外标注适用范围。';break;
+case'other':s.context='设计资料 · 文件夹';s.result='尚未检索';msg='切换到独立项目。';break;
+case'inside':s.bound=true;s.location='/work/app-a/.ailoom/knowledge';msg='已选择项目内位置。是否随 Git 提交，另行决定。';break;
+case'detect':s.git=true;msg='检测到业务 Git 仓库。仅展示；没有提交或推送。';break;
+case'recover':s.bound=true;s.location='/new-device/knowledge/app-a';msg='已关联新设备目录；库身份匹配，旧知识保留。';break;
+case'clone':s.bound=true;s.location='/new-device/cloned-knowledge/app-a';s.git=true;msg='模拟拉取完成并关联。真实场景需要已有权限。';break;
+case'capture':if(n){msg='检测到相同结论，本稿不重复新增。';break;}s.notes.push({id:'retry',title:'支付接口重试约定',body:'请求失败后最多重试 3 次；仅重试可恢复错误。',status:s.policy==='automatic'?'正式':s.policy==='confirm'?'待确认草稿':'候选',version:1,previous:null});s.pending=s.policy==='confirm';s.sync=s.pending?'未写入知识库':'本地已保存';msg=s.pending?'草稿待确认，尚未进入知识库或召回。':'AI 提炼结果已保存'+(s.policy==='candidate'?'为候选；未确认，不代表项目约定。':'为正式知识；保留来源。');break;
+case'approve':if(!n||n.status==='归档'){msg='没有可确认的候选或草稿。';break;}n.status='正式';s.pending=false;s.sync='本地已保存';msg='这条知识已确认，保留原身份。';break;
+case'conflict':if(!n){msg='先添加一条知识。';break;}s.conflict=true;msg='旧版 3 次，新结论 2 次：等待确认，原文未覆盖。';break;
+case'resolve':if(!s.conflict||!n){msg='当前没有待处理的内容冲突。';break;}n.previous=n.body;n.body='请求失败后最多重试 2 次；仅重试可恢复错误。';n.version++;s.conflict=false;s.sync='本地已保存';msg='更新为 2 次，保留上一版和同一条知识身份。';break;
+case'edit':if(!n||!value?.trim()){msg='正文不能为空。';break;}n.previous=n.body;n.body=value;n.version++;s.sync='本地已保存';msg='保存了新版本，知识身份不变。';break;
+case'rollback':if(!n?.previous){msg='还没有可恢复的上一版。';break;}[n.body,n.previous]=[n.previous,n.body];n.version++;s.sync='本地已保存';msg='已恢复上一版内容，恢复动作也计入修订。';break;
+case'archive':if(!n){msg='没有知识可以归档。';break;}n.status='归档';s.sync='本地已保存';msg='已归档，停止召回，正文保留。';break;
+case'restore':if(!n||n.status!=='归档'){msg='当前没有归档内容。';break;}n.status='正式';s.sync='本地已保存';msg='已恢复，重新参与召回。';break;
+case'recall':if(!s.bound){msg='知识库位置不可用，未检索；不创建空库。';s.result='位置不可用';break;}const visible=app?s.notes.filter(x=>!['归档','待确认草稿'].includes(x.status)):[];s.result=visible.length?visible.map(x=>x.title+'（'+x.status+(x.status==='候选'?' · 未确认':'')+'）').join('、'):(app&&s.artifacts.length?s.artifacts.map(x=>x.title).join('、'):'无相关内容');msg='检索结果：'+s.result;break;
+case'conflictSync':s.sync='同步冲突';s.git=true;msg='远端内容发生冲突，本地知识保留；没有强制覆盖。';break;
+case'resolveSync':if(s.sync!=='同步冲突'){msg='没有待处理的同步冲突。';break;}s.sync='待重试同步';msg='模拟你已在 Git 中合并冲突，可以重试。';break;
+case'sync':if(s.sync==='同步冲突'){msg='仍有冲突，请先处理再同步。';break;}if(!s.git){msg='尚未配置 Git 同步，本地保存不受影响。';break;}s.sync='已同步';msg='模拟同步成功；本地保存与远端状态分开显示。';break;
+case'spec':case'tickets':const path=action==='spec'?'artifacts/specs/payment.md':'artifacts/tickets/payment.md';if(!s.artifacts.some(x=>x.path===path))s.artifacts.push({title:action==='spec'?'支付重试规格':'支付重试任务',path});s.sync='本地已保存';msg='产物保存并建立关联；没有复制为经验条目。';break;
+default:msg='选择一个操作。';}s.notice=msg;s.history.push(msg);return s;}
+let scenario=scenarios[0],state=initial(scenario.seed),step=0;
+const $=id=>document.getElementById(id),escapeHtml=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function show(page){document.querySelectorAll('.page').forEach(e=>e.hidden=e.id!==page);document.querySelectorAll('header [data-page]').forEach(e=>{e.classList.toggle('active',e.dataset.page===page);e.setAttribute('aria-current',e.dataset.page===page?'page':'false')});}
+document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>show(b.dataset.page));
+function dispatch(action,value){state=transition(state,action,value);render();}
+function start(id){scenario=scenarios.find(s=>s.id===id);state=initial(scenario.seed);step=0;$('editor').classList.add('hidden');render();}
+function render(){
+$('scenario-nav').innerHTML=scenarios.map(s=>`<button data-scenario="${s.id}" class="${scenario.id===s.id?'active':''}" aria-pressed="${scenario.id===s.id}">${s.title}</button>`).join('');
+$('scenario-title').textContent=scenario.title;$('scenario-description').textContent=scenario.description;$('scenario-caveat').textContent=scenario.caveat;
+$('steps').innerHTML=scenario.steps.map(([a,t],i)=>`<button data-step="${i}" ${i!==step?'disabled':''} class="${i===step?'primary':''}">${i<step?'已完成 · ':String(i+1)+' · '}${t}</button>`).join('')+(step===scenario.steps.length?'<span class="tag good">本场景完成，可继续自由操作</span>':'');
+$('context').textContent=state.context;$('sync-state').textContent=state.context.startsWith('APP A')?state.sync:'此项目未关联';$('policy').value=state.policy;
+const visible=state.context.startsWith('APP A')?state.notes:[];
+$('stats').innerHTML=`<span>知识 <b>${visible.length}</b></span><span>产物 <b>${state.context.startsWith('APP A')?state.artifacts.length:0}</b></span><span>待处理 <b>${state.conflict?1:visible.filter(n=>['候选','待确认草稿'].includes(n.status)).length}</b></span>`;
+$('records').innerHTML=visible.map(n=>`<article class="record"><div><strong>${escapeHtml(n.title)}</strong> <span class="tag">${n.status}</span><p>${escapeHtml(n.body)}</p><small>来源：示例修复会话 · APP A · 修订 ${n.version}</small>${state.conflict?'<p class="edited">建议更新：最多重试 2 次。旧版仍保留。</p>':''}</div><div class="actions"><button data-edit>编辑</button>${['候选','待确认草稿'].includes(n.status)?'<button data-action="approve">确认</button>':''}<button data-action="${n.status==='归档'?'restore':'archive'}">${n.status==='归档'?'恢复':'归档'}</button>${state.conflict?'<button data-action="resolve">确认更新</button>':''}</div></article>`).join('')+(state.context.startsWith('APP A')?state.artifacts.map(a=>`<article class="record"><div><strong>${a.title}</strong><p>${a.path}</p><small>工作产物 · 内容演示未展开</small></div><span class="tag">文档</span></article>`).join(''):'');
+if(!$('records').innerHTML)$('records').innerHTML='<p class="empty">此项目还没有知识。完成场景步骤，观察它如何出现。</p>';
+$('notice').textContent=state.notice;$('history').innerHTML=state.history.slice(-8).map(x=>`<li>${escapeHtml(x)}</li>`).join('')||'<li>暂无变更</li>';
+const fields=[['当前项目',state.context],['保存位置',state.context.startsWith('APP A')?state.location:'独立项目，未关联'],['记录方式',{candidate:'自动候选',automatic:'自动正式',confirm:'每次确认'}[state.policy]],['正文冲突',state.conflict?'待确认更新':'无'],['保存 / 同步',state.context.startsWith('APP A')?state.sync:'未关联'],['最近检索',state.result]];
+$('state').innerHTML=fields.map(([k,v])=>`<div><dt>${k}</dt><dd>${escapeHtml(v)}</dd></div>`).join('');
+document.querySelectorAll('[data-context]').forEach(b=>b.classList.toggle('active',b.dataset.context===state.context));
+}
+$('scenario-nav').onclick=e=>{if(e.target.dataset.scenario)start(e.target.dataset.scenario)};
+$('steps').onclick=e=>{if(e.target.dataset.step!==undefined){dispatch(scenario.steps[step][0]);step++;render()}};
+$('reset').onclick=()=>start(scenario.id);$('policy').onchange=e=>dispatch('policy',e.target.value);$('recall').onclick=()=>dispatch('recall');
+document.querySelectorAll('[data-context]').forEach(b=>b.onclick=()=>{$('editor').classList.add('hidden');dispatch('context',b.dataset.context)});
+$('records').onclick=e=>{if(e.target.dataset.action)dispatch(e.target.dataset.action);if(e.target.hasAttribute('data-edit')){$('editor').classList.remove('hidden');$('body').value=state.notes[0].body;$('body').focus()}};
+$('cancel-edit').onclick=()=>$('editor').classList.add('hidden');$('editor').onsubmit=e=>{e.preventDefault();dispatch('edit',$('body').value);$('editor').classList.add('hidden')};
+const free=[['capture','提炼一条经验'],['recall','检索'],['conflict','提出矛盾结论'],['resolve','确认更新'],['rollback','恢复上一版'],['archive','归档'],['restore','恢复'],['clone','模拟 Git 拉取恢复'],['conflictSync','模拟同步冲突'],['sync','尝试同步']];$('free-actions').innerHTML=free.map(([a,t])=>`<button data-action="${a}">${t}</button>`).join('');$('free-actions').onclick=e=>{if(e.target.dataset.action)dispatch(e.target.dataset.action)};
+$('decisions-form').onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);$('feedback-output').value='AILoom 知识库需求反馈\n\n'+[['capture','积累方式'],['conflict','矛盾更新'],['scope','项目隔离'],['artifacts','产物位置']].map(([k,t])=>t+'：'+(f.get(k)||'尚未决定')).join('\n')+'\n其他意见：'+($('feedback').value.trim()||'无补充');$('feedback-result').classList.remove('hidden');$('feedback-output').focus()};
+$('download-feedback').onclick=()=>{const blob=new Blob([$ ('feedback-output').value],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='AILoom-知识库对齐意见.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('download-status').textContent='已请求浏览器下载；也可直接复制上面的文字。'};
+render();
+</script></body></html>

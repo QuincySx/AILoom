@@ -1,0 +1,72 @@
+- status
+- navigation "主导航" [ref=e1]
+  - StaticText "AILoom"
+  - StaticText "你的 AI 资源工作台"
+  - StaticText "工作空间"
+  - button "项目" [ref=e2]
+  - button "全局资源中心" [ref=e3]
+  - StaticText "历史"
+  - button "操作记录" [ref=e4]
+  - generic
+    - StaticText "本地运行 · 仅本机可访问"
+    - LineBreak "\n"
+    - StaticText "资源由你选择，项目由你确认。"
+- StaticText "当前项目：知识库甲 · /private/tmp/ailoom-dirux/repos/kb-jia/web"
+- main
+  - link "返回项目列表" [ref=e5]
+  - sectionheader
+    - heading "知识库甲" [level=1, ref=e11]
+    - paragraph
+      - StaticText "本地项目 · 沙盒"
+    - button "项目资料" [ref=e12]
+    - button "项目共享设置" [ref=e13]
+  - StaticText "工作目录"
+  - strong
+    - StaticText "本目录"
+  - StaticText "目录"
+  - strong
+    - StaticText "web"
+  - button "切换目录…" [ref=e6]
+  - link "高级配置…" [ref=e7]
+  - paragraph
+    - StaticText "正在配置子目录 web。它继承上层配置；这里的增删只影响这个目录。"
+  - status
+    - StaticText "应用完成；可在「操作记录」查看或撤销本次写入，宿主新会话后生效。"
+  - navigation "项目配置" [ref=e8]
+    - button "宿主" [ref=e14]
+    - button "Skill" [ref=e15]
+    - button "MCP" [ref=e16]
+    - button "Agent" [ref=e17]
+    - button "Markdown 指令" [ref=e18]
+    - button "预览与应用" [ref=e19]
+    - button "其他资源" [ref=e20]
+  - heading "预览将要做的改动" [level=2, ref=e9]
+  - paragraph
+    - button "生成预览" [ref=e21]
+    - StaticText "先看清要写入或清理哪些文件，确认无误再应用；应用后可在「操作记录」撤销。"
+  - paragraph
+    - StaticText "仓库 nongit-99e0e29e2f707dcd · 工作树 root · 作用域 web"
+  - StaticText "create   web/.agents/skills/meeting-notes\ncreate   web/.claude/skills/meeting-notes\n"
+  - paragraph
+    - StaticText "子项目作用域：团队层资源部署在仓库根，宿主从祖先目录仍可见；本作用域只管理子项目内的个人能力（不重复部署/删除仓库根条目）；统一计划器：2 个清理动作超出当前作用域或受公司文件保护，已从计划移除（不跨作用域互删）"
+  - heading "应用" [level=2, ref=e10]
+  - paragraph
+    - button "应用" [disabled, ref=e22]
+    - StaticText "把上面预览确认的改动写入磁盘；部分失败可重试，已写入项可撤销。"
+  - paragraph
+    - StaticText "应用完成：写入 2 项。"
+  - table
+    - row
+      - columnheader "宿主" [ref=e23]
+      - columnheader "已写入路径" [ref=e24]
+      - columnheader "说明" [ref=e25]
+    - row
+      - cell "codex" [ref=e26]
+      - cell "web/.agents/skills/meeting-notes" [ref=e27]
+      - cell "文件/链接已落盘；宿主在**新会话**中重新扫描后可见（真实调用后才算通过）" [ref=e28]
+    - row
+      - cell "claude" [ref=e29]
+      - cell "web/.claude/skills/meeting-notes" [ref=e30]
+      - cell "文件/链接已落盘；宿主在**新会话**中重新扫描后可见（真实调用后才算通过）" [ref=e31]
+  - paragraph
+    - StaticText "文件已写入目标目录；宿主加载需新会话。可在「操作记录」撤销本次写入。"

@@ -120,7 +120,7 @@ pub fn run(
                         return Err(Error::new(
                             code::USAGE,
                             format!(
-                                "未知 target: {other}（支持 claude/codex/alva/cursor/antigravity）"
+                                "未知 target: {other}（支持 claude/codex/grok/pi/opencode/cursor/alva/antigravity）"
                             ),
                         ));
                     }
@@ -322,11 +322,11 @@ pub fn run(
     });
 
     if !json {
-        crate::logging::info(format!(
-            "已绑定工作区 {}（项目 {:?}，角色 {:?}）；声明{}、锁{}",
+        println!(
+            "已绑定工作区 {}（项目 {}，角色 {}）；声明{}、锁{}",
             ctx.workspace.workspace_root.display(),
-            decl.projects,
-            decl.roles,
+            decl.projects.join(", "),
+            decl.roles.join(", "),
             if declaration_changed {
                 "已写入"
             } else {
@@ -337,7 +337,7 @@ pub fn run(
             } else {
                 "无变化"
             },
-        ));
+        );
     }
     Ok(value)
 }

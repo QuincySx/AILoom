@@ -639,7 +639,7 @@ fn ail050_plan_apply_verify_undo_cycle() {
     let server = ConsoleServer::start(&opts(tmp.path(), 17811)).unwrap();
     let auth = [(SESSION_HEADER, server.token.as_str())];
 
-    // 准备仓库 + 个人库 skill + 宿主选择
+    // 准备仓库 + 资源库 skill + 宿主选择
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     let mut git = std::process::Command::new("git");
@@ -902,7 +902,7 @@ fn isolate_env(root: &std::path::Path) -> Vec<(String, String)> {
     ]
 }
 
-/// AIL-048：仓库默认变更影响预览（多工作树分别出计划，无写入）。
+/// AIL-048：仓库默认变更影响预览（多 Worktree 分别出计划，无写入）。
 #[test]
 fn ail048_repo_default_preview_across_worktrees() {
     let tmp = tempfile::tempdir().unwrap();
@@ -951,7 +951,7 @@ fn ail048_repo_default_preview_across_worktrees() {
         json!({ "path": main }),
     );
     assert_eq!(code, 200);
-    // 主 worktree 部署一个 skill（当前工作树落点）
+    // 主 worktree 部署一个 skill（当前 Worktree 落点）
     let skill_src = tmp.path().join("skills/preview-flow");
     std::fs::create_dir_all(&skill_src).unwrap();
     std::fs::write(skill_src.join("SKILL.md"), "# preview-flow\n").unwrap();
@@ -976,12 +976,12 @@ fn ail048_repo_default_preview_across_worktrees() {
     );
     assert_eq!(code, 200);
 
-    // 仓库默认影响预览：列出两个工作树的待执行数，且不写入
+    // 仓库默认影响预览：列出两个 Worktree 的待执行数，且不写入
     let (code, raw) = post(server.port, "/api/preview/repo-default", &auth, json!({}));
     assert_eq!(code, 200, "{raw}");
     let v = json_body(&raw);
     let wts = v["worktrees"].as_array().unwrap();
-    assert!(wts.len() >= 2, "两棵工作树都在预览中: {v}");
+    assert!(wts.len() >= 2, "两棵 Worktree 都在预览中: {v}");
     let main_entry = wts
         .iter()
         .find(|w| w["worktree"].as_str().unwrap_or("").contains("main"))
@@ -1295,7 +1295,7 @@ fn ail069_mcp_secret_boundary_in_editor() {
     let tmp = tempfile::tempdir().unwrap();
     let server = ConsoleServer::start(&opts(tmp.path(), 17950)).unwrap();
     let auth = [(SESSION_HEADER, server.token.as_str())];
-    // 直接在个人库放置一个含字面量秘密的 MCP 资源（模拟历史/外部写入）
+    // 直接在资源库放置一个含字面量秘密的 MCP 资源（模拟历史/外部写入）
     // 先确保合法库存在（manifest + 骨架）
     ailoom::personal_library::ensure_library(&server.state.data_root).unwrap();
     let mcp_dir = server.state.data_root.join("library/resources/mcp");
@@ -1373,4 +1373,170 @@ fn ail069_mcp_secret_boundary_in_editor() {
 
     server.shutdown();
     server.join();
+}
+
+#[test]
+fn native_file_api_requires_session_and_approved_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 0)).unwrap();
+    let request = json!({"action":"list","scope":"project","root":project});
+    assert_eq!(
+        post(server.port, "/api/native-files", &[], request.clone()).0,
+        401
+    );
+    let headers = [(SESSION_HEADER, server.token.as_str())];
+    assert_eq!(
+        post(server.port, "/api/native-files", &headers, request.clone()).0,
+        403
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/fs/approve",
+            &headers,
+            json!({"path":project})
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        post(server.port, "/api/native-files", &headers, request).0,
+        200
+    );
+    let bad = json!({"action":"save","scope":"project","root":project,"target":"claude-rules","name":"../../outside.md","content":"bad","expected":"missing"});
+    assert_ne!(post(server.port, "/api/native-files", &headers, bad).0, 200);
+    assert!(!tmp.path().join("outside.md").exists());
+    server.shutdown();
+    server.join();
+}
+
+#[test]
+fn managed_rules_and_agents_can_be_created_and_edited() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 0)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    for kind in ["rule", "agent"] {
+        let fields = json!({"kind":kind,"name":"review","description":"Review: code","body":"Keep it clear.\nCheck edge cases."});
+        assert_eq!(
+            post(server.port, "/api/library/resource", &[], fields.clone()).0,
+            401
+        );
+        let created = post(server.port, "/api/library/resource", &auth, fields.clone());
+        assert_eq!(created.0, 200, "{}", created.1);
+        let id = json_body(&created.1)["id"].as_str().unwrap().to_string();
+        let repeated = post(server.port, "/api/library/resource", &auth, fields);
+        assert_eq!(repeated.0, 400);
+        let resource = method(
+            server.port,
+            "GET",
+            &format!("/api/library/resource?id={id}"),
+            &[],
+            None,
+        );
+        assert_eq!(resource.0, 200);
+        let old = json_body(&resource.1);
+        let content = old["content"].as_str().unwrap();
+        let invalid = method(
+            server.port,
+            "PUT",
+            "/api/library/resource",
+            &auth,
+            Some(
+                &json!({"id":id,"content":"bad definition","base_fingerprint":old["fingerprint"]}),
+            ),
+        );
+        assert_eq!(invalid.0, 400);
+        let updated = method(
+            server.port,
+            "PUT",
+            "/api/library/resource",
+            &auth,
+            Some(
+                &json!({"id":id,"content":content.replace("Keep it clear.","Be concise."),"base_fingerprint":old["fingerprint"]}),
+            ),
+        );
+        assert_eq!(updated.0, 200, "{}", updated.1);
+        let next = json_body(&updated.1);
+        let structured = method(
+            server.port,
+            "PUT",
+            "/api/library/resource",
+            &auth,
+            Some(
+                &json!({"id":id,"definition":{"description":"Updated","body":"New instructions"},"base_fingerprint":next["fingerprint"]}),
+            ),
+        );
+        assert_eq!(structured.0, 200, "{}", structured.1);
+        let fetched = method(
+            server.port,
+            "GET",
+            &format!("/api/library/resource?id={id}"),
+            &[],
+            None,
+        );
+        assert_eq!(
+            json_body(&fetched.1)["definition"]["body"],
+            "New instructions"
+        );
+        let stale = method(
+            server.port,
+            "PUT",
+            "/api/library/resource",
+            &auth,
+            Some(&json!({"id":id,"content":content,"base_fingerprint":old["fingerprint"]})),
+        );
+        assert_eq!(stale.0, 409);
+    }
+    for name in ["../escape", "/tmp/escape", "Invalid Name"] {
+        assert_eq!(
+            post(
+                server.port,
+                "/api/library/resource",
+                &auth,
+                json!({"kind":"rule","name":name,"body":"body"})
+            )
+            .0,
+            400
+        );
+    }
+    let (entries, issues) = ailoom::personal_library::list_tolerant(&tmp.path().join("data"));
+    assert!(issues.is_empty(), "{issues:?}");
+    assert_eq!(entries.len(), 2);
+    server.shutdown();
+    server.join();
+}
+
+#[test]
+fn definition_editor_retains_host_metadata_and_refuses_symlink_destination() {
+    use ailoom::personal_library::{create_definition, edit_definition};
+    let rule="---\nname: scoped\nnamespace: personal\nshared: true\npaths: [src/**]\ntargets: [claude]\n---\nOld";
+    let edited = edit_definition("rule", rule, "New description", "New body").unwrap();
+    let (yaml, body) = ailoom::resource::split_frontmatter(&edited)
+        .unwrap()
+        .unwrap();
+    let fields: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(fields["paths"][0].as_str(), Some("src/**"));
+    assert_eq!(fields["targets"][0].as_str(), Some("claude"));
+    assert_eq!(body, "New body");
+    let agent="name='review'\nnamespace='personal'\nshared=true\ninstructions='old'\nmodel='inherit'\n[tool_extras.claude]\npermissionMode='plan'\n";
+    let edited = edit_definition("agent", agent, "New", "Check code").unwrap();
+    let fields: toml::Value = toml::from_str(&edited).unwrap();
+    assert_eq!(fields["model"].as_str(), Some("inherit"));
+    assert_eq!(
+        fields["tool_extras"]["claude"]["permissionMode"].as_str(),
+        Some("plan")
+    );
+    #[cfg(unix)]
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, data.join("library")).unwrap();
+        assert!(create_definition(&data, "rule", "review", "", "Test").is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+    }
 }

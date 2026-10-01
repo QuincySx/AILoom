@@ -202,10 +202,10 @@ fn scaffold_minimal_has_no_examples() {
 }
 
 // ---------------------------------------------------------------------------
-// AIL-043：个人资源库 CLI（library init/import/list）
+// AIL-043：资源库 CLI（library init/import/list）
 // ---------------------------------------------------------------------------
 
-/// 空机器离线首次使用：`library init` 自动生成合法个人库（仓外、零输入）；
+/// 空机器离线首次使用：`library init` 自动生成合法资源库（仓外、零输入）；
 /// import 预览→执行复制 skill；原目录不改写；同名重复导入拒绝。
 #[test]
 fn ail043_library_cli_init_import_list() {
@@ -354,22 +354,25 @@ fn ail043_library_cli_init_import_list() {
     let v: serde_json::Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["result"]["skills"], serde_json::json!(["hello-flow"]));
 
-    // 重复导入同名 → 冲突退出码非 0
-    let (code, _, _) = c.run(
-        c.tmp.path(),
-        &[
-            "--json",
-            "--data-root",
-            &data,
-            "library",
-            "--action",
-            "import",
-            "--dir",
-            &dir_arg,
-            "--execute",
-        ],
-    );
-    assert_ne!(code, 0, "同名重复导入必须拒绝");
+    // 内容未变的重复导入 → 无变化（C-12）；源内容改动后同名再导入 → 冲突，退出码非 0
+    let reimport = [
+        "--json",
+        "--data-root",
+        &data,
+        "library",
+        "--action",
+        "import",
+        "--dir",
+        &dir_arg,
+        "--execute",
+    ];
+    let (code, out, err) = c.run(c.tmp.path(), &reimport);
+    assert_eq!(code, 0, "内容未变的重复导入应为无变化: {err}");
+    let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(v["result"]["files_copied"], 0, "{v}");
+    std::fs::write(skill_src.join("SKILL.md"), "# hello-flow\n\n改动后的正文\n").unwrap();
+    let (code, _, _) = c.run(c.tmp.path(), &reimport);
+    assert_ne!(code, 0, "同名但内容不同的导入必须拒绝");
 }
 
 fn walk_files(dir: &Path) -> Vec<PathBuf> {

@@ -1,0 +1,6 @@
+867f1dc6f14356449c3c955dbcf1c51aa094057eb6699ac1799c7ed0f3297904  /tmp/ailoom-usable/知识库 甲/skills/损坏技能/SKILL.md
+8b116a6d05cf23158b6e723b2da4d44dcac44e5723c1623a3bf667a78ad0534f  /tmp/ailoom-usable/知识库 甲/skills/会议纪要/SKILL.md
+a27d2a5237cf3c5bb4072bc7f9cfaed82ce8df31c41780c4e93daa9967029781  /tmp/ailoom-usable/知识库 乙/使用说明.md
+b81826bcf3cd4cc7ce0fb6d01d7be3a4be3a98780c592990e46b45eff28127f6  /tmp/ailoom-usable/知识库 甲/读书笔记.md
+c99f826d77e54a7ac3ea10b703b77ff4068589ecd31857ae966d92c65317d3e3  /tmp/ailoom-usable/知识库 乙/skills/术语表/SKILL.md
+f8cad1ca2ded359b66515e63c83917446a08056d4ebf4babb72d7142165db6b0  /tmp/ailoom-usable/知识库 甲/skills/分类/周报生成/SKILL.md

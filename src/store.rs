@@ -342,10 +342,10 @@ mod tests {
         let s = p.to_string_lossy();
         let key = "github.com/acme/skills/revisions/working";
         assert!(!s.contains("/sources/"));
-        assert_eq!(p, root.join(&key).join("inking/line-art"));
+        assert_eq!(p, root.join(key).join("inking/line-art"));
         assert_eq!(
             source_bucket(&root, id).join(".meta").join("SOURCE.json"),
-            root.join(&key).join(".meta").join("SOURCE.json")
+            root.join(key).join(".meta").join("SOURCE.json")
         );
     }
 

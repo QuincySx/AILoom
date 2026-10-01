@@ -280,11 +280,7 @@ pub fn run(args: &ImportArgs, json: bool, data_root: Option<&std::path::Path>) -
     let entry = lock
         .and_then(|l| l.sources.get(&declaration.source.name).cloned())
         .ok_or_else(|| Error::new(code::SOURCE_NOT_CACHED, "源未锁定"))?;
-    let src_git = crate::source::GitSource::new(
-        entry.identity.trim_start_matches("git+"),
-        entry.ref_.as_deref(),
-    )?;
-    let snapshot = src_git.resolve(&ctx.source_cache(&src_git.identity), Some(&entry))?;
+    let (snapshot, _) = crate::commands::sync_core::primary_snapshot(&ctx, &declaration, &entry)?;
     let manifest = crate::manifest::TeamManifest::load_from(&snapshot.root)?;
     if let Some(pid) = target.strip_prefix("project:") {
         manifest.require_project(pid)?;

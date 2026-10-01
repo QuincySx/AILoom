@@ -845,6 +845,8 @@ fn cli_sync_failure_then_recover_restores_agents_md() {
 
     // 注入失败：CLAUDE.md 是目录（路径排序在 AGENTS.md 之后 → 最后一个写入动作失败）
     std::fs::create_dir(ws.join("CLAUDE.md")).unwrap();
+    // Claude.local.md 禁用 AGENTS.md fallback，确保故障仍发生在 CLAUDE.md 写入。
+    std::fs::write(ws.join("CLAUDE.local.md"), "local instructions").unwrap();
 
     let run = |args: &[&str]| {
         let mut cmd = Command::new(bin());

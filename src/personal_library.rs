@@ -1,4 +1,4 @@
-//! 个人资源库（AIL-043）：无需团队/远端即可本地使用的资源源。
+//! 资源库（AIL-043）：无需团队/远端即可本地使用的资源源。
 //! 复用 source manifest（ailoom.toml + resources/ 布局），首次自动生成；
 //! 从用户指定目录导入 skill 时预览→复制，原目录只读、不执行任何脚本。
 
@@ -18,7 +18,7 @@ pub fn library_root(data_root: &Path) -> PathBuf {
 
 fn manifest_text() -> String {
     format!(
-        "# AILoom 个人资源库（自动生成，可手工扩展）\n\
+        "# AILoom 资源库（自动生成，可手工扩展）\n\
          schema_version = 1\n\
          team_id = \"{LIBRARY_TEAM_ID}\"\n\
          [namespaces]\n\
@@ -33,9 +33,10 @@ pub struct LibraryInit {
     pub created: bool,
 }
 
-/// 确保个人库存在（幂等、离线、零输入）：生成合法 manifest + resources 目录骨架，
+/// 确保资源库存在（幂等、离线、零输入）：生成合法 manifest + resources 目录骨架，
 /// 并登记到 profile（仓外）。已存在的合法库不改动。
 pub fn ensure_library(data_root: &Path) -> Result<LibraryInit> {
+    recover_updates(data_root)?;
     let root = library_root(data_root);
     let manifest_file = root.join(MANIFEST_FILE);
     let created = !manifest_file.is_file();
@@ -75,6 +76,138 @@ pub fn ensure_library(data_root: &Path) -> Result<LibraryInit> {
         path: root,
         created,
     })
+}
+
+/// Edit only the displayed fields, retaining target-specific metadata and scope conditions.
+pub fn definition_fields(kind: &str, content: &str) -> Result<serde_json::Value> {
+    if kind == "rule" {
+        let (yaml, body) = crate::resource::split_frontmatter(content)?
+            .ok_or_else(|| Error::new(code::USAGE, "规则缺少元数据"))?;
+        let value: serde_json::Value =
+            serde_yaml::from_str(&yaml).map_err(|e| Error::new(code::USAGE, e.to_string()))?;
+        Ok(
+            serde_json::json!({"kind":kind,"description":value["description"].as_str().unwrap_or(""),"body":body}),
+        )
+    } else if kind == "agent" {
+        let value: toml::Value =
+            toml::from_str(content).map_err(|e| Error::new(code::USAGE, e.to_string()))?;
+        Ok(
+            serde_json::json!({"kind":kind,"description":value.get("description").and_then(|v|v.as_str()).unwrap_or(""),"body":value.get("instructions").and_then(|v|v.as_str()).unwrap_or("")}),
+        )
+    } else {
+        Err(Error::new(code::USAGE, "仅支持 Rules 与 Agent"))
+    }
+}
+
+pub fn edit_definition(kind: &str, content: &str, description: &str, body: &str) -> Result<String> {
+    if body.trim().is_empty() || body.len() > 1024 * 1024 || description.contains(['\n', '\r']) {
+        return Err(Error::new(
+            code::USAGE,
+            "正文不能为空或超过 1 MB；说明须为单行",
+        ));
+    }
+    if kind == "rule" {
+        let (yaml, _) = crate::resource::split_frontmatter(content)?
+            .ok_or_else(|| Error::new(code::USAGE, "规则缺少元数据"))?;
+        let mut value: serde_yaml::Value =
+            serde_yaml::from_str(&yaml).map_err(|e| Error::new(code::USAGE, e.to_string()))?;
+        value["description"] = serde_yaml::Value::String(description.into());
+        Ok(format!(
+            "---\n{}---\n{body}",
+            serde_yaml::to_string(&value).map_err(|e| Error::new(code::USAGE, e.to_string()))?
+        ))
+    } else if kind == "agent" {
+        let mut value: toml::Value =
+            toml::from_str(content).map_err(|e| Error::new(code::USAGE, e.to_string()))?;
+        let table = value
+            .as_table_mut()
+            .ok_or_else(|| Error::new(code::USAGE, "Agent 格式错误"))?;
+        table.insert(
+            "description".into(),
+            toml::Value::String(description.into()),
+        );
+        table.insert("instructions".into(), toml::Value::String(body.into()));
+        toml::to_string(&value).map_err(|e| Error::new(code::USAGE, e.to_string()))
+    } else {
+        Err(Error::new(code::USAGE, "仅支持 Rules 与 Agent"))
+    }
+}
+
+/// Author a portable Rule/Agent in the personal library; never replace an existing file.
+pub fn create_definition(
+    data_root: &Path,
+    kind: &str,
+    name: &str,
+    description: &str,
+    body: &str,
+) -> Result<String> {
+    if !valid_name(name) || !matches!(kind, "rule" | "agent") {
+        return Err(Error::new(
+            code::USAGE,
+            "类型须为 Rules 或 Agent；名称使用小写字母、数字、点、横线或下划线，最多 64 字符",
+        ));
+    }
+    if body.trim().is_empty() || body.len() > 1024 * 1024 || description.contains(['\n', '\r']) {
+        return Err(Error::new(
+            code::USAGE,
+            "正文不能为空或超过 1 MB；说明须为单行",
+        ));
+    }
+    let mut fields = serde_json::json!({"name":name,"description":description,"namespace":"personal","shared":true});
+    let (dir, ext, content) = if kind == "rule" {
+        (
+            "rules",
+            "md",
+            format!(
+                "---\n{}---\n\n{body}\n",
+                serde_yaml::to_string(&fields)
+                    .map_err(|e| Error::new(code::USAGE, e.to_string()))?
+            ),
+        )
+    } else {
+        fields["instructions"] = serde_json::json!(body);
+        (
+            "agents",
+            "toml",
+            toml::to_string(&fields).map_err(|e| Error::new(code::USAGE, e.to_string()))?,
+        )
+    };
+    // Reject redirected library directories before ensure_library creates anything there.
+    let root = library_root(data_root);
+    let destination = root.join("resources").join(dir);
+    for path in [
+        &root,
+        &root.join("resources"),
+        &destination,
+        &root.join(MANIFEST_FILE),
+    ] {
+        if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(Error::new(code::PATH_TRAVERSAL, "资源库路径不能是符号链接"));
+        }
+    }
+    ensure_library(data_root)?;
+    std::fs::create_dir_all(&destination)?;
+    // Persist atomically without clobbering, including concurrent creation and dangling links.
+    use std::io::Write;
+    let pending_path = destination.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+    let mut pending = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending_path)?;
+    let result = (|| -> std::io::Result<()> {
+        pending.write_all(content.as_bytes())?;
+        pending.sync_all()?;
+        std::fs::hard_link(&pending_path, destination.join(format!("{name}.{ext}")))
+    })();
+    drop(pending);
+    let _ = std::fs::remove_file(&pending_path);
+    result.map_err(|e| {
+        Error::new(
+            code::TARGET_CONFLICT,
+            format!("无法新建（同名文件可能已存在）：{e}"),
+        )
+    })?;
+    Ok(format!("personal/{kind}/personal/{name}"))
 }
 
 #[derive(Debug, Serialize)]
@@ -261,9 +394,9 @@ pub struct ImportReport {
     pub changed_files: Vec<String>,
 }
 
-/// 导入执行：复制进个人库并补齐元数据；原目录只读；脚本从不执行。
+/// 导入执行：复制进资源库并补齐元数据；原目录只读；脚本从不执行。
 /// L01（事务性）：先在暂存区完成复制+元数据修正+完整校验，再原子发布到库内；
-/// 任一步失败 → 清理暂存，个人库保持原状（不会被半成品锁死）。
+/// 任一步失败 → 清理暂存，资源库保持原状（不会被半成品锁死）。
 pub fn import_execute(
     data_root: &Path,
     source_dir: &Path,
@@ -286,6 +419,23 @@ pub fn import_execute_with_source(
     // 冲突时计算文件级差异摘要（供“更新有 diff”的预览；不自动覆盖）
     let mut changed_files = Vec::new();
     if !preview.conflicts.is_empty() {
+        // C-12：同一内容重复导入是无变化，而不是冲突——按导入后的形态（含补齐的元数据）比较。
+        let existing = PathBuf::from(preview.target_dir.clone());
+        if staged_digest(data_root, &src, &preview).ok() == skill_dir_digest(&existing).ok() {
+            return Ok(ImportReport {
+                skill_id: format!(
+                    "{LIBRARY_TEAM_ID}/skill/{LIBRARY_NAMESPACE}/{}",
+                    preview.skill_name
+                ),
+                target_dir: existing,
+                files_copied: 0,
+                scripts: preview.scripts,
+                scripts_executed: false,
+                note: "内容与库内副本一致，未重复导入".into(),
+                source_dir: src.display().to_string(),
+                changed_files: vec![],
+            });
+        }
         let existing = PathBuf::from(preview.target_dir.clone());
         for rel in &preview.files {
             let src_hash = std::fs::read(src.join(rel)).map(|b| sha256_of(&b));
@@ -367,12 +517,13 @@ pub fn import_execute_with_source(
         rollback(&staging);
         return Err(Error::new(
             code::WRITE_FAILED,
-            format!("发布到个人库失败（库保持原状）: {e}"),
+            format!("发布到资源库失败（库保持原状）: {e}"),
         ));
     }
     // 发布后整库校验（资源身份/归属/namespace 全链路）；失败则回滚本次发布
     let manifest = TeamManifest::load_from(&lib)?;
-    let entries = match enumerate(&lib, &manifest, LIBRARY_TEAM_ID) {
+    let mut warnings: Vec<String> = Vec::new();
+    let entries = match enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut warnings) {
         Ok(e) => e,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&target);
@@ -391,7 +542,7 @@ pub fn import_execute_with_source(
         ));
     }
     // 记录导入摘要元数据（版本/文件指纹，供更新对比）
-    let imported_digest = skill_dir_digest(&target);
+    let imported_digest = skill_dir_digest(&target)?;
     let meta = serde_json::json!({
         "source_dir": src.display().to_string(),
         "imported_at": now_iso(),
@@ -535,12 +686,50 @@ fn sha256_of(b: &[u8]) -> String {
 }
 
 /// 技能目录内容摘要（排除来源元数据文件本身，AIL-063/066 统一口径）。
-fn skill_dir_digest(dir: &Path) -> String {
+/// 按导入流程在暂存区生成一份副本（复制 + 补齐 frontmatter），返回其目录摘要后删除暂存。
+fn staged_digest(data_root: &Path, src: &Path, preview: &ImportPreview) -> Result<String> {
+    let staging = library_root(data_root)
+        .join(".staging")
+        .join(format!("compare-{}", crate::ids::new_id()));
+    let result = (|| {
+        for rel in &preview.files {
+            let to = staging.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(src.join(rel), &to)?;
+        }
+        let skill_md = staging.join("SKILL.md");
+        let raw = std::fs::read_to_string(&skill_md)?;
+        let mut meta_needed = preview.metadata_to_add.clone();
+        if preview
+            .frontmatter_name
+            .as_ref()
+            .is_some_and(|n| n != &preview.skill_name)
+        {
+            meta_needed.push("frontmatter.rename".into());
+        }
+        std::fs::write(
+            &skill_md,
+            add_frontmatter_meta(&raw, &preview.skill_name, &meta_needed)?,
+        )?;
+        skill_dir_digest(&staging)
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+fn skill_dir_digest(dir: &Path) -> Result<String> {
     let mut parts: Vec<(String, String)> = Vec::new();
-    for entry in walkdir::WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in walkdir::WalkDir::new(dir) {
+        let entry =
+            entry.map_err(|e| Error::new(code::WRITE_FAILED, format!("无法读取 Skill：{e}")))?;
+        if entry.file_type().is_symlink() {
+            return Err(Error::new(
+                code::ILLEGAL_PATH,
+                "Skill 含本地符号链接，请先处理后再更新",
+            ));
+        }
         if !entry.file_type().is_file() {
             continue;
         }
@@ -552,7 +741,7 @@ fn skill_dir_digest(dir: &Path) -> String {
             .strip_prefix(dir)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
-        let content = std::fs::read(entry.path()).unwrap_or_default();
+        let content = std::fs::read(entry.path())?;
         parts.push((rel, sha256_of(&content)));
     }
     parts.sort();
@@ -562,11 +751,11 @@ fn skill_dir_digest(dir: &Path) -> String {
         hasher.update(rel.as_bytes());
         hasher.update(hash.as_bytes());
     }
-    format!("sha256:{:x}", hasher.finalize())
+    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
-
 /// 删除库内资源前的影响预览：列出个人配置中启用该资源的作用域。
 pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json::Value> {
+    recover_updates(data_root)?;
     let profile = crate::profile::PersonalProfile::load_or_default(data_root)?;
     let mut affected = Vec::new();
     for (repo_id, repo) in &profile.repos {
@@ -596,7 +785,7 @@ pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json:
     }
     let lib = library_root(data_root);
     let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID)?;
+    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
     let exists = entries.iter().any(|e| e.id.to_string() == resource_id);
     Ok(serde_json::json!({
         "resource_id": resource_id,
@@ -606,21 +795,22 @@ pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json:
     }))
 }
 
-/// 删除库内资源（目录级；仅个人库自有内容）。
+/// 删除库内资源（目录级；仅资源库自有内容）。
 pub fn delete_execute(data_root: &Path, resource_id: &str) -> Result<()> {
+    recover_updates(data_root)?;
     if !crate::collections::references(data_root, resource_id)?
         .as_array()
         .unwrap()
         .is_empty()
     {
         return Err(Error::new(
-            code::USER_CONTENT_CONFLICT,
+            code::PRECONDITION_FAILED,
             "资源仍被项目启用，请先停用引用并应用后再删除",
         ));
     }
     let lib = library_root(data_root);
     let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID)?;
+    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
     let entry = entries
         .iter()
         .find(|e| e.id.to_string() == resource_id)
@@ -646,8 +836,9 @@ pub struct LibraryListing {
     pub skills: Vec<String>,
 }
 
-/// 列出个人库内的技能（经真实解析器）。
+/// 列出资源库内的技能（经真实解析器）。
 pub fn list(data_root: &Path) -> Result<LibraryListing> {
+    recover_updates(data_root)?;
     let lib = library_root(data_root);
     if !lib.is_dir() {
         return Ok(LibraryListing {
@@ -656,7 +847,7 @@ pub fn list(data_root: &Path) -> Result<LibraryListing> {
         });
     }
     let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID)?;
+    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
     let skills = entries
         .iter()
         .filter(|e| e.id.kind == ResourceKind::Skill)
@@ -722,7 +913,14 @@ mod tests {
         assert!(copy.contains("shared: true"));
         let listing = list(data.path()).unwrap();
         assert_eq!(listing.skills, vec!["my-flow"]);
-        // 同名再导入 → 冲突拒绝
+        // 同名、内容未变 → 无变化（C-12）；源内容改动后同名再导入 → 冲突拒绝，不静默覆盖
+        let again = import_execute(data.path(), &src.path().join("my-flow"), None).unwrap();
+        assert_eq!(again.files_copied, 0);
+        std::fs::write(
+            src.path().join("my-flow/SKILL.md"),
+            "# my-flow\n\n改动后的正文\n",
+        )
+        .unwrap();
         let err = import_execute(data.path(), &src.path().join("my-flow"), None).unwrap_err();
         assert_eq!(err.code, code::SOURCE_CONFLICT);
     }
@@ -778,6 +976,11 @@ pub struct TolerantEntry {
     pub namespace: String,
     pub description: String,
     pub path: String,
+    pub can_check_update: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<crate::skill_source::SkillSourceMeta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update: Option<crate::skill_source::UpdateStatus>,
 }
 
 /// 坏条目及其定位信息（错误落到具体文件）。
@@ -787,12 +990,22 @@ pub struct LibraryIssue {
     pub error: String,
 }
 
-/// 逐项扫描个人库：可解析的条目正常返回；坏文件记为 issue（带文件级错误），
+/// 逐项扫描资源库：可解析的条目正常返回；坏文件记为 issue（带文件级错误），
 /// 不让一个坏条目锁死整个列表/编辑/删除入口。
 pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>) {
     let lib = library_root(data_root);
     let mut entries = Vec::new();
     let mut issues = Vec::new();
+    if let Err(e) = recover_updates(data_root) {
+        issues.push(LibraryIssue {
+            path: lib.join(".updates-journal.json").display().to_string(),
+            error: format!("Skill 更新恢复未完成：{e}"),
+        });
+    }
+    // 尚未初始化的资源库是正常的空状态，不是「清单损坏」（U-01）。
+    if !lib.join(MANIFEST_FILE).exists() {
+        return (entries, issues);
+    }
     let manifest = match TeamManifest::load_from(&lib) {
         Ok(m) => m,
         Err(e) => {
@@ -830,6 +1043,29 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
                         .map_err(|e| e.to_string())
                 }) {
                 Ok((Some(meta), _)) if meta.name.as_deref() == Some(fname.as_str()) => {
+                    let source = crate::skill_source::read_meta(&path);
+                    let can_check_update = !path.is_symlink()
+                        && source
+                            .as_ref()
+                            .is_some_and(crate::skill_source::SkillSourceMeta::updatable);
+                    let update = if path.is_symlink() {
+                        None
+                    } else {
+                        match cached_update(data_root, &fname) {
+                            Ok(status) => status,
+                            Err(e) => {
+                                issues.push(LibraryIssue {
+                                    path: rel.clone(),
+                                    error: format!("更新检查记录不可用：{e}"),
+                                });
+                                Some(crate::skill_source::UpdateStatus::failed(
+                                    &fname,
+                                    source.as_ref(),
+                                    e.to_string(),
+                                ))
+                            }
+                        }
+                    };
                     entries.push(TolerantEntry {
                         id: format!("{LIBRARY_TEAM_ID}/skill/{}/{}", namespace_of(&meta), fname),
                         kind: "skill".into(),
@@ -837,6 +1073,9 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
                         namespace: namespace_of(&meta),
                         description: meta.description.unwrap_or_default(),
                         path: rel,
+                        can_check_update,
+                        source,
+                        update,
                     });
                 }
                 Ok((Some(meta), _)) => issues.push(LibraryIssue {
@@ -922,24 +1161,32 @@ fn collect_file_entries(
             .and_then(|raw| {
                 if markdown {
                     parse_frontmatter(&raw)
-                        .map(|(m, _)| m)
+                        .map(|(m, _)| m.and_then(|m| m.description).unwrap_or_default())
                         .map_err(|e| e.to_string())
                 } else {
                     toml::from_str::<toml::Value>(&raw)
-                        .map(|_| None)
+                        .map(|v| {
+                            v.get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string()
+                        })
                         .map_err(|e| format!("TOML 解析失败: {e}"))
                 }
             });
         match parsed {
-            Ok(_) => {
+            Ok(description) => {
                 let namespace = LIBRARY_NAMESPACE.to_string();
                 entries.push(TolerantEntry {
                     id: format!("{LIBRARY_TEAM_ID}/{kind}/{namespace}/{stem}"),
                     kind: kind.to_string(),
                     name: stem.clone(),
                     namespace,
-                    description: String::new(),
+                    description,
                     path: rel,
+                    can_check_update: false,
+                    source: None,
+                    update: None,
                 });
             }
             Err(e) => issues.push(LibraryIssue {
@@ -1170,152 +1417,16 @@ pub fn git_import_execute_labeled(
     import_execute_with_source(data_root, &skill_dir, name_override, Some(meta))
 }
 
-/// 上游检查（AIL-066）：比较 导入基线/本地现状/上游最新；只检查，不应用。
-pub fn check_update(data_root: &Path, name: &str) -> Result<crate::skill_source::UpdateStatus> {
-    use crate::skill_source::UpdateStatus;
-    let skill_dir = library_root(data_root)
-        .join("resources")
-        .join("skills")
-        .join(name);
-    if !skill_dir.is_dir() {
-        return Err(Error::new(
-            code::UNKNOWN_REFERENCE,
-            format!("库内不存在 skill: {name}"),
-        ));
-    }
-    let meta = crate::skill_source::read_meta(&skill_dir);
-    let Some(meta) = meta else {
-        return Ok(UpdateStatus {
-            skill: name.into(),
-            source_kind: "unknown".into(),
-            discovery_entry: String::new(),
-            state: "not-applicable".into(),
-            imported_digest: String::new(),
-            local_digest: None,
-            upstream_digest: None,
-            upstream_commit: None,
-            note: Some("旧数据无来源记录：按本地管理，不伪称能上游更新".into()),
-        });
-    };
-    if !meta.updatable() {
-        return Ok(UpdateStatus {
-            skill: name.into(),
-            source_kind: meta.source_kind.clone(),
-            discovery_entry: meta.discovery_entry.clone(),
-            state: "not-applicable".into(),
-            imported_digest: meta.imported_digest,
-            local_digest: None,
-            upstream_digest: None,
-            upstream_commit: None,
-            note: Some("本地来源：无上游可检查".into()),
-        });
-    }
-    let local_digest = skill_dir_digest(&skill_dir);
-    let url = meta.repo_url.clone().unwrap_or_default();
-    let src = crate::source::GitSource::new(&url, meta.ref_.as_deref())?;
-    let cache = skill_git_cache(data_root, &src.identity);
-    let snap = src.resolve(&cache, None)?;
-    let upstream_dir = snap.root.join(meta.repo_path.as_deref().unwrap_or(""));
-    if !upstream_dir.join("SKILL.md").is_file() {
-        return Ok(UpdateStatus {
-            skill: name.into(),
-            source_kind: meta.source_kind,
-            discovery_entry: meta.discovery_entry,
-            state: "upstream-missing".into(),
-            imported_digest: meta.imported_digest,
-            local_digest: Some(local_digest),
-            upstream_digest: None,
-            upstream_commit: snap.resolved_commit,
-            note: Some("上游 skill 目录已不存在（可能删除/改名）".into()),
-        });
-    }
-    let upstream_digest = skill_dir_digest(&upstream_dir);
-    let state = match (
-        local_digest == meta.imported_digest,
-        upstream_digest == meta.imported_digest,
-    ) {
-        (true, true) => "up-to-date",
-        (false, true) => "local-modified",
-        (true, false) => "upstream-new",
-        (false, false) => "conflict",
-    };
-    Ok(UpdateStatus {
-        skill: name.into(),
-        source_kind: meta.source_kind.clone(),
-        discovery_entry: meta.discovery_entry.clone(),
-        state: state.into(),
-        imported_digest: meta.imported_digest,
-        local_digest: Some(local_digest),
-        upstream_digest: Some(upstream_digest),
-        upstream_commit: snap.resolved_commit,
-        note: Some(format!(
-            "入口 {}（只检查未应用；检查不等于更新）",
-            meta.discovery_entry
-        )),
-    })
-}
-
-/// 更新执行（AIL-066）：本地未改才允许替换；更新前备份旧版到库内
-/// .updates-backup/；来源元数据随新内容推进（锁定版本显式前进）。
-pub fn update_execute(data_root: &Path, name: &str) -> Result<serde_json::Value> {
-    let status = check_update(data_root, name)?;
-    crate::skill_source::ensure_updatable(&status)?;
-    if status.state == "up-to-date" {
-        // ensure_updatable 已报「无变化」；此处不可达，双保险
-        return Ok(serde_json::json!({ "updated": false, "state": status.state }));
-    }
-    let meta = crate::skill_source::read_meta(
-        &library_root(data_root).join("resources/skills").join(name),
-    )
-    .ok_or_else(|| Error::new(code::UNKNOWN_REFERENCE, "来源元数据缺失"))?;
-    let url = meta.repo_url.clone().unwrap_or_default();
-    let src = crate::source::GitSource::new(&url, meta.ref_.as_deref())?;
-    let cache = skill_git_cache(data_root, &src.identity);
-    let snap = src.resolve(&cache, None)?;
-    let upstream_dir = snap.root.join(meta.repo_path.as_deref().unwrap_or(""));
-    let target = library_root(data_root).join("resources/skills").join(name);
-    // 备份旧版（可恢复）
-    let backup_dir = library_root(data_root).join(".updates-backup");
-    std::fs::create_dir_all(&backup_dir)?;
-    let backup = backup_dir.join(format!("{name}-{}", crate::ids::now_iso().replace(':', "")));
-    copy_tree(&target, &backup)?;
-    // 替换内容
-    std::fs::remove_dir_all(&target)?;
-    std::fs::create_dir_all(&target)?;
-    copy_tree(&upstream_dir, &target)?;
-    // 推进来源元数据（新 commit/摘要；发现入口保留）
-    let mut new_meta = meta.clone();
-    new_meta.resolved_commit = snap.resolved_commit.clone();
-    new_meta.imported_digest = skill_dir_digest(&target);
-    new_meta.fetched_at = crate::ids::now_iso();
-    crate::skill_source::write_meta(&target, &new_meta)?;
-    // 发布前整库校验失败则回滚
-    let lib = library_root(data_root);
-    let manifest = TeamManifest::load_from(&lib)?;
-    if enumerate(&lib, &manifest, LIBRARY_TEAM_ID).is_err() {
-        let _ = std::fs::remove_dir_all(&target);
-        copy_tree(&backup, &target)?;
-        return Err(Error::new(
-            code::WRITE_FAILED,
-            "更新后库校验失败，已回滚旧版",
-        ));
-    }
-    Ok(serde_json::json!({
-        "updated": true,
-        "skill": name,
-        "from_commit": meta.resolved_commit,
-        "to_commit": new_meta.resolved_commit,
-        "backup": backup,
-        "note": "更新仅写入个人库；部署需重新预览+应用",
-    }))
-}
+mod recovery;
+pub use recovery::{recover_updates, Recovery};
+mod update;
+pub use update::{cached_update, check_update, update_execute, update_execute_checked};
 
 /// 递归复制（跳过符号链接；导入/更新不引入链接）。
 fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
-    for entry in walkdir::WalkDir::new(src)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in walkdir::WalkDir::new(src) {
+        let entry =
+            entry.map_err(|e| Error::new(code::WRITE_FAILED, format!("Skill 复制失败：{e}")))?;
         let rel = entry
             .path()
             .strip_prefix(src)

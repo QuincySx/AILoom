@@ -3,6 +3,11 @@
 use crate::error::{code, Error, Result};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// 进程内写序号：并发原子写同一目标时，临时文件名必须互不相同，
+/// 否则先完成的 rename 会“偷走”后一个请求的 tmp 文件（ENOENT）。
+static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 原子写：先写同目录临时文件并 flush+sync，再 rename 覆盖目标。
 pub fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
@@ -13,13 +18,17 @@ pub fn atomic_write(target: &Path, bytes: &[u8]) -> Result<()> {
         )
     })?;
     std::fs::create_dir_all(parent)?;
+    let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
     let tmp = parent.join(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{}-{}",
         target
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "file".into()),
-        std::process::id()
+        std::process::id(),
+        seq,
+        nanos
     ));
     {
         let mut f = std::fs::File::create(&tmp)?;

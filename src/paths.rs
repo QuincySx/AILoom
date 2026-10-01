@@ -221,7 +221,7 @@ fn non_empty_env(key: &str) -> Option<String> {
     })
 }
 
-fn user_home() -> Option<PathBuf> {
+pub(crate) fn user_home() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(home));
     }

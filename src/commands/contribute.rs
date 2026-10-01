@@ -67,6 +67,45 @@ pub fn run(
     json: bool,
     data_root: Option<&std::path::Path>,
 ) -> Result<Value> {
+    let data = crate::paths::resolve_data_root(data_root)?;
+    let cwd = std::env::current_dir()?;
+    let root = args.root.as_deref().unwrap_or(&cwd);
+    if crate::knowledge::location::is_initialized(&data, root)? {
+        let text = std::fs::read_to_string(&args.file).map_err(|e| {
+            Error::new(
+                code::USAGE,
+                format!("无法读取经验文档 {}: {e}", args.file.display()),
+            )
+        })?;
+        let doc = parse(&text)?;
+        let id = stable_id(&doc);
+        let mut value = crate::knowledge::location::save(&data, root, &args.file, &id)?;
+        // 项目知识库模式直接保存到本项目，团队源 PR 流程的参数不生效：明确告知而不是静默忽略。
+        let ignored: Vec<&str> = [
+            ("--project", args.project.is_some()),
+            ("--shared", args.shared),
+            ("--namespace", args.namespace.is_some()),
+            ("--message", args.message != "ailoom: 新增经验"),
+            ("--provider", args.provider != "auto"),
+        ]
+        .into_iter()
+        .filter_map(|(flag, set)| set.then_some(flag))
+        .collect();
+        if !ignored.is_empty() {
+            let note = format!(
+                "项目知识库模式下以下参数不生效：{}（它们只用于团队源 PR 流程）",
+                ignored.join(" ")
+            );
+            if !json {
+                crate::logging::warn(&note);
+            }
+            value["warnings"] = serde_json::json!([note]);
+        }
+        if !json {
+            println!("经验已保存到项目知识库；远端同步使用 ailoom knowledge --action sync",);
+        }
+        return Ok(value);
+    }
     let req = contribution::prepare_contribution(data_root, args.root.as_deref())?;
     let ContributionRequest {
         ctx, declaration, ..
@@ -103,11 +142,7 @@ pub fn run(
         .and_then(|l| l.sources.get(&declaration.source.name).cloned())
         .ok_or_else(|| Error::new(code::SOURCE_NOT_CACHED, "源未锁定"))?;
     // 从缓存清单读取 namespace 与 learnings 目录
-    let src_git = crate::source::GitSource::new(
-        entry.identity.trim_start_matches("git+"),
-        entry.ref_.as_deref(),
-    )?;
-    let snapshot = src_git.resolve(&ctx.source_cache(&src_git.identity), Some(&entry))?;
+    let (snapshot, _) = super::sync_core::primary_snapshot(ctx, declaration, &entry)?;
     let manifest = TeamManifest::load_from(&snapshot.root)?;
     let namespace = match &args.namespace {
         Some(ns) => {
@@ -215,11 +250,11 @@ pub fn run(
     )?;
 
     if !json {
-        crate::logging::info(format!(
+        println!(
             "经验 {} 已提交审核（项目/共享: {}）",
             id,
             value["target"].as_str().unwrap_or("?")
-        ));
+        );
     }
     Ok(value)
 }

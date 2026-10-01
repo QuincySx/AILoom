@@ -224,18 +224,32 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
             w["workspace_id"].as_str().unwrap_or("?")
         );
         if let Some(d) = value.get("declaration").filter(|v| !v.is_null()) {
+            let join = |v: &Value| -> String {
+                let items: Vec<&str> = v
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                if items.is_empty() {
+                    "—".into()
+                } else {
+                    items.join(", ")
+                }
+            };
             println!(
-                "源: {} ({}, ref {})  项目 {:?}  角色 {:?}",
+                "源: {} ({}, ref {})  项目 {}  角色 {}",
                 d["source"]["name"].as_str().unwrap_or("?"),
                 d["source"]["type"].as_str().unwrap_or("?"),
                 d["source"]["ref"].as_str().unwrap_or("<默认>"),
-                d["projects"].clone(),
-                d["roles"].clone(),
+                join(&d["projects"]),
+                join(&d["roles"]),
             );
-            if let Some(extra) = d["targets"]["extra"].as_array() {
-                if !extra.is_empty() {
-                    println!("额外宿主: {:?}", extra);
-                }
+            if d["targets"]["extra"]
+                .as_array()
+                .is_some_and(|e| !e.is_empty())
+            {
+                println!("额外宿主: {}", join(&d["targets"]["extra"]));
             }
         }
         println!("快照可用: {}", value["snapshot"]["available"]);

@@ -36,9 +36,13 @@ pub fn apply(
     journal_root: &Path,
     device_id: &str,
 ) -> Result<ApplyReport> {
+    // 先拿锁再看 journal：否则并发的另一次 sync 正在写的 journal 会被误判为崩溃遗留，
+    // 并提示用户 --recover（回滚别人的进行中写入）。持锁时仍存在的 journal 才是真正的遗留。
+    let lock = SyncLock::acquire(lock_dir, device_id)?;
     // 崩溃/失败遗留的恢复点必须先处理
     let pending = JournalRun::find_pending(journal_root)?;
     if let Some(first) = pending.first() {
+        let _ = lock.release();
         return Err(Error::new(
             code::JOURNAL_RESTORE_FAILED,
             format!(
@@ -49,7 +53,6 @@ pub fn apply(
         .fix("运行 ailoom sync --recover"));
     }
 
-    let lock = SyncLock::acquire(lock_dir, device_id)?;
     let mut run = JournalRun::start(
         journal_root,
         &format!("{}-{}", now_iso().replace(':', ""), new_id()),
@@ -407,7 +410,7 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
                 .strip_prefix(crate::store::source_bucket(&store_root, source_identity))
                 .unwrap_or(target.as_path());
             if artifact.resource_id.starts_with("collection-") && target.exists() {
-                // 锁定版本实体可能被其他工作树共同引用；首次向新工作树挂载也不能覆盖其后改。
+                // 锁定版本实体可能被其他 Worktree 共同引用；首次向新 Worktree 挂载也不能覆盖其后改。
                 if !target.is_dir() || crate::store::dir_digest(target)? != *content_digest {
                     return Err(Error::new(
                         code::USER_CONTENT_CONFLICT,
@@ -889,6 +892,31 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 并发 sync：另一进程持锁并已写出进行中的 journal 时，本次必须报 E4003（锁被持有），
+    /// 而不是把它的 journal 当作崩溃遗留、提示用户 --recover。
+    #[test]
+    fn concurrent_sync_reports_lock_not_pending_journal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (locks, journal, ws) = (
+            tmp.path().join("locks"),
+            tmp.path().join("journal"),
+            tmp.path().join("ws"),
+        );
+        std::fs::create_dir_all(&ws).unwrap();
+        let _held = SyncLock::acquire(&locks, "other-device").unwrap();
+        let _running = JournalRun::start(&journal, "in-progress").unwrap();
+        let plan = SyncPlan {
+            schema_version: 1,
+            created_at: now_iso(),
+            source_identity: "test".into(),
+            revision: None,
+            actions: vec![],
+        };
+        let mut managed = ManagedManifest::new("ws");
+        let err = apply(&plan, &[], &mut managed, &ws, &locks, &journal, "me").unwrap_err();
+        assert_eq!(err.code, code::LOCK_HELD, "{err}");
+    }
 
     /// RW-02/S02：嵌套指针首次写入——中间节点创建对象、叶子创建数组。
     #[test]

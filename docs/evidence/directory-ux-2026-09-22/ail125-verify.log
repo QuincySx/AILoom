@@ -1,0 +1,15 @@
+PASS 1. 预览绑定作用域 web
+PASS 2. 非 noop 后应用按钮可用
+PASS 3. 磁盘已写入 doc-search
+PASS 4. noop 预览提示无改动
+PASS 5. noop 后应用按钮禁用
+PASS 6. 清理计划使应用可用
+PASS 7. UI 明确提示「计划已过期」
+PASS 8. 过期计划零写入：doc-search 文件仍在
+PASS 9. 过期提示要求重新预览
+PASS 10. 切换目标后应用按钮不可用（旧计划作废）
+PASS 11. 应用按钮可用（新计划）
+PASS 12. 用户后改已写入部署文件
+PASS 13. 撤销遇用户后改：保留用户修改（冲突不覆盖）
+
+== AIL-125: 13/13 PASS ==

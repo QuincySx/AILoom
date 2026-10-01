@@ -443,7 +443,7 @@ fn pinned_collection_update_does_not_change_unselected_worktree_or_local_edits()
         std::fs::read_to_string(ws.join("README.md")).unwrap(),
         "company baseline"
     );
-    // 新工作树首次引用同版本，也不能重新物化并覆盖别人改过的共享实体。
+    // 新 Worktree 首次引用同版本，也不能重新物化并覆盖别人改过的共享实体。
     let current_skill = ws.join(".claude/skills/chosen/SKILL.md");
     std::fs::write(&current_skill, "SHARED USER EDIT").unwrap();
     let third = f.tmp.path().join("worktree-c");
@@ -490,7 +490,7 @@ fn collection_previews_are_version_bound_and_do_not_accept_forged_paths() {
     ailoom::collections::apply_preview(&f.data(), p1["preview_id"].as_str().unwrap()).unwrap();
     let err = ailoom::collections::apply_preview(&f.data(), p2["preview_id"].as_str().unwrap())
         .unwrap_err();
-    assert_eq!(err.code, ailoom::error::code::USER_CONTENT_CONFLICT);
+    assert_eq!(err.code, ailoom::error::code::PRECONDITION_FAILED);
     assert!(ailoom::collections::apply_preview(&f.data(), "../../profile").is_err());
     assert_eq!(
         ailoom::collections::list(&f.data()).unwrap()["sources"]
@@ -704,7 +704,7 @@ fn legacy_base64_links_switch_individually_without_removing_old_entities() {
     assert!(readable.join("SKILL.md").is_file());
     assert!(
         legacy_skill.join("SKILL.md").is_file(),
-        "旧实体保留，其他工作树的旧链接不受影响"
+        "旧实体保留，其他 Worktree 的旧链接不受影响"
     );
 }
 
@@ -747,4 +747,136 @@ fn personal_copy_delete_is_guarded_and_recoverably_archived() {
         .unwrap()
         .contains("preserve-me"));
     assert!(source.join("skills/chosen/SKILL.md").is_file());
+}
+
+/// AIL-133 组合场景：团队源 × 个人层宿主 × 合集引用 × 子目录作用域。
+/// 团队 sync、个人 sync（根与子目录）任意交替后，两条计划都没有增删，且各层部署都在。
+#[test]
+fn team_personal_collection_and_subdirectory_layers_converge() {
+    let f = Fixture::new();
+    let ws = common::make_business_repo(f.tmp.path(), "biz");
+    std::fs::create_dir_all(ws.join("web")).unwrap();
+    let team = common::make_team_source(&f.tmp.path().join("team"));
+    f.ok(
+        &ws,
+        &[
+            "init",
+            "--url",
+            &common::file_url(&team),
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    let col = f.source("combo-collection", "C-v1", false);
+    let id = f.add(&col, "组合合集")["source"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    f.host(&ws);
+    f.select(&ws, &format!("{id}/skill/common/chosen"), "enable");
+    f.ok(
+        &ws,
+        &[
+            "personal",
+            "--action",
+            "select",
+            "--repo",
+            ws.to_str().unwrap(),
+            "--subproject",
+            "web",
+            "--resource",
+            &format!("{id}/skill/common/unused"),
+            "--state",
+            "enable",
+        ],
+    );
+
+    let team_sync = || f.ok(&ws, &["sync"]);
+    let personal_sync = || f.sync(&ws);
+    let sub_sync = || {
+        f.ok(
+            &ws,
+            &[
+                "personal",
+                "--action",
+                "sync",
+                "--root",
+                ws.to_str().unwrap(),
+                "--scope",
+                "web",
+            ],
+        );
+    };
+    for step in [0, 1, 2, 0, 2, 1, 0] {
+        match step {
+            0 => {
+                team_sync();
+            }
+            1 => personal_sync(),
+            _ => sub_sync(),
+        }
+    }
+    assert!(
+        ws.join(".claude/skills/common-greet").exists(),
+        "团队层部署保留"
+    );
+    assert!(
+        ws.join(".claude/agents/ailoom-recall.md").exists(),
+        "内置资源保留"
+    );
+    assert!(ws.join(".claude/skills/chosen").exists(), "合集引用保留");
+    assert!(
+        ws.join("web/.claude/skills/unused").exists(),
+        "子目录引用保留"
+    );
+
+    let changes = |v: &Value| -> Vec<String> {
+        v["actions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| matches!(a["action"].as_str(), Some("create" | "update" | "delete")))
+            .map(|a| format!("{} {}", a["action"], a["path"]))
+            .collect()
+    };
+    let team_plan = f.ok(&ws, &["plan"]);
+    assert!(
+        changes(&team_plan).is_empty(),
+        "团队计划: {:?}",
+        changes(&team_plan)
+    );
+    let root_plan = f.ok(
+        &ws,
+        &[
+            "personal",
+            "--action",
+            "plan",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        changes(&root_plan).is_empty(),
+        "个人计划: {:?}",
+        changes(&root_plan)
+    );
+    let sub_plan = f.ok(
+        &ws,
+        &[
+            "personal",
+            "--action",
+            "plan",
+            "--root",
+            ws.to_str().unwrap(),
+            "--scope",
+            "web",
+        ],
+    );
+    assert!(
+        changes(&sub_plan).is_empty(),
+        "子目录计划: {:?}",
+        changes(&sub_plan)
+    );
 }

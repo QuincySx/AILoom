@@ -1,0 +1,102 @@
+      ┌─────────┐  mr boxington
+     ╱ ═══════ ╱│
+    ╱─────────╱ │
+    │ •    (◉)│≡│
+    │  ◟▄▄▄◞  │ ╱
+    │   ◀◆▶   │╱
+    └─────────┘
+   Compiling ailoom v0.1.0 (<repo>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/collections.rs (target/debug/deps/collections-48066db390a86f03)
+
+running 10 tests
+test external_preview_is_content_bound_and_rejects_symlink_escape ... ok
+test collection_previews_are_version_bound_and_do_not_accept_forged_paths ... ok
+test external_skills_link_original_content_and_unlink_without_owning_it ... ok
+test personal_copy_delete_is_guarded_and_recoverably_archived ... ok
+test invalid_mcp_collection_does_not_replace_registered_snapshot ... ok
+test multiple_collections_only_deploy_explicit_skill_and_mcp_references ... ok
+test legacy_base64_links_switch_individually_without_removing_old_entities ... ok
+test removing_collection_blocks_references_and_preserves_store_after_unlink ... ok
+test checking_all_persists_status_and_batch_update_is_version_bound ... ok
+test pinned_collection_update_does_not_change_unselected_worktree_or_local_edits ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s
+
+     Running tests/console_onboarding.rs (target/debug/deps/console_onboarding-2fc5f65ab3268d47)
+
+running 1 test
+test ail047_onboarding_first_run_closed_loop ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests/resolver.rs (target/debug/deps/resolver-d3d11c7ad8c5ec31)
+
+running 9 tests
+test invalid_fixtures_fail_with_expected_codes ... ok
+test pm_plus_b_gets_common_pm_b ... ok
+test both_projects_union_for_skills_but_learning_ambiguous_excluded_from_selection ... ok
+test roles_never_expand_learning_scope ... ok
+test duplicate_skill_name_in_source_is_rejected_at_parse ... ok
+test zero_projects_gets_shared_only ... ok
+test tags_do_not_change_identity_or_selection ... ok
+test dev_plus_a_gets_common_dev_a ... ok
+test symlink_escape_in_skill_dir_rejected ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/rework_2026_09_17.rs (target/debug/deps/rework_2026_09_17-7954b69de8f00f70)
+
+running 12 tests
+test ail070_artifact_history_recoverable ... ok
+test ail062_import_transaction_and_tolerant_list ... ok
+test ail069_mcp_missing_env_ref_surfaces_in_plan_notes ... ok
+test ail057_nongit_path_mode_closed_loop ... ok
+test ail060_profile_format_preserving_and_conflict ... ok
+test ail053_undo_preserves_user_edits_and_is_reentrant ... ok
+test ail058_sequential_worktree_selections_merge ... ok
+test ail055_select_targets_explicit_repo ... ok
+test ail076_baseline_change_resynthesizes_view ... ok
+test ail056_relink_validates_identity_and_preserves_config ... ok
+test ail052_tracked_managed_entry_not_deleted ... ok
+test ail061_disabled_host_blocks_team_artifacts ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+     Running tests/source.rs (target/debug/deps/source-803887be317c70bf)
+
+running 9 tests
+test credential_url_is_rejected_and_never_logged ... ok
+test local_source_digest_tracks_content_and_flags_mutable ... ok
+test lock_file_roundtrip_and_save_is_atomic ... ok
+test first_time_offline_fails_clearly ... ok
+test first_resolve_locks_and_reuses_snapshot ... ok
+test invalid_ref_does_not_damage_old_cache ... ok
+test offline_uses_existing_snapshot_fetch_failure_keeps_old ... ok
+test explicit_refresh_produces_new_revision ... ok
+test concurrent_fetch_is_serialized_and_consistent ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+     Running tests/sync_apply.rs (target/debug/deps/sync_apply-7b1e781a98b29e7b)
+
+running 14 tests
+test concurrent_apply_only_one_wins_lock ... ok
+test pending_journal_blocks_new_apply ... ok
+test happy_path_creates_files_and_advances_manifest ... ok
+test recovery_protects_later_user_edits ... ok
+test repeated_apply_is_noop ... ok
+test recover_skips_user_modified_and_is_idempotent ... ok
+test missing_backup_reports_failure ... ok
+test corrupt_backup_reports_failure_and_keeps_journal ... ok
+test user_change_after_plan_rejects_execution ... ok
+test json_multi_entry_recovery_keeps_user_entries ... ok
+test multi_fragment_same_file_recovery_restores_original_bytes ... ok
+test injected_failure_leaves_journal_and_recovery_restores ... ok
+test toml_array_entry_create_resync_update_and_remove ... ok
+test cli_sync_failure_then_recover_restores_agents_md ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+mbx[cache]: 0 hits, 0 misses, 1 incremental; 0 B downloaded, 0 B uploaded, 0 B stored locally
+mbx[savings]: escorted 35.3 GiB logical of ownerless outputs off the premises.

@@ -104,7 +104,7 @@ fn ail047_onboarding_first_run_closed_loop() {
     for asset in [
         "/ui/tokens.css",
         "/ui/pages/onboarding.js",
-        "/ui/features/planPreview.js",
+        "/ui/pages/workspace.js",
     ] {
         let (code, path) = method(server.port, "GET", asset, &[], None);
         assert_eq!(code, 200, "资产可达: {asset}");
@@ -114,11 +114,11 @@ fn ail047_onboarding_first_run_closed_loop() {
         );
     }
     assert!(
-        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择一个要使用 Skill / MCP 的项目")
-            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("选择宿主和要使用的资源")
-            && ailoom::console::ui::PLAN_PREVIEW_JS.contains("预览将要做的改动")
-            && ailoom::console::ui::PLAN_PREVIEW_JS.contains("在宿主里真实验证")
-            && ailoom::console::ui::APP_JS.contains("hashchange"),
+        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("① 添加项目")
+            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("③ 添加并应用")
+            && ailoom::console::ui::APP_JS.contains("hashchange")
+            && ailoom::console::ui::lookup("/ui/pages/workspace.js")
+                .is_some_and(|(js, _)| js.contains("api.plan(") && js.contains("api.apply(")),
         "向导与路由要素分布在对应模块内"
     );
 
@@ -174,7 +174,7 @@ fn ail047_onboarding_first_run_closed_loop() {
     );
     assert_eq!(code, 200, "{v}");
 
-    // Step 2：发现仓库 → 归组 + 工作树
+    // Step 2：发现仓库 → 归组 + Worktree
     let (code, v) = post(
         server.port,
         "/api/repo/discover",

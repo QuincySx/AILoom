@@ -1,0 +1,5 @@
+PASS 1. Dialog 打开后焦点进入搜索框
+PASS 2. Esc 关闭 Dialog
+PASS 3. 关闭后焦点还原到触发按钮
+
+== AIL-128-focus: 3/3 PASS ==

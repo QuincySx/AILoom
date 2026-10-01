@@ -105,10 +105,9 @@ pub fn run_hook(
             return Ok(json!({ "captured": false }));
         }
     };
-    let captured =
-        crate::events::store::append_event(&ctx.layout.events_file, &event).map_err(|e| {
+    let captured = crate::events::store::append_event(&ctx.layout.events_file, &event)
+        .inspect_err(|e| {
             crate::logging::error(format!("hook 事件写入失败：{}（宿主不受影响）", e.message));
-            e
         })?;
     // RW-15/R14：把采集阶段解析好的工作区根带回给调用者（显式 root > payload.cwd
     // > 进程 cwd），后续处理（自动同步/摩擦提示）必须沿用同一解析结果，

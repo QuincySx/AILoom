@@ -1,0 +1,20 @@
+PASS 1. J1 非 Git 页头显示「本目录」
+PASS 2. J1 非 Git 页头无工作目录下拉
+PASS 3. J1 取消添加零写入（revision 不变）
+PASS 4. J1 添加后仅写配置（revision 前进、磁盘无文件）
+PASS 5. J1 应用后磁盘：kb-jia/.claude/skills/meeting-notes
+PASS 6. J1 跨库隔离：知识库乙哈希不变
+PASS 7. J2 子目录添加仅写配置
+PASS 8. J2 应用后磁盘：kb-jia/web/.claude/skills/doc-search
+PASS 9. J2 兄弟目录 docs 不受影响
+PASS 10. J2 docs 哈希不变
+PASS 11. J2 移除并应用后：web 下 doc-search 清理
+PASS 12. J2 根目录部署保留（meeting-notes 仍在）
+PASS 13. J7 名称不符拒绝删除（磁盘仍在）
+PASS 14. J7 删除后目录移入归档
+PASS 15. J8 重启后服务恢复
+PASS 16. J8 重启后根目录配置解析一致
+PASS 17. J8 重启后子目录配置解析一致
+PASS 18. J8 重启后项目页正常打开
+
+== AIL-128-nongit: 18/18 PASS ==

@@ -1,0 +1,49 @@
+{
+  "manifestVersion": 1,
+  "id": "ailoom",
+  "publisher": "ailoom",
+  "name": "AILoom",
+  "version": "0.1.0",
+  "description": "通过独立 AILoom CLI 管理项目能力，无需 Web 服务。",
+  "engines": {
+    "orca": ">=1.4.0"
+  },
+  "pluginApi": 1,
+  "main": "main.mjs",
+  "contributes": {
+    "commands": [
+      {
+        "id": "ailoom-configuration",
+        "title": "AILoom: 查看项目绑定"
+      },
+      {
+        "id": "ailoom-configure",
+        "title": "AILoom: 绑定项目"
+      },
+      {
+        "id": "ailoom-status",
+        "title": "AILoom: 检查已绑定项目"
+      },
+      {
+        "id": "ailoom-plan",
+        "title": "AILoom: 预览已绑定项目的变更"
+      },
+      {
+        "id": "ailoom-sync",
+        "title": "AILoom: 应用已预览的变更"
+      },
+      {
+        "id": "ailoom-recover",
+        "title": "AILoom: 恢复未完成的应用"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "storage"
+    },
+    {
+      "kind": "notifications:show"
+    }
+  ]
+}

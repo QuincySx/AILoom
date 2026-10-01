@@ -1,47 +1,82 @@
-// AIL-087（tasks 页）：任务中心 —— 持久化任务列表、中断标记、undo 入口。
-// 中断任务不自动重放；可对成功 plan 再 apply、对成功 apply 撤销。
+// AIL-087/099（操作记录页）：配置操作留痕 —— 可读的操作类型、项目、状态、时间；
+// 技术 ID 等细节放所选记录详情。持久化、重启恢复；中断操作不自动重放；
+// 可对成功 apply 撤销（确认后执行，冲突保留用户修改）。
 
 import { api, esc } from '../services/api.js';
 import { DataTable } from '../components/dataTable.js';
+import { confirmAction } from '../components/dialog.js';
 import { notify } from '../state/store.js';
+
+const KIND_LABEL = { plan: '生成预览', apply: '应用配置' };
+const STATUS_LABEL = {
+  queued: '排队中', running: '执行中', success: '成功', failed: '失败',
+  cancelled: '已取消', interrupted: '已中断', undone: '已撤销', undo_partial: '部分撤销',
+};
+const STATUS_TONE = { success: 'ok', failed: 'bad', interrupted: 'warn', undo_partial: 'warn', running: 'warn' };
+
+const kindLabel = (k) => KIND_LABEL[k] || k;
+const statusLabel = (s) => STATUS_LABEL[s] || s;
+const pathLeaf = (p) => String(p || '').split('/').filter(Boolean).pop() || '—';
+const timeLabel = (iso) => { const d = iso ? new Date(iso) : null; return d && !Number.isNaN(d.getTime()) ? d.toLocaleString() : '—'; };
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
   container.appendChild(root);
   root.innerHTML = `
-    <div class="step"><h2>任务（重启后从磁盘恢复；中断任务不自动重放）</h2>
-      <p><button data-refresh>刷新</button></p>
-      <div data-table></div>
-      <p><button data-undo disabled>撤销选中 apply 任务</button></p>
-      <div data-msg class="muted"></div></div>`;
+    <header class="page-head"><div><h1>操作记录</h1>
+      <p class="muted">查看改动记录，或撤销一次应用。</p></div>
+      <p><button data-refresh>刷新</button></p></header>
+    <div data-table></div>
+    <section data-detail hidden class="step"><h2>所选记录详情</h2><div data-detail-body></div>
+      <p><button data-undo disabled>撤销这次应用…</button> <span class="muted">只回滚该次应用写入的文件；你事后修改过的文件会冲突保留。</span></p></section>
+    <div data-msg class="muted" role="status" aria-live="polite"></div>`;
   const table = DataTable(root.querySelector('[data-table]'), { loading: true });
   const msg = root.querySelector('[data-msg]');
+  const detail = root.querySelector('[data-detail]');
+  const detailBody = root.querySelector('[data-detail-body]');
   const undoBtn = root.querySelector('[data-undo]');
   let selected = null;
+  let jobs = [];
+
+  function canUndo(j) { return j.kind === 'apply' && (j.status === 'success' || j.status === 'undo_partial'); }
+
+  function showDetail(j) {
+    selected = j;
+    detail.hidden = false;
+    undoBtn.disabled = !canUndo(j);
+    const rows = [
+      ['操作类型', kindLabel(j.kind)],
+      ['状态', statusLabel(j.status)],
+      ['目标目录', j.root],
+      ['子目录', j.scope || '根目录'],
+      ['创建时间', timeLabel(j.created_at)],
+      ['更新时间', timeLabel(j.updated_at)],
+      ['错误', j.error || '—'],
+    ].map(([k, v]) => `<tr><th scope="row">${esc(k)}</th><td class="path">${esc(v)}</td></tr>`).join('');
+    const progress = (j.progress ?? []).length ? `<p>进度：</p><pre class="log">${esc(j.progress.join('\n'))}</pre>` : '';
+    detailBody.innerHTML = `<table>${rows}</table><details><summary>技术详情</summary><p class="path">${esc(j.id)}</p>${progress}</details>`;
+    msg.textContent = `已选 ${kindLabel(j.kind)} · ${statusLabel(j.status)}。`;
+  }
 
   async function refresh() {
     try {
       const v = await api.jobs();
-      const rows = (v.jobs ?? []).map((j) => ({
-        id: j.id, kind: j.kind, status: j.status,
-        root: j.root, updated: j.updated_at,
+      jobs = v.jobs ?? [];
+      const rows = jobs.map((j) => ({
+        j, kind: kindLabel(j.kind), status: statusLabel(j.status),
+        project: pathLeaf(j.root), updated: timeLabel(j.updated_at),
       }));
       table.update({
         rows,
-        rowKey: (r) => r.id,
-        empty: '还没有任务',
+        rowKey: (r) => r.j.id,
+        empty: '还没有操作记录。',
         columns: [
-          { key: 'id', label: '任务' },
-          { key: 'kind', label: '类型' },
-          { render: (r) => r.status === 'interrupted' ? '<span class="badge warn">interrupted</span>' : esc(r.status), label: '状态' },
-          { key: 'root', label: '目标' },
-          { key: 'updated', label: '更新时间' },
+          { key: 'kind', label: '操作' },
+          { key: 'project', label: '项目' },
+          { render: (r) => `<span class="badge ${STATUS_TONE[r.j.status] || ''}">${esc(r.status)}</span>`, label: '状态' },
+          { key: 'updated', label: '时间' },
         ],
-        onSelect: (r) => {
-          selected = r;
-          undoBtn.disabled = !(r.kind === 'apply' && (r.status === 'success' || r.status === 'undo_partial'));
-          msg.textContent = `已选 ${r.id}（${r.status}）`;
-        },
+        onSelect: (row) => showDetail(row.j),
       });
     } catch (e) {
       table.update({ error: e.message });
@@ -49,13 +84,26 @@ export function mount(container, ctx) {
   }
 
   undoBtn.onclick = async () => {
-    if (!selected) return;
+    if (!selected || !canUndo(selected)) return;
+    const j = selected;
+    const ok = await confirmAction(
+      `撤销“${kindLabel(j.kind)}”（${pathLeaf(j.root)}）？\n`
+      + `将把该次应用写入的文件恢复到应用前状态；你事后修改过的文件会冲突保留，不会被覆盖。已纳入 Git 跟踪的新建文件不删除。\n`
+      + `不影响其他项目，也不回滚全局资源来源。`,
+      { title: '撤销应用', confirmLabel: '确认撤销', destructive: true });
+    if (!ok) { msg.textContent = '已取消撤销，未做任何修改。'; return; }
+    undoBtn.disabled = true;
     try {
-      const v = await api.undo(selected.id);
-      msg.textContent = `撤销：恢复 ${v.restored.length} 项；冲突保留 ${(v.conflicts ?? []).length} 项`;
-      refresh();
+      const v = await api.undo(j.id);
+      const conflicts = v.conflicts ?? [];
+      msg.textContent = `撤销完成：恢复 ${v.restored.length} 项${conflicts.length ? `；冲突保留 ${conflicts.length} 项（你的修改未被覆盖）` : ''}。`;
+      if (conflicts.length) notify('冲突保留：' + conflicts.join('；'));
+      await refresh();
+      const again = jobs.find((x) => x.id === j.id);
+      if (again) showDetail(again);
     } catch (e) {
       notify('撤销失败：' + e.message);
+      undoBtn.disabled = false;
     }
   };
   root.querySelector('[data-refresh]').onclick = refresh;

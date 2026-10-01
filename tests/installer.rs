@@ -18,7 +18,7 @@ const TRIPLE_ENV: (&str, &str) = ("AILOOM_TRIPLE", TRIPLE);
 
 /// 受控本地 HTTP fixture：进程内静态文件服务器（std TcpListener）。
 /// 背景（RW-17）：本机 `python3 -m http.server` 从 spawn 到端口就绪实测需
-/// 15~25s（见 docs/rework/2026-09-15/evidence/rw-17-fixture-repro.md），
+/// 15~25s（见 docs/archive/rework/2026-09-15/evidence/rw-17-fixture-repro.md），
 /// 旧外部进程 fixture 仅轮询 5s 且吞掉 stderr 静默继续，curl 必然连接被拒。
 /// 改为进程内监听：bind 成功即就绪（无启动竞争/就绪轮询/外部依赖），
 /// 下载主链 install.sh → curl → TCP/HTTP → sha256 校验保持真实。

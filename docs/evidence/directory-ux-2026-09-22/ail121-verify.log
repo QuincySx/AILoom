@@ -1,0 +1,46 @@
+PASS 1. API：web 生效 = 启用（deployed=true）
+PASS 2. API：web 生效来源 = worktree_override
+PASS 3. 目标条显示工作目录
+PASS 4. 目标条有切换目录按钮
+PASS 5. 页面无「正在编辑」配置层下拉（AIL-122 移除）
+--- 根目录视角 ---
+meeting-notes
+已启用
+
+会议记录整理与待办提取
+
+在此添加（上游：项目共享设置） · 磁盘：未部署
+
+移除…
+PASS 6. 根目录行显示已启用（本层工作树显式启用）
+PASS 7. 根目录行动作含「移除」（本地新增语义）
+PASS 8. Dialog 打开且焦点进入
+PASS 9. 选中提示显示 web 路径
+PASS 10. 取消后仍为根目录
+PASS 11. 目标条目录标签 = web
+--- web 目录视角（修复后）---
+meeting-notes
+已启用
+
+会议记录整理与待办提取
+
+来自 当前目录配置 · 磁盘：未部署
+
+在此停用…
+PASS 12. AIL-121 核心：web 行显示已启用（不再按项目默认误报停用）
+PASS 13. web 行说明真实来源（当前目录配置/工作树）
+PASS 14. 浏览切换零配置写入（profile revision 不变）
+PASS 15. Esc 可关闭 Dialog
+--- 慢响应竞态后的 web 视图 ---
+meeting-notes
+已启用
+
+会议记录整理与待办提取
+
+来自 当前目录配置 · 磁盘：未部署
+
+在此停用…
+PASS 16. 慢响应逆序后 web 状态仍是「已启用/来自当前目录配置」
+PASS 17. 恢复 fetch
+
+== AIL-121+122: 17/17 PASS ==

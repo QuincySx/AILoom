@@ -1,1781 +1,2436 @@
 [
- {
-  "id": "AIL-001",
-  "title": "冻结初版领域与配置契约",
-  "status": "Done",
-  "milestone": "M0",
-  "size": "M",
-  "depends_on": [],
-  "file": "cards/AIL-001.md"
- },
- {
-  "id": "AIL-002",
-  "title": "建立 Rust CLI 与工程基础",
-  "status": "Done",
-  "milestone": "M0",
-  "size": "S",
-  "depends_on": [
-   "AIL-001"
-  ],
-  "file": "cards/AIL-002.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-003",
-  "title": "工作区识别与机器数据分区",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "L",
-  "depends_on": [
-   "AIL-001",
-   "AIL-002"
-  ],
-  "file": "cards/AIL-003.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-004",
-  "title": "Git 资源源、缓存与版本锁定",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-002",
-   "AIL-003"
-  ],
-  "file": "cards/AIL-004.md"
- },
- {
-  "id": "AIL-005",
-  "title": "项目绑定与 init/status 命令",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-001",
-   "AIL-003",
-   "AIL-004"
-  ],
-  "file": "cards/AIL-005.md"
- },
- {
-  "id": "AIL-006",
-  "title": "资源清单与项目角色解析器",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "L",
-  "depends_on": [
-   "AIL-001",
-   "AIL-004",
-   "AIL-005"
-  ],
-  "file": "cards/AIL-006.md"
- },
- {
-  "id": "AIL-007",
-  "title": "同步计划、托管清单与差异预览",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "L",
-  "depends_on": [
-   "AIL-006"
-  ],
-  "file": "cards/AIL-007.md"
- },
- {
-  "id": "AIL-008",
-  "title": "同步执行、锁与失败恢复",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "L",
-  "depends_on": [
-   "AIL-007"
-  ],
-  "file": "cards/AIL-008.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-009",
-  "title": "Skills 适配：Claude Code 与 Codex",
-  "status": "Blocked",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-006",
-   "AIL-007",
-   "AIL-008"
-  ],
-  "file": "cards/AIL-009.md"
- },
- {
-  "id": "AIL-010",
-  "title": "规则与项目文档适配",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-007",
-   "AIL-008",
-   "AIL-009"
-  ],
-  "file": "cards/AIL-010.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-011",
-  "title": "专用 Agent 统一定义与适配",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-006",
-   "AIL-007",
-   "AIL-008"
-  ],
-  "file": "cards/AIL-011.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-012",
-  "title": "MCP 定义、适配与托管更新",
-  "status": "Blocked",
-  "milestone": "M1",
-  "size": "L",
-  "depends_on": [
-   "AIL-006",
-   "AIL-007",
-   "AIL-008"
-  ],
-  "file": "cards/AIL-012.md"
- },
- {
-  "id": "AIL-013",
-  "title": "doctor 与安全卸载",
-  "status": "Done",
-  "milestone": "M1",
-  "size": "M",
-  "depends_on": [
-   "AIL-009",
-   "AIL-010",
-   "AIL-011",
-   "AIL-012"
-  ],
-  "file": "cards/AIL-013.md"
- },
- {
-  "id": "AIL-014",
-  "title": "资源贡献与审核发布",
-  "status": "Blocked",
-  "milestone": "M2",
-  "size": "L",
-  "depends_on": [
-   "AIL-004",
-   "AIL-006",
-   "AIL-007",
-   "AIL-008"
-  ],
-  "file": "cards/AIL-014.md"
- },
- {
-  "id": "AIL-015",
-  "title": "经验文档与项目归属",
-  "status": "Done",
-  "milestone": "M2",
-  "size": "M",
-  "depends_on": [
-   "AIL-001",
-   "AIL-005",
-   "AIL-006",
-   "AIL-014"
-  ],
-  "file": "cards/AIL-015.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-016",
-  "title": "知识索引与隔离召回",
-  "status": "Done",
-  "milestone": "M2",
-  "size": "L",
-  "depends_on": [
-   "AIL-006",
-   "AIL-015"
-  ],
-  "file": "cards/AIL-016.md"
- },
- {
-  "id": "AIL-017",
-  "title": "召回 Agent 与经验总结 Skill",
-  "status": "Done",
-  "milestone": "M2",
-  "size": "M",
-  "depends_on": [
-   "AIL-009",
-   "AIL-011",
-   "AIL-015",
-   "AIL-016"
-  ],
-  "file": "cards/AIL-017.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-018",
-  "title": "Hook 生命周期与事件协议",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "L",
-  "depends_on": [
-   "AIL-003",
-   "AIL-005",
-   "AIL-008"
-  ],
-  "file": "cards/AIL-018.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-019",
-  "title": "会话、Token 与人工干预聚合",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "L",
-  "depends_on": [
-   "AIL-018"
-  ],
-  "file": "cards/AIL-019.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-020",
-  "title": "经验总结提示与会话摘要",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "M",
-  "depends_on": [
-   "AIL-015",
-   "AIL-017",
-   "AIL-019"
-  ],
-  "file": "cards/AIL-020.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-021",
-  "title": "本地实时看板",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "M",
-  "depends_on": [
-   "AIL-019"
-  ],
-  "file": "cards/AIL-021.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-022",
-  "title": "团队统计上报与 digest",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "L",
-  "depends_on": [
-   "AIL-014",
-   "AIL-019",
-   "AIL-020"
-  ],
-  "file": "cards/AIL-022.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-023",
-  "title": "初版跨项目端到端验收与文档",
-  "status": "Done",
-  "milestone": "M3",
-  "size": "L",
-  "depends_on": [
-   "AIL-013",
-   "AIL-014",
-   "AIL-017",
-   "AIL-020",
-   "AIL-021",
-   "AIL-022"
-  ],
-  "file": "cards/AIL-023.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-024",
-  "title": "成员名册与项目查询",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "M",
-  "depends_on": [
-   "AIL-005",
-   "AIL-014"
-  ],
-  "file": "cards/AIL-024.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-025",
-  "title": "多源订阅、标签和资源版本更新",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-004",
-   "AIL-006",
-   "AIL-007",
-   "AIL-014"
-  ],
-  "file": "cards/AIL-025.md"
- },
- {
-  "id": "AIL-026",
-  "title": "代码事实与增量知识图谱",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "XL",
-  "depends_on": [
-   "AIL-016"
-  ],
-  "file": "cards/AIL-026.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-027",
-  "title": "图关系辅助召回",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-016",
-   "AIL-026"
-  ],
-  "file": "cards/AIL-027.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-028",
-  "title": "知识反馈、晋升与维护",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-016",
-   "AIL-017",
-   "AIL-022"
-  ],
-  "file": "cards/AIL-028.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-029",
-  "title": "安装分发与 npm 包装",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "M",
-  "depends_on": [
-   "AIL-002",
-   "AIL-023"
-  ],
-  "file": "cards/AIL-029.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-030",
-  "title": "管理后端、身份与审核模型设计",
-  "status": "Done",
-  "milestone": "LATER",
-  "size": "XL",
-  "depends_on": [
-   "AIL-001",
-   "AIL-014",
-   "AIL-022",
-   "AIL-024"
-  ],
-  "file": "cards/AIL-030.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-031",
-  "title": "共享环境配置与团队文化",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "M",
-  "depends_on": [
-   "AIL-006",
-   "AIL-010",
-   "AIL-012"
-  ],
-  "file": "cards/AIL-031.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-032",
-  "title": "团队自定义 Hook 分发",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-006",
-   "AIL-008",
-   "AIL-018"
-  ],
-  "file": "cards/AIL-032.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-033",
-  "title": "团队声明的软件包与插件依赖",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-004",
-   "AIL-007",
-   "AIL-009",
-   "AIL-029"
-  ],
-  "file": "cards/AIL-033.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-034",
-  "title": "目录、仓库与批量知识导入",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-015",
-   "AIL-016",
-   "AIL-026"
-  ],
-  "file": "cards/AIL-034.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-035",
-  "title": "PR/MR 经验与 CI 知识更新",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "L",
-  "depends_on": [
-   "AIL-014",
-   "AIL-015",
-   "AIL-026",
-   "AIL-034"
-  ],
-  "file": "cards/AIL-035.md",
-  "owner": "ZCode（2026-09 返工轮次）"
- },
- {
-  "id": "AIL-036",
-  "title": "业务仓库同仓资源模式与迁移",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "XL",
-  "depends_on": [
-   "AIL-003",
-   "AIL-004",
-   "AIL-008",
-   "AIL-014",
-   "AIL-022"
-  ],
-  "file": "cards/AIL-036.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-037",
-  "title": "事件留存、数据导出与清理",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "M",
-  "depends_on": [
-   "AIL-003",
-   "AIL-018",
-   "AIL-019",
-   "AIL-022"
-  ],
-  "file": "cards/AIL-037.md",
-  "owner": "ZCode（2026-09-15 返工）"
- },
- {
-  "id": "AIL-038",
-  "title": "团队源脚手架与发布链路本地准备",
-  "status": "Done",
-  "milestone": "NEXT",
-  "size": "M",
-  "depends_on": [
-   "AIL-001",
-   "AIL-005",
-   "AIL-029"
-  ],
-  "file": "cards/AIL-038.md",
-  "owner": "ZCode（2026-09-14）"
- },
- {
-  "id": "AIL-039",
-  "title": "Git 仓库身份、工作树与子项目发现",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "XL",
-  "depends_on": [
-   "AIL-003"
-  ],
-  "file": "cards/AIL-039.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-056",
-   "AIL-057",
-   "AIL-079",
-   "AIL-088"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-040",
-  "title": "仓外个人配置、作用域继承与兼容迁移",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "XL",
-  "depends_on": [
-   "AIL-039",
-   "AIL-001"
-  ],
-  "file": "cards/AIL-040.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-055",
-   "AIL-056",
-   "AIL-057",
-   "AIL-058",
-   "AIL-059",
-   "AIL-060",
-   "AIL-079",
-   "AIL-086"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-041",
-  "title": "宿主能力探测与 Codex 项目加载复核",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-009",
-   "AIL-012"
-  ],
-  "file": "cards/AIL-041.md",
-  "follow_up_cards": [
-   "AIL-077"
-  ]
- },
- {
-  "id": "AIL-042",
-  "title": "公司指令文件保护与个人本地调整",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "XL",
-  "depends_on": [
-   "AIL-040",
-   "AIL-041"
-  ],
-  "file": "cards/AIL-042.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-052",
-   "AIL-053",
-   "AIL-076",
-   "AIL-079",
-   "AIL-097"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-043",
-  "title": "个人资源库与已有 Skill 导入",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-038",
-   "AIL-040"
-  ],
-  "file": "cards/AIL-043.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-062",
-   "AIL-063",
-   "AIL-064",
-   "AIL-065",
-   "AIL-066",
-   "AIL-068",
-   "AIL-079",
-   "AIL-090",
-   "AIL-095"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-044",
-  "title": "按资源与宿主选择能力及解释有效配置",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-040",
-   "AIL-041"
-  ],
-  "file": "cards/AIL-044.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-055",
-   "AIL-058",
-   "AIL-059",
-   "AIL-061",
-   "AIL-067",
-   "AIL-069",
-   "AIL-079",
-   "AIL-089"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-045",
-  "title": "Grill 到实现的流程包与文档产物关联",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-043",
-   "AIL-044",
-   "AIL-015"
-  ],
-  "file": "cards/AIL-045.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-054",
-   "AIL-070",
-   "AIL-071",
-   "AIL-079",
-   "AIL-084",
-   "AIL-091",
-   "AIL-096"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-046",
-  "title": "本地 Web 控制服务与受限 API",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-021"
-  ],
-  "file": "cards/AIL-046.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-052",
-   "AIL-054",
-   "AIL-055",
-   "AIL-060",
-   "AIL-069",
-   "AIL-072",
-   "AIL-075",
-   "AIL-079",
-   "AIL-080",
-   "AIL-085",
-   "AIL-086"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-047",
-  "title": "个人模式 Onboarding 首次成功体验",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-042",
-   "AIL-043",
-   "AIL-044",
-   "AIL-046",
-   "AIL-050"
-  ],
-  "file": "cards/AIL-047.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-057",
-   "AIL-072",
-   "AIL-073",
-   "AIL-074",
-   "AIL-075",
-   "AIL-078",
-   "AIL-079",
-   "AIL-080",
-   "AIL-081",
-   "AIL-082",
-   "AIL-083",
-   "AIL-085",
-   "AIL-086",
-   "AIL-087",
-   "AIL-093",
-   "AIL-098"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-048",
-  "title": "仓库工作树与子项目日常配置界面",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-044",
-   "AIL-046",
-   "AIL-050",
-   "AIL-047"
-  ],
-  "file": "cards/AIL-048.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-055",
-   "AIL-056",
-   "AIL-059",
-   "AIL-073",
-   "AIL-078",
-   "AIL-079",
-   "AIL-080",
-   "AIL-081",
-   "AIL-082",
-   "AIL-083",
-   "AIL-086",
-   "AIL-087",
-   "AIL-088",
-   "AIL-089",
-   "AIL-094",
-   "AIL-097",
-   "AIL-098"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-049",
-  "title": "源、Skill、MCP 与流程文档可视化编辑",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "L",
-  "depends_on": [
-   "AIL-043",
-   "AIL-044",
-   "AIL-045",
-   "AIL-046",
-   "AIL-050",
-   "AIL-047"
-  ],
-  "file": "cards/AIL-049.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-054",
-   "AIL-062",
-   "AIL-063",
-   "AIL-064",
-   "AIL-065",
-   "AIL-066",
-   "AIL-067",
-   "AIL-068",
-   "AIL-069",
-   "AIL-070",
-   "AIL-071",
-   "AIL-075",
-   "AIL-078",
-   "AIL-079",
-   "AIL-080",
-   "AIL-081",
-   "AIL-082",
-   "AIL-083",
-   "AIL-084",
-   "AIL-085",
-   "AIL-087",
-   "AIL-090",
-   "AIL-091",
-   "AIL-095",
-   "AIL-096",
-   "AIL-098"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-050",
-  "title": "预览应用任务、宿主验证与可恢复撤销",
-  "status": "Done",
-  "milestone": "LOCAL",
-  "size": "XL",
-  "depends_on": [
-   "AIL-042",
-   "AIL-044",
-   "AIL-046",
-   "AIL-008",
-   "AIL-013"
-  ],
-  "file": "cards/AIL-050.md",
-  "reopened_on": "2026-09-17",
-  "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
-  "follow_up_cards": [
-   "AIL-052",
-   "AIL-053",
-   "AIL-059",
-   "AIL-061",
-   "AIL-067",
-   "AIL-072",
-   "AIL-078",
-   "AIL-079",
-   "AIL-084",
-   "AIL-092"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-051",
-  "title": "Onboarding 与多工作树真实体验验收",
-  "status": "Blocked",
-  "milestone": "LOCAL",
-  "size": "XL",
-  "depends_on": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-041",
-   "AIL-042",
-   "AIL-043",
-   "AIL-044",
-   "AIL-045",
-   "AIL-046",
-   "AIL-047",
-   "AIL-048",
-   "AIL-049",
-   "AIL-050"
-  ],
-  "file": "cards/AIL-051.md",
-  "follow_up_cards": [
-   "AIL-077",
-   "AIL-078",
-   "AIL-079",
-   "AIL-098"
-  ]
- },
- {
-  "id": "AIL-052",
-  "title": "统一写入保护：公司文件、所有权与路径边界",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [],
-  "file": "cards/AIL-052.md",
-  "parent_cards": [
-   "AIL-042",
-   "AIL-046",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-053",
-  "title": "撤销校验 after-image 并保留用户后改",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-052"
-  ],
-  "file": "cards/AIL-053.md",
-  "parent_cards": [
-   "AIL-042",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-054",
-  "title": "文档导出绑定授权根、预览与目标版本",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-052"
-  ],
-  "file": "cards/AIL-054.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-046",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-055",
-  "title": "配置目标显式贯穿 CLI、API 与任务",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [],
-  "file": "cards/AIL-055.md",
-  "parent_cards": [
-   "AIL-040",
-   "AIL-044",
-   "AIL-046",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-056",
-  "title": "仓库搬迁、工作树重关联与稳定身份",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-055"
-  ],
-  "file": "cards/AIL-056.md",
-  "parent_cards": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-057",
-  "title": "非 Git 文件夹完成配置到应用闭环",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-055"
-  ],
-  "file": "cards/AIL-057.md",
-  "parent_cards": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-047"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-058",
-  "title": "三态继承与单项配置合并",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-055"
-  ],
-  "file": "cards/AIL-058.md",
-  "parent_cards": [
-   "AIL-040",
-   "AIL-044"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-059",
-  "title": "父子作用域统一部署计划与托管归属",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-052",
-   "AIL-055",
-   "AIL-058"
-  ],
-  "file": "cards/AIL-059.md",
-  "parent_cards": [
-   "AIL-040",
-   "AIL-044",
-   "AIL-048",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-060",
-  "title": "个人配置并发保存、无损编辑与迁移",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-055",
-   "AIL-058"
-  ],
-  "file": "cards/AIL-060.md",
-  "parent_cards": [
-   "AIL-040",
-   "AIL-046"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-061",
-  "title": "最终宿主与资源开关约束实际部署",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-058",
-   "AIL-059"
-  ],
-  "file": "cards/AIL-061.md",
-  "parent_cards": [
-   "AIL-044",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-062",
-  "title": "个人资源库事务导入、编辑校验与错误恢复",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [],
-  "file": "cards/AIL-062.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-063",
-  "title": "Skill 来源身份、版本与旧数据迁移",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-062"
-  ],
-  "file": "cards/AIL-063.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-064",
-  "title": "从 GitHub 仓库或子目录预览导入 Skill",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-062",
-   "AIL-063"
-  ],
-  "file": "cards/AIL-064.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-065",
-  "title": "skill.sh 发现入口解析与真实来源导入",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-063",
-   "AIL-064"
-  ],
-  "file": "cards/AIL-065.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-066",
-  "title": "Skill 上游检查、差异更新与本地冲突保护",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-063",
-   "AIL-064"
-  ],
-  "file": "cards/AIL-066.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-067",
-  "title": "资源更新到工作树与宿主的同步闭环",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-059",
-   "AIL-061",
-   "AIL-066"
-  ],
-  "file": "cards/AIL-067.md",
-  "parent_cards": [
-   "AIL-044",
-   "AIL-049",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-068",
-  "title": "网页来源管理、导入、更新与订阅影响预览",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-064",
-   "AIL-065",
-   "AIL-066",
-   "AIL-067",
-   "AIL-060",
-   "AIL-095"
-  ],
-  "file": "cards/AIL-068.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-069",
-  "title": "MCP 缺失引用诊断、编辑边界与显式探测",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-060",
-   "AIL-061",
-   "AIL-062"
-  ],
-  "file": "cards/AIL-069.md",
-  "parent_cards": [
-   "AIL-044",
-   "AIL-046",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-070",
-  "title": "流程产物稳定 ID、版本冲突与下游复核",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-060",
-   "AIL-062"
-  ],
-  "file": "cards/AIL-070.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-071",
-  "title": "流程包实际 Skill 绑定与文档管理页面",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-054",
-   "AIL-068",
-   "AIL-070",
-   "AIL-096"
-  ],
-  "file": "cards/AIL-071.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-072",
-  "title": "持久任务恢复、幂等与计划失效检查",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-052",
-   "AIL-053",
-   "AIL-055",
-   "AIL-060"
-  ],
-  "file": "cards/AIL-072.md",
-  "parent_cards": [
-   "AIL-046",
-   "AIL-047",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-073",
-  "title": "真实仓库工作树选择器与目标切换失效",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-055",
-   "AIL-056",
-   "AIL-057",
-   "AIL-058",
-   "AIL-059",
-   "AIL-094"
-  ],
-  "file": "cards/AIL-073.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-074",
-  "title": "六步 Onboarding 与能力保存真实闭环",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-061",
-   "AIL-062",
-   "AIL-069",
-   "AIL-072",
-   "AIL-073",
-   "AIL-075",
-   "AIL-093"
-  ],
-  "file": "cards/AIL-074.md",
-  "parent_cards": [
-   "AIL-047"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-075",
-  "title": "草稿冲突保留与页面错误恢复",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-060",
-   "AIL-073"
-  ],
-  "file": "cards/AIL-075.md",
-  "parent_cards": [
-   "AIL-046",
-   "AIL-047",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-076",
-  "title": "个人指令补充与替代视图的基线更新",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-052",
-   "AIL-053",
-   "AIL-059",
-   "AIL-061"
-  ],
-  "file": "cards/AIL-076.md",
-  "parent_cards": [
-   "AIL-042"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-077",
-  "title": "真实宿主 Skills、MCP 与个人指令验收",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-067",
-   "AIL-069",
-   "AIL-076"
-  ],
-  "file": "cards/AIL-077.md",
-  "parent_cards": [
-   "AIL-041",
-   "AIL-051"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-078",
-  "title": "真实浏览器与破坏性反例端到端回归",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "L",
-  "depends_on": [
-   "AIL-052",
-   "AIL-053",
-   "AIL-054",
-   "AIL-055",
-   "AIL-056",
-   "AIL-057",
-   "AIL-058",
-   "AIL-059",
-   "AIL-060",
-   "AIL-061",
-   "AIL-062",
-   "AIL-063",
-   "AIL-064",
-   "AIL-065",
-   "AIL-066",
-   "AIL-067",
-   "AIL-068",
-   "AIL-069",
-   "AIL-070",
-   "AIL-071",
-   "AIL-072",
-   "AIL-073",
-   "AIL-074",
-   "AIL-075",
-   "AIL-076",
-   "AIL-098"
-  ],
-  "file": "cards/AIL-078.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049",
-   "AIL-050",
-   "AIL-051"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-079",
-  "title": "需求覆盖复审、文档与最终验收交接",
-  "status": "Done",
-  "milestone": "ALIGN",
-  "size": "M",
-  "depends_on": [
-   "AIL-077",
-   "AIL-078"
-  ],
-  "file": "cards/AIL-079.md",
-  "parent_cards": [
-   "AIL-039",
-   "AIL-040",
-   "AIL-042",
-   "AIL-043",
-   "AIL-044",
-   "AIL-045",
-   "AIL-046",
-   "AIL-047",
-   "AIL-048",
-   "AIL-049",
-   "AIL-050",
-   "AIL-051"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-080",
-  "title": "Web 工程拆分与页面/API 契约清单",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [],
-  "file": "cards/AIL-080.md",
-  "parent_cards": [
-   "AIL-046",
-   "AIL-047",
-   "AIL-048",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-081",
-  "title": "设计 Token、排版与基础布局规范",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-080"
-  ],
-  "file": "cards/AIL-081.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-082",
-  "title": "基础交互组件：按钮、表单与三态开关",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-081"
-  ],
-  "file": "cards/AIL-082.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-083",
-  "title": "展示组件：状态、列表、表格与页面反馈",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-081",
-   "AIL-082"
-  ],
-  "file": "cards/AIL-083.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-084",
-  "title": "对话框、差异预览与冲突编辑组件",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-082",
-   "AIL-083"
-  ],
-  "file": "cards/AIL-084.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-049",
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-085",
-  "title": "统一 API 客户端与错误/取消协议",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-080"
-  ],
-  "file": "cards/AIL-085.md",
-  "parent_cards": [
-   "AIL-046",
-   "AIL-047",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-086",
-  "title": "页面状态容器、目标版本与草稿状态机",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-085"
-  ],
-  "file": "cards/AIL-086.md",
-  "parent_cards": [
-   "AIL-040",
-   "AIL-046",
-   "AIL-047",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-087",
-  "title": "应用壳、路由与跨页恢复",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-081",
-   "AIL-083",
-   "AIL-086"
-  ],
-  "file": "cards/AIL-087.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-088",
-  "title": "业务组件：仓库/工作树/子项目选择器",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-082",
-   "AIL-083",
-   "AIL-085",
-   "AIL-086",
-   "AIL-055",
-   "AIL-056",
-   "AIL-057"
-  ],
-  "file": "cards/AIL-088.md",
-  "parent_cards": [
-   "AIL-039",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-089",
-  "title": "业务组件：宿主能力矩阵与继承编辑",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-082",
-   "AIL-083",
-   "AIL-085",
-   "AIL-086",
-   "AIL-058",
-   "AIL-061",
-   "AIL-069"
-  ],
-  "file": "cards/AIL-089.md",
-  "parent_cards": [
-   "AIL-044",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-090",
-  "title": "业务组件：来源输入、导入预览与更新冲突",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-082",
-   "AIL-083",
-   "AIL-084",
-   "AIL-085",
-   "AIL-086",
-   "AIL-064",
-   "AIL-065",
-   "AIL-066",
-   "AIL-067"
-  ],
-  "file": "cards/AIL-090.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-091",
-  "title": "业务组件：流程阶段与文档关联编辑",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-082",
-   "AIL-083",
-   "AIL-084",
-   "AIL-085",
-   "AIL-086",
-   "AIL-070"
-  ],
-  "file": "cards/AIL-091.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-092",
-  "title": "业务组件：计划、任务进度与验证结果",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-083",
-   "AIL-084",
-   "AIL-085",
-   "AIL-086",
-   "AIL-053",
-   "AIL-054",
-   "AIL-067",
-   "AIL-072"
-  ],
-  "file": "cards/AIL-092.md",
-  "parent_cards": [
-   "AIL-050"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-093",
-  "title": "页面组装：六步首次设置向导",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-087",
-   "AIL-088",
-   "AIL-089",
-   "AIL-090",
-   "AIL-092",
-   "AIL-075"
-  ],
-  "file": "cards/AIL-093.md",
-  "parent_cards": [
-   "AIL-047"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-094",
-  "title": "页面组装：仓库与作用域日常配置",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-087",
-   "AIL-088",
-   "AIL-089",
-   "AIL-092",
-   "AIL-060"
-  ],
-  "file": "cards/AIL-094.md",
-  "parent_cards": [
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-095",
-  "title": "页面组装：资源库、来源订阅与更新部署",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-087",
-   "AIL-090",
-   "AIL-092"
-  ],
-  "file": "cards/AIL-095.md",
-  "parent_cards": [
-   "AIL-043",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-096",
-  "title": "页面组装：流程与文档工作台",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-087",
-   "AIL-091",
-   "AIL-092",
-   "AIL-054"
-  ],
-  "file": "cards/AIL-096.md",
-  "parent_cards": [
-   "AIL-045",
-   "AIL-049"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-097",
-  "title": "页面组装：个人指令与宿主验证设置",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-087",
-   "AIL-088",
-   "AIL-084",
-   "AIL-092",
-   "AIL-076"
-  ],
-  "file": "cards/AIL-097.md",
-  "parent_cards": [
-   "AIL-042",
-   "AIL-048"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- },
- {
-  "id": "AIL-098",
-  "title": "组件样例与所有页面浏览器质量关卡",
-  "status": "Done",
-  "milestone": "WEB",
-  "size": "M",
-  "depends_on": [
-   "AIL-093",
-   "AIL-094",
-   "AIL-095",
-   "AIL-096",
-   "AIL-097"
-  ],
-  "file": "cards/AIL-098.md",
-  "parent_cards": [
-   "AIL-047",
-   "AIL-048",
-   "AIL-049",
-   "AIL-051"
-  ],
-  "owner": "ZCode（2026-09-17 领取）"
- }
+  {
+    "id": "AIL-001",
+    "title": "冻结初版领域与配置契约",
+    "status": "Done",
+    "milestone": "M0",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-001.md"
+  },
+  {
+    "id": "AIL-002",
+    "title": "建立 Rust CLI 与工程基础",
+    "status": "Done",
+    "milestone": "M0",
+    "size": "S",
+    "depends_on": [
+      "AIL-001"
+    ],
+    "file": "cards/AIL-002.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-003",
+    "title": "工作区识别与机器数据分区",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-001",
+      "AIL-002"
+    ],
+    "file": "cards/AIL-003.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-004",
+    "title": "Git 资源源、缓存与版本锁定",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-002",
+      "AIL-003"
+    ],
+    "file": "cards/AIL-004.md"
+  },
+  {
+    "id": "AIL-005",
+    "title": "项目绑定与 init/status 命令",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-003",
+      "AIL-004"
+    ],
+    "file": "cards/AIL-005.md"
+  },
+  {
+    "id": "AIL-006",
+    "title": "资源清单与项目角色解析器",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-001",
+      "AIL-004",
+      "AIL-005"
+    ],
+    "file": "cards/AIL-006.md"
+  },
+  {
+    "id": "AIL-007",
+    "title": "同步计划、托管清单与差异预览",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-006"
+    ],
+    "file": "cards/AIL-007.md"
+  },
+  {
+    "id": "AIL-008",
+    "title": "同步执行、锁与失败恢复",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-007"
+    ],
+    "file": "cards/AIL-008.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-009",
+    "title": "Skills 适配：Claude Code 与 Codex",
+    "status": "Blocked",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-009.md"
+  },
+  {
+    "id": "AIL-010",
+    "title": "规则与项目文档适配",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-007",
+      "AIL-008",
+      "AIL-009"
+    ],
+    "file": "cards/AIL-010.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-011",
+    "title": "专用 Agent 统一定义与适配",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-011.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-012",
+    "title": "MCP 定义、适配与托管更新",
+    "status": "Blocked",
+    "milestone": "M1",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-012.md"
+  },
+  {
+    "id": "AIL-013",
+    "title": "doctor 与安全卸载",
+    "status": "Done",
+    "milestone": "M1",
+    "size": "M",
+    "depends_on": [
+      "AIL-009",
+      "AIL-010",
+      "AIL-011",
+      "AIL-012"
+    ],
+    "file": "cards/AIL-013.md"
+  },
+  {
+    "id": "AIL-014",
+    "title": "资源贡献与审核发布",
+    "status": "Blocked",
+    "milestone": "M2",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-006",
+      "AIL-007",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-014.md"
+  },
+  {
+    "id": "AIL-015",
+    "title": "经验文档与项目归属",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-005",
+      "AIL-006",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-015.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-016",
+    "title": "知识索引与隔离召回",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-015"
+    ],
+    "file": "cards/AIL-016.md"
+  },
+  {
+    "id": "AIL-017",
+    "title": "召回 Agent 与经验总结 Skill",
+    "status": "Done",
+    "milestone": "M2",
+    "size": "M",
+    "depends_on": [
+      "AIL-009",
+      "AIL-011",
+      "AIL-015",
+      "AIL-016"
+    ],
+    "file": "cards/AIL-017.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-018",
+    "title": "Hook 生命周期与事件协议",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-003",
+      "AIL-005",
+      "AIL-008"
+    ],
+    "file": "cards/AIL-018.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-019",
+    "title": "会话、Token 与人工干预聚合",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-018"
+    ],
+    "file": "cards/AIL-019.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-020",
+    "title": "经验总结提示与会话摘要",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "M",
+    "depends_on": [
+      "AIL-015",
+      "AIL-017",
+      "AIL-019"
+    ],
+    "file": "cards/AIL-020.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-021",
+    "title": "本地实时看板",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "M",
+    "depends_on": [
+      "AIL-019"
+    ],
+    "file": "cards/AIL-021.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-022",
+    "title": "团队统计上报与 digest",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-014",
+      "AIL-019",
+      "AIL-020"
+    ],
+    "file": "cards/AIL-022.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-023",
+    "title": "初版跨项目端到端验收与文档",
+    "status": "Done",
+    "milestone": "M3",
+    "size": "L",
+    "depends_on": [
+      "AIL-013",
+      "AIL-014",
+      "AIL-017",
+      "AIL-020",
+      "AIL-021",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-023.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-024",
+    "title": "成员名册与项目查询",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-005",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-024.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-025",
+    "title": "多源订阅、标签和资源版本更新",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-006",
+      "AIL-007",
+      "AIL-014"
+    ],
+    "file": "cards/AIL-025.md"
+  },
+  {
+    "id": "AIL-026",
+    "title": "代码事实与增量知识图谱",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "XL",
+    "depends_on": [
+      "AIL-016"
+    ],
+    "file": "cards/AIL-026.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-027",
+    "title": "图关系辅助召回",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-016",
+      "AIL-026"
+    ],
+    "file": "cards/AIL-027.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-028",
+    "title": "知识反馈、晋升与维护",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-016",
+      "AIL-017",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-028.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-029",
+    "title": "安装分发与 npm 包装",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-002",
+      "AIL-023"
+    ],
+    "file": "cards/AIL-029.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-030",
+    "title": "管理后端、身份与审核模型设计",
+    "status": "Done",
+    "milestone": "LATER",
+    "size": "XL",
+    "depends_on": [
+      "AIL-001",
+      "AIL-014",
+      "AIL-022",
+      "AIL-024"
+    ],
+    "file": "cards/AIL-030.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-031",
+    "title": "共享环境配置与团队文化",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-006",
+      "AIL-010",
+      "AIL-012"
+    ],
+    "file": "cards/AIL-031.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-032",
+    "title": "团队自定义 Hook 分发",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-006",
+      "AIL-008",
+      "AIL-018"
+    ],
+    "file": "cards/AIL-032.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-033",
+    "title": "团队声明的软件包与插件依赖",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-004",
+      "AIL-007",
+      "AIL-009",
+      "AIL-029"
+    ],
+    "file": "cards/AIL-033.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-034",
+    "title": "目录、仓库与批量知识导入",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-015",
+      "AIL-016",
+      "AIL-026"
+    ],
+    "file": "cards/AIL-034.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-035",
+    "title": "PR/MR 经验与 CI 知识更新",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "L",
+    "depends_on": [
+      "AIL-014",
+      "AIL-015",
+      "AIL-026",
+      "AIL-034"
+    ],
+    "file": "cards/AIL-035.md",
+    "owner": "ZCode（2026-09 返工轮次）"
+  },
+  {
+    "id": "AIL-036",
+    "title": "业务仓库同仓资源模式与迁移",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "XL",
+    "depends_on": [
+      "AIL-003",
+      "AIL-004",
+      "AIL-008",
+      "AIL-014",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-036.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-037",
+    "title": "事件留存、数据导出与清理",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-003",
+      "AIL-018",
+      "AIL-019",
+      "AIL-022"
+    ],
+    "file": "cards/AIL-037.md",
+    "owner": "ZCode（2026-09-15 返工）"
+  },
+  {
+    "id": "AIL-038",
+    "title": "团队源脚手架与发布链路本地准备",
+    "status": "Done",
+    "milestone": "NEXT",
+    "size": "M",
+    "depends_on": [
+      "AIL-001",
+      "AIL-005",
+      "AIL-029"
+    ],
+    "file": "cards/AIL-038.md",
+    "owner": "ZCode（2026-09-14）"
+  },
+  {
+    "id": "AIL-039",
+    "title": "Git 仓库身份、工作树与子项目发现",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "XL",
+    "depends_on": [
+      "AIL-003"
+    ],
+    "file": "cards/AIL-039.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-056",
+      "AIL-057",
+      "AIL-079",
+      "AIL-088"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-040",
+    "title": "仓外个人配置、作用域继承与兼容迁移",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "XL",
+    "depends_on": [
+      "AIL-039",
+      "AIL-001"
+    ],
+    "file": "cards/AIL-040.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-055",
+      "AIL-056",
+      "AIL-057",
+      "AIL-058",
+      "AIL-059",
+      "AIL-060",
+      "AIL-079",
+      "AIL-086"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-041",
+    "title": "宿主能力探测与 Codex 项目加载复核",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-009",
+      "AIL-012"
+    ],
+    "file": "cards/AIL-041.md",
+    "follow_up_cards": [
+      "AIL-077"
+    ]
+  },
+  {
+    "id": "AIL-042",
+    "title": "公司指令文件保护与个人本地调整",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "XL",
+    "depends_on": [
+      "AIL-040",
+      "AIL-041"
+    ],
+    "file": "cards/AIL-042.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-052",
+      "AIL-053",
+      "AIL-076",
+      "AIL-079",
+      "AIL-097"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-043",
+    "title": "个人资源库与已有 Skill 导入",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-038",
+      "AIL-040"
+    ],
+    "file": "cards/AIL-043.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-062",
+      "AIL-063",
+      "AIL-064",
+      "AIL-065",
+      "AIL-066",
+      "AIL-068",
+      "AIL-079",
+      "AIL-090",
+      "AIL-095"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-044",
+    "title": "按资源与宿主选择能力及解释有效配置",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-040",
+      "AIL-041"
+    ],
+    "file": "cards/AIL-044.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-055",
+      "AIL-058",
+      "AIL-059",
+      "AIL-061",
+      "AIL-067",
+      "AIL-069",
+      "AIL-079",
+      "AIL-089"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-045",
+    "title": "Grill 到实现的流程包与文档产物关联",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-043",
+      "AIL-044",
+      "AIL-015"
+    ],
+    "file": "cards/AIL-045.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-054",
+      "AIL-070",
+      "AIL-071",
+      "AIL-079",
+      "AIL-084",
+      "AIL-091",
+      "AIL-096"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-046",
+    "title": "本地 Web 控制服务与受限 API",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-021"
+    ],
+    "file": "cards/AIL-046.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-052",
+      "AIL-054",
+      "AIL-055",
+      "AIL-060",
+      "AIL-069",
+      "AIL-072",
+      "AIL-075",
+      "AIL-079",
+      "AIL-080",
+      "AIL-085",
+      "AIL-086"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-047",
+    "title": "个人模式 Onboarding 首次成功体验",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-042",
+      "AIL-043",
+      "AIL-044",
+      "AIL-046",
+      "AIL-050"
+    ],
+    "file": "cards/AIL-047.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-057",
+      "AIL-072",
+      "AIL-073",
+      "AIL-074",
+      "AIL-075",
+      "AIL-078",
+      "AIL-079",
+      "AIL-080",
+      "AIL-081",
+      "AIL-082",
+      "AIL-083",
+      "AIL-085",
+      "AIL-086",
+      "AIL-087",
+      "AIL-093",
+      "AIL-098"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-048",
+    "title": "仓库工作树与子项目日常配置界面",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-044",
+      "AIL-046",
+      "AIL-050",
+      "AIL-047"
+    ],
+    "file": "cards/AIL-048.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-055",
+      "AIL-056",
+      "AIL-059",
+      "AIL-073",
+      "AIL-078",
+      "AIL-079",
+      "AIL-080",
+      "AIL-081",
+      "AIL-082",
+      "AIL-083",
+      "AIL-086",
+      "AIL-087",
+      "AIL-088",
+      "AIL-089",
+      "AIL-094",
+      "AIL-097",
+      "AIL-098"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-049",
+    "title": "源、Skill、MCP 与流程文档可视化编辑",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "L",
+    "depends_on": [
+      "AIL-043",
+      "AIL-044",
+      "AIL-045",
+      "AIL-046",
+      "AIL-050",
+      "AIL-047"
+    ],
+    "file": "cards/AIL-049.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-054",
+      "AIL-062",
+      "AIL-063",
+      "AIL-064",
+      "AIL-065",
+      "AIL-066",
+      "AIL-067",
+      "AIL-068",
+      "AIL-069",
+      "AIL-070",
+      "AIL-071",
+      "AIL-075",
+      "AIL-078",
+      "AIL-079",
+      "AIL-080",
+      "AIL-081",
+      "AIL-082",
+      "AIL-083",
+      "AIL-084",
+      "AIL-085",
+      "AIL-087",
+      "AIL-090",
+      "AIL-091",
+      "AIL-095",
+      "AIL-096",
+      "AIL-098"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-050",
+    "title": "预览应用任务、宿主验证与可恢复撤销",
+    "status": "Done",
+    "milestone": "LOCAL",
+    "size": "XL",
+    "depends_on": [
+      "AIL-042",
+      "AIL-044",
+      "AIL-046",
+      "AIL-008",
+      "AIL-013"
+    ],
+    "file": "cards/AIL-050.md",
+    "reopened_on": "2026-09-17",
+    "reopen_reason": "2026-09-16 复审反例及 2026-09-17 需求对齐；历史完成记录不构成本轮验收",
+    "follow_up_cards": [
+      "AIL-052",
+      "AIL-053",
+      "AIL-059",
+      "AIL-061",
+      "AIL-067",
+      "AIL-072",
+      "AIL-078",
+      "AIL-079",
+      "AIL-084",
+      "AIL-092"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-051",
+    "title": "Onboarding 与多工作树真实体验验收",
+    "status": "Blocked",
+    "milestone": "LOCAL",
+    "size": "XL",
+    "depends_on": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-041",
+      "AIL-042",
+      "AIL-043",
+      "AIL-044",
+      "AIL-045",
+      "AIL-046",
+      "AIL-047",
+      "AIL-048",
+      "AIL-049",
+      "AIL-050"
+    ],
+    "file": "cards/AIL-051.md",
+    "follow_up_cards": [
+      "AIL-077",
+      "AIL-078",
+      "AIL-079",
+      "AIL-098"
+    ]
+  },
+  {
+    "id": "AIL-052",
+    "title": "统一写入保护：公司文件、所有权与路径边界",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-052.md",
+    "parent_cards": [
+      "AIL-042",
+      "AIL-046",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-053",
+    "title": "撤销校验 after-image 并保留用户后改",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-052"
+    ],
+    "file": "cards/AIL-053.md",
+    "parent_cards": [
+      "AIL-042",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-054",
+    "title": "文档导出绑定授权根、预览与目标版本",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-052"
+    ],
+    "file": "cards/AIL-054.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-046",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-055",
+    "title": "配置目标显式贯穿 CLI、API 与任务",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-055.md",
+    "parent_cards": [
+      "AIL-040",
+      "AIL-044",
+      "AIL-046",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-056",
+    "title": "仓库搬迁、工作树重关联与稳定身份",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-055"
+    ],
+    "file": "cards/AIL-056.md",
+    "parent_cards": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-057",
+    "title": "非 Git 文件夹完成配置到应用闭环",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-055"
+    ],
+    "file": "cards/AIL-057.md",
+    "parent_cards": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-047"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-058",
+    "title": "三态继承与单项配置合并",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-055"
+    ],
+    "file": "cards/AIL-058.md",
+    "parent_cards": [
+      "AIL-040",
+      "AIL-044"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-059",
+    "title": "父子作用域统一部署计划与托管归属",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-052",
+      "AIL-055",
+      "AIL-058"
+    ],
+    "file": "cards/AIL-059.md",
+    "parent_cards": [
+      "AIL-040",
+      "AIL-044",
+      "AIL-048",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-060",
+    "title": "个人配置并发保存、无损编辑与迁移",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-055",
+      "AIL-058"
+    ],
+    "file": "cards/AIL-060.md",
+    "parent_cards": [
+      "AIL-040",
+      "AIL-046"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-061",
+    "title": "最终宿主与资源开关约束实际部署",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-058",
+      "AIL-059"
+    ],
+    "file": "cards/AIL-061.md",
+    "parent_cards": [
+      "AIL-044",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-062",
+    "title": "个人资源库事务导入、编辑校验与错误恢复",
+    "status": "In progress",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-062.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-063",
+    "title": "Skill 来源身份、版本与旧数据迁移",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-062"
+    ],
+    "file": "cards/AIL-063.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-064",
+    "title": "从 GitHub 仓库或子目录预览导入 Skill",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-062",
+      "AIL-063"
+    ],
+    "file": "cards/AIL-064.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-065",
+    "title": "skill.sh 发现入口解析与真实来源导入",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-063",
+      "AIL-064"
+    ],
+    "file": "cards/AIL-065.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-066",
+    "title": "Skill 上游检查、差异更新与本地冲突保护",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-063",
+      "AIL-064"
+    ],
+    "file": "cards/AIL-066.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-067",
+    "title": "资源更新到工作树与宿主的同步闭环",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-059",
+      "AIL-061",
+      "AIL-066"
+    ],
+    "file": "cards/AIL-067.md",
+    "parent_cards": [
+      "AIL-044",
+      "AIL-049",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-068",
+    "title": "网页来源管理、导入、更新与订阅影响预览",
+    "status": "Superseded",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-064",
+      "AIL-065",
+      "AIL-066",
+      "AIL-067",
+      "AIL-060",
+      "AIL-095"
+    ],
+    "file": "cards/AIL-068.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-069",
+    "title": "MCP 缺失引用诊断、编辑边界与显式探测",
+    "status": "In progress",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-060",
+      "AIL-061",
+      "AIL-062"
+    ],
+    "file": "cards/AIL-069.md",
+    "parent_cards": [
+      "AIL-044",
+      "AIL-046",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-070",
+    "title": "流程产物稳定 ID、版本冲突与下游复核",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-060",
+      "AIL-062"
+    ],
+    "file": "cards/AIL-070.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-071",
+    "title": "流程包实际 Skill 绑定与文档管理页面",
+    "status": "Superseded",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-054",
+      "AIL-068",
+      "AIL-070",
+      "AIL-096"
+    ],
+    "file": "cards/AIL-071.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-072",
+    "title": "持久任务恢复、幂等与计划失效检查",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-052",
+      "AIL-053",
+      "AIL-055",
+      "AIL-060"
+    ],
+    "file": "cards/AIL-072.md",
+    "parent_cards": [
+      "AIL-046",
+      "AIL-047",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-073",
+    "title": "真实仓库工作树选择器与目标切换失效",
+    "status": "Superseded",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-055",
+      "AIL-056",
+      "AIL-057",
+      "AIL-058",
+      "AIL-059",
+      "AIL-094"
+    ],
+    "file": "cards/AIL-073.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-074",
+    "title": "六步 Onboarding 与能力保存真实闭环",
+    "status": "In progress",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-061",
+      "AIL-062",
+      "AIL-069",
+      "AIL-072",
+      "AIL-073",
+      "AIL-075",
+      "AIL-093"
+    ],
+    "file": "cards/AIL-074.md",
+    "parent_cards": [
+      "AIL-047"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-075",
+    "title": "草稿冲突保留与页面错误恢复",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-060",
+      "AIL-073"
+    ],
+    "file": "cards/AIL-075.md",
+    "parent_cards": [
+      "AIL-046",
+      "AIL-047",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-076",
+    "title": "个人指令补充与替代视图的基线更新",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-052",
+      "AIL-053",
+      "AIL-059",
+      "AIL-061"
+    ],
+    "file": "cards/AIL-076.md",
+    "parent_cards": [
+      "AIL-042"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-077",
+    "title": "真实宿主 Skills、MCP 与个人指令验收",
+    "status": "Blocked",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-067",
+      "AIL-069",
+      "AIL-076"
+    ],
+    "file": "cards/AIL-077.md",
+    "parent_cards": [
+      "AIL-041",
+      "AIL-051"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-078",
+    "title": "真实浏览器与破坏性反例端到端回归",
+    "status": "Done",
+    "milestone": "ALIGN",
+    "size": "L",
+    "depends_on": [
+      "AIL-052",
+      "AIL-053",
+      "AIL-054",
+      "AIL-055",
+      "AIL-056",
+      "AIL-057",
+      "AIL-058",
+      "AIL-059",
+      "AIL-060",
+      "AIL-061",
+      "AIL-062",
+      "AIL-063",
+      "AIL-064",
+      "AIL-065",
+      "AIL-066",
+      "AIL-067",
+      "AIL-068",
+      "AIL-069",
+      "AIL-070",
+      "AIL-071",
+      "AIL-072",
+      "AIL-073",
+      "AIL-074",
+      "AIL-075",
+      "AIL-076",
+      "AIL-098"
+    ],
+    "file": "cards/AIL-078.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049",
+      "AIL-050",
+      "AIL-051"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-079",
+    "title": "需求覆盖复审、文档与最终验收交接",
+    "status": "In progress",
+    "milestone": "ALIGN",
+    "size": "M",
+    "depends_on": [
+      "AIL-077",
+      "AIL-078"
+    ],
+    "file": "cards/AIL-079.md",
+    "parent_cards": [
+      "AIL-039",
+      "AIL-040",
+      "AIL-042",
+      "AIL-043",
+      "AIL-044",
+      "AIL-045",
+      "AIL-046",
+      "AIL-047",
+      "AIL-048",
+      "AIL-049",
+      "AIL-050",
+      "AIL-051"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-080",
+    "title": "Web 工程拆分与页面/API 契约清单",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-080.md",
+    "parent_cards": [
+      "AIL-046",
+      "AIL-047",
+      "AIL-048",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-081",
+    "title": "设计 Token、排版与基础布局规范",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-080"
+    ],
+    "file": "cards/AIL-081.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-082",
+    "title": "基础交互组件：按钮、表单与三态开关",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-081"
+    ],
+    "file": "cards/AIL-082.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-083",
+    "title": "展示组件：状态、列表、表格与页面反馈",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-081",
+      "AIL-082"
+    ],
+    "file": "cards/AIL-083.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-084",
+    "title": "对话框、差异预览与冲突编辑组件",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-082",
+      "AIL-083"
+    ],
+    "file": "cards/AIL-084.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-049",
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-085",
+    "title": "统一 API 客户端与错误/取消协议",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-080"
+    ],
+    "file": "cards/AIL-085.md",
+    "parent_cards": [
+      "AIL-046",
+      "AIL-047",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-086",
+    "title": "页面状态容器、目标版本与草稿状态机",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-085"
+    ],
+    "file": "cards/AIL-086.md",
+    "parent_cards": [
+      "AIL-040",
+      "AIL-046",
+      "AIL-047",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-087",
+    "title": "应用壳、路由与跨页恢复",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-081",
+      "AIL-083",
+      "AIL-086"
+    ],
+    "file": "cards/AIL-087.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-088",
+    "title": "业务组件：仓库/工作树/子项目选择器",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-082",
+      "AIL-083",
+      "AIL-085",
+      "AIL-086",
+      "AIL-055",
+      "AIL-056",
+      "AIL-057"
+    ],
+    "file": "cards/AIL-088.md",
+    "parent_cards": [
+      "AIL-039",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-089",
+    "title": "业务组件：宿主能力矩阵与继承编辑",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-082",
+      "AIL-083",
+      "AIL-085",
+      "AIL-086",
+      "AIL-058",
+      "AIL-061",
+      "AIL-069"
+    ],
+    "file": "cards/AIL-089.md",
+    "parent_cards": [
+      "AIL-044",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-090",
+    "title": "业务组件：来源输入、导入预览与更新冲突",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-082",
+      "AIL-083",
+      "AIL-084",
+      "AIL-085",
+      "AIL-086",
+      "AIL-064",
+      "AIL-065",
+      "AIL-066",
+      "AIL-067"
+    ],
+    "file": "cards/AIL-090.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-091",
+    "title": "业务组件：流程阶段与文档关联编辑",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-082",
+      "AIL-083",
+      "AIL-084",
+      "AIL-085",
+      "AIL-086",
+      "AIL-070"
+    ],
+    "file": "cards/AIL-091.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-092",
+    "title": "业务组件：计划、任务进度与验证结果",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-083",
+      "AIL-084",
+      "AIL-085",
+      "AIL-086",
+      "AIL-053",
+      "AIL-054",
+      "AIL-067",
+      "AIL-072"
+    ],
+    "file": "cards/AIL-092.md",
+    "parent_cards": [
+      "AIL-050"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-093",
+    "title": "页面组装：六步首次设置向导",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-088",
+      "AIL-089",
+      "AIL-090",
+      "AIL-092",
+      "AIL-075"
+    ],
+    "file": "cards/AIL-093.md",
+    "parent_cards": [
+      "AIL-047"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-094",
+    "title": "页面组装：仓库与作用域日常配置",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-088",
+      "AIL-089",
+      "AIL-092",
+      "AIL-060"
+    ],
+    "file": "cards/AIL-094.md",
+    "parent_cards": [
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-095",
+    "title": "页面组装：资源库、来源订阅与更新部署",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-090",
+      "AIL-092"
+    ],
+    "file": "cards/AIL-095.md",
+    "parent_cards": [
+      "AIL-043",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-096",
+    "title": "页面组装：流程与文档工作台",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-091",
+      "AIL-092",
+      "AIL-054"
+    ],
+    "file": "cards/AIL-096.md",
+    "parent_cards": [
+      "AIL-045",
+      "AIL-049"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-097",
+    "title": "页面组装：个人指令与宿主验证设置",
+    "status": "Superseded",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-088",
+      "AIL-084",
+      "AIL-092",
+      "AIL-076"
+    ],
+    "file": "cards/AIL-097.md",
+    "parent_cards": [
+      "AIL-042",
+      "AIL-048"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-098",
+    "title": "组件样例与所有页面浏览器质量关卡",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-093",
+      "AIL-094",
+      "AIL-095",
+      "AIL-096",
+      "AIL-097"
+    ],
+    "file": "cards/AIL-098.md",
+    "parent_cards": [
+      "AIL-047",
+      "AIL-048",
+      "AIL-049",
+      "AIL-051"
+    ],
+    "owner": "ZCode（2026-09-17 领取）"
+  },
+  {
+    "id": "AIL-099",
+    "title": "主导航收敛、操作记录与流程工作台定位",
+    "status": "Done",
+    "milestone": "WEB",
+    "size": "M",
+    "depends_on": [
+      "AIL-087",
+      "AIL-096"
+    ],
+    "file": "cards/AIL-099.md"
+  },
+  {
+    "id": "AIL-100",
+    "title": "项目入口、配置范围与状态表达",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-100.md"
+  },
+  {
+    "id": "AIL-101",
+    "title": "项目 Skill 添加、移除与继承闭环",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100"
+    ],
+    "file": "cards/AIL-101.md"
+  },
+  {
+    "id": "AIL-102",
+    "title": "全局来源管理与项目引用双向走查",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100",
+      "AIL-101"
+    ],
+    "file": "cards/AIL-102.md"
+  },
+  {
+    "id": "AIL-103",
+    "title": "项目宿主配置与能力限制走查",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100"
+    ],
+    "file": "cards/AIL-103.md"
+  },
+  {
+    "id": "AIL-104",
+    "title": "项目 MCP 引用、配置与安全闭环",
+    "status": "In progress",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100",
+      "AIL-103"
+    ],
+    "file": "cards/AIL-104.md"
+  },
+  {
+    "id": "AIL-105",
+    "title": "项目 Agent 与其他资源能力走查",
+    "status": "In progress",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100",
+      "AIL-103"
+    ],
+    "file": "cards/AIL-105.md"
+  },
+  {
+    "id": "AIL-106",
+    "title": "项目 Markdown 指令编辑与继承走查",
+    "status": "In progress",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100",
+      "AIL-103"
+    ],
+    "file": "cards/AIL-106.md"
+  },
+  {
+    "id": "AIL-107",
+    "title": "预览、应用、冲突与撤销真实闭环",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-101",
+      "AIL-103",
+      "AIL-104",
+      "AIL-105",
+      "AIL-106"
+    ],
+    "file": "cards/AIL-107.md"
+  },
+  {
+    "id": "AIL-108",
+    "title": "Dialog、跳转、表单与可访问性统一走查",
+    "status": "In progress",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-100",
+      "AIL-101",
+      "AIL-102",
+      "AIL-104",
+      "AIL-106"
+    ],
+    "file": "cards/AIL-108.md"
+  },
+  {
+    "id": "AIL-109",
+    "title": "完整业务旅程端到端验收与证据归档",
+    "status": "Done",
+    "milestone": "WEB-FLOW",
+    "size": "M",
+    "depends_on": [
+      "AIL-099",
+      "AIL-100",
+      "AIL-101",
+      "AIL-102",
+      "AIL-103",
+      "AIL-104",
+      "AIL-105",
+      "AIL-106",
+      "AIL-107",
+      "AIL-108"
+    ],
+    "file": "cards/AIL-109.md"
+  },
+  {
+    "id": "AIL-110",
+    "title": "非 Git 知识库作为主项目的急用闭环",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-110.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-111",
+    "title": "扫描项目已有未托管 Skill 并与托管资源区分",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-110"
+    ],
+    "file": "cards/AIL-111.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-112",
+    "title": "未托管 Skill 双重确认删除与接管帮助",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-111"
+    ],
+    "file": "cards/AIL-112.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-113",
+    "title": "项目内搜索选择与加号导入连续流程",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-110"
+    ],
+    "file": "cards/AIL-113.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-114",
+    "title": "引用写入、移除、范围与应用结果正确性修复",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-110",
+      "AIL-113"
+    ],
+    "file": "cards/AIL-114.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-115",
+    "title": "急用版交付门禁：两个非 Git 知识库的完整演示",
+    "status": "In progress",
+    "priority": "P0",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-110",
+      "AIL-111",
+      "AIL-113",
+      "AIL-114"
+    ],
+    "file": "cards/AIL-115.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-116",
+    "title": "MCP 项目参数与安全凭据管理",
+    "status": "Backlog",
+    "priority": "P1",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-114"
+    ],
+    "file": "cards/AIL-116.md"
+  },
+  {
+    "id": "AIL-117",
+    "title": "统一 Markdown 指令与最新宿主能力规则",
+    "status": "Backlog",
+    "priority": "P1",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-114"
+    ],
+    "file": "cards/AIL-117.md"
+  },
+  {
+    "id": "AIL-118",
+    "title": "其余页面逐动作补漏与旧入口一致性",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-114"
+    ],
+    "file": "cards/AIL-118.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-119",
+    "title": "来源故障、符号链接与失效引用恢复",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-111",
+      "AIL-113"
+    ],
+    "file": "cards/AIL-119.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-120",
+    "title": "CLI 能力对齐与专项走查",
+    "status": "Done",
+    "milestone": "USABLE-LOCAL",
+    "size": "M",
+    "depends_on": [
+      "AIL-114",
+      "AIL-115"
+    ],
+    "file": "cards/AIL-120.md",
+    "owner": "ZCode（2026-09-20 走查验收）"
+  },
+  {
+    "id": "AIL-121",
+    "title": "统一目录目标与有效配置契约",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-121.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail121-*.png"
+  },
+  {
+    "id": "AIL-122",
+    "title": "项目目录导航与选择 Dialog",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-121"
+    ],
+    "file": "cards/AIL-122.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail122-*.png"
+  },
+  {
+    "id": "AIL-123",
+    "title": "目录资源列表与添加移除 Dialog",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-121",
+      "AIL-122"
+    ],
+    "file": "cards/AIL-123.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail123-*.png"
+  },
+  {
+    "id": "AIL-124",
+    "title": "项目共享设置与 Markdown 指令范围分离",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-121",
+      "AIL-122"
+    ],
+    "file": "cards/AIL-124.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail124-*.png"
+  },
+  {
+    "id": "AIL-125",
+    "title": "当前目标预览应用与结果闭环",
+    "status": "In progress",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-121",
+      "AIL-123",
+      "AIL-124"
+    ],
+    "file": "cards/AIL-125.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail125-*.png"
+  },
+  {
+    "id": "AIL-126",
+    "title": "资源中心按真实来源分组与引用 Dialog",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-123"
+    ],
+    "file": "cards/AIL-126.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail126-*.png"
+  },
+  {
+    "id": "AIL-127",
+    "title": "旧入口衔接与统一交互收口",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-122",
+      "AIL-123",
+      "AIL-124",
+      "AIL-125",
+      "AIL-126"
+    ],
+    "file": "cards/AIL-127.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/ail127-*.png"
+  },
+  {
+    "id": "AIL-128",
+    "title": "按线稿完成真实浏览器与文件验收",
+    "status": "In progress",
+    "priority": "P0",
+    "milestone": "DIRECTORY-UX",
+    "size": "M",
+    "depends_on": [
+      "AIL-121",
+      "AIL-122",
+      "AIL-123",
+      "AIL-124",
+      "AIL-125",
+      "AIL-126",
+      "AIL-127"
+    ],
+    "file": "cards/AIL-128.md",
+    "owner": "ZCode（2026-09-22 目录优先轮）",
+    "evidence": "docs/evidence/directory-ux-2026-09-22/README.md"
+  },
+  {
+    "id": "AIL-129",
+    "title": "全量审查首批修复：删除加固、同步互删与契约门禁",
+    "status": "Done",
+    "priority": "P0",
+    "milestone": "IT-0 首批修复",
+    "size": "L",
+    "depends_on": [],
+    "file": "cards/AIL-129.md"
+  },
+  {
+    "id": "AIL-130",
+    "title": "CI 门禁补齐：MSRV、前端测试与文档检查",
+    "status": "In progress",
+    "priority": "P0",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [
+      "AIL-129"
+    ],
+    "file": "cards/AIL-130.md"
+  },
+  {
+    "id": "AIL-131",
+    "title": "关卡纪律复核：Done 卡验收项与证据对齐",
+    "status": "In progress",
+    "priority": "P0",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "L",
+    "depends_on": [],
+    "file": "cards/AIL-131.md"
+  },
+  {
+    "id": "AIL-132",
+    "title": "控制台 API 健壮性与统一错误结构",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [
+      "AIL-129"
+    ],
+    "file": "cards/AIL-132.md"
+  },
+  {
+    "id": "AIL-133",
+    "title": "未覆盖 API 路由与跨模块组合场景测试",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [
+      "AIL-132"
+    ],
+    "file": "cards/AIL-133.md"
+  },
+  {
+    "id": "AIL-134",
+    "title": "CLI 输出契约统一",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-2 CLI 一致性",
+    "size": "M",
+    "depends_on": [
+      "AIL-129"
+    ],
+    "file": "cards/AIL-134.md"
+  },
+  {
+    "id": "AIL-135",
+    "title": "CLI 动作与参数枚举化",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "IT-2 CLI 一致性",
+    "size": "M",
+    "depends_on": [
+      "AIL-134"
+    ],
+    "file": "cards/AIL-135.md"
+  },
+  {
+    "id": "AIL-136",
+    "title": "错误码治理与码表一致性测试",
+    "status": "Done",
+    "priority": "P2",
+    "milestone": "IT-2 CLI 一致性",
+    "size": "M",
+    "depends_on": [
+      "AIL-134"
+    ],
+    "file": "cards/AIL-136.md"
+  },
+  {
+    "id": "AIL-137",
+    "title": "Web 入口收敛：console、web 与 dashboard",
+    "status": "Done",
+    "priority": "P2",
+    "milestone": "IT-2 CLI 一致性",
+    "size": "S",
+    "depends_on": [
+      "AIL-135"
+    ],
+    "file": "cards/AIL-137.md"
+  },
+  {
+    "id": "AIL-138",
+    "title": "前端死代码与孤儿路由清理",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-3 UI 收敛",
+    "size": "M",
+    "depends_on": [
+      "AIL-130"
+    ],
+    "file": "cards/AIL-138.md"
+  },
+  {
+    "id": "AIL-139",
+    "title": "设计系统对齐与窄屏导航",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "IT-3 UI 收敛",
+    "size": "M",
+    "depends_on": [
+      "AIL-138"
+    ],
+    "file": "cards/AIL-139.md"
+  },
+  {
+    "id": "AIL-140",
+    "title": "术语统一与空状态、错误状态补齐",
+    "status": "Done",
+    "priority": "P2",
+    "milestone": "IT-3 UI 收敛",
+    "size": "M",
+    "depends_on": [
+      "AIL-138"
+    ],
+    "file": "cards/AIL-140.md"
+  },
+  {
+    "id": "AIL-141",
+    "title": "范围追认：原生文件、网页服务、知识库迁移、附加宿主与 ORCA",
+    "status": "Backlog",
+    "priority": "P0",
+    "milestone": "IT-4 架构与范围",
+    "size": "L",
+    "depends_on": [],
+    "file": "cards/AIL-141.md"
+  },
+  {
+    "id": "AIL-142",
+    "title": "宿主能力事实统一与单一宿主注册表",
+    "status": "Backlog",
+    "priority": "P1",
+    "milestone": "IT-4 架构与范围",
+    "size": "L",
+    "depends_on": [
+      "AIL-141"
+    ],
+    "file": "cards/AIL-142.md"
+  },
+  {
+    "id": "AIL-143",
+    "title": "控制台后端按领域拆分",
+    "status": "Done",
+    "priority": "P2",
+    "milestone": "IT-4 架构与范围",
+    "size": "L",
+    "depends_on": [
+      "AIL-133"
+    ],
+    "file": "cards/AIL-143.md"
+  },
+  {
+    "id": "AIL-144",
+    "title": "领域类型收紧",
+    "status": "Backlog",
+    "priority": "P2",
+    "milestone": "IT-4 架构与范围",
+    "size": "M",
+    "depends_on": [
+      "AIL-143"
+    ],
+    "file": "cards/AIL-144.md"
+  },
+  {
+    "id": "AIL-145",
+    "title": "产品文档按现状重写",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "IT-5 文档与发布",
+    "size": "M",
+    "depends_on": [
+      "AIL-137",
+      "AIL-142"
+    ],
+    "file": "cards/AIL-145.md"
+  },
+  {
+    "id": "AIL-146",
+    "title": "文档结构第二阶段与证据瘦身",
+    "status": "Backlog",
+    "priority": "P2",
+    "milestone": "IT-5 文档与发布",
+    "size": "M",
+    "depends_on": [
+      "AIL-145"
+    ],
+    "file": "cards/AIL-146.md"
+  },
+  {
+    "id": "AIL-147",
+    "title": "发布准备：安装脚本、分发地址与发布清单复核",
+    "status": "Backlog",
+    "priority": "P2",
+    "milestone": "IT-5 文档与发布",
+    "size": "M",
+    "depends_on": [
+      "AIL-130",
+      "AIL-145"
+    ],
+    "file": "cards/AIL-147.md"
+  },
+  {
+    "id": "AIL-148",
+    "title": "并发 sync 误把进行中的 journal 当作崩溃遗留",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "S",
+    "depends_on": [],
+    "file": "cards/AIL-148.md"
+  },
+  {
+    "id": "AIL-149",
+    "title": "知识库默认托管位置与迁移：范围追认与验收",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-4 架构与范围",
+    "size": "M",
+    "depends_on": [
+      "AIL-141"
+    ],
+    "file": "cards/AIL-149.md"
+  }
 ]

@@ -25,9 +25,60 @@ fn seed_repo(main: &std::path::Path) {
 
 fn sel(resources: &[(&str, TriState)]) -> ScopeSelection {
     ScopeSelection {
+        independent_resources: false,
         hosts: Default::default(),
         resources: resources.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
     }
+}
+
+#[test]
+fn configured_directory_nodes_are_persistent_and_cannot_escape_the_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("folder-project");
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(root.join("docs/ui")).unwrap();
+    ailoom::commands::personal::configure_scope(&root, Some("docs"), true, false, Some(0), &data)
+        .unwrap();
+    ailoom::commands::personal::configure_scope(&root, Some("docs/ui"), true, true, Some(1), &data)
+        .unwrap();
+    let dirs = ailoom::commands::personal::project_dirs(Some(&root), Some(&data), &data).unwrap();
+    assert_eq!(dirs["dirs"][0]["path"], "docs");
+    assert_eq!(dirs["dirs"][0]["inherit_resources"], false);
+    assert_eq!(dirs["dirs"][1]["inherit_resources"], true);
+    assert!(ailoom::commands::personal::configure_scope(
+        &root,
+        Some("missing"),
+        true,
+        true,
+        None,
+        &data
+    )
+    .is_err());
+    assert!(ailoom::commands::personal::configure_scope(
+        &root,
+        Some("../data"),
+        true,
+        true,
+        None,
+        &data
+    )
+    .is_err());
+    #[cfg(unix)]
+    {
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("escape")).unwrap();
+        assert!(ailoom::commands::personal::configure_scope(
+            &root,
+            Some("escape"),
+            true,
+            true,
+            None,
+            &data
+        )
+        .is_err());
+    }
+    assert!(!root.join("missing").exists());
 }
 
 /// 个人配置写入仓外数据区；项目根不新增任何个人文件；真实仓库登记联动解析。
@@ -100,7 +151,7 @@ fn profile_stored_outside_repo_and_resolves_with_registry() {
     );
     assert!(
         out.resources["personal/skill/common/myflow"].deployed,
-        "个人库资源独立启用"
+        "资源库资源独立启用"
     );
     assert!(out.hosts["claude"].enabled);
 }
@@ -154,7 +205,7 @@ fn corrupted_profile_errors_loudly() {
     assert_eq!(err2.code, "E3001", "未知 schema_version 拒绝");
 }
 
-/// 子项目模板跨 worktree 生效：某工作树无该目录时显示未匹配（不部署该子项目层）。
+/// 子项目模板跨 worktree 生效：某 Worktree 无该目录时显示未匹配（不部署该子项目层）。
 #[test]
 fn subproject_template_missing_dir_is_unmatched_not_created() {
     let tmp = tempfile::tempdir().unwrap();
@@ -192,7 +243,7 @@ fn subproject_template_missing_dir_is_unmatched_not_created() {
     profile.save(&data_root).unwrap();
     let loaded = PersonalProfile::load_or_default(&data_root).unwrap();
 
-    // 主工作树：web/docs 命中 → 禁用生效
+    // 主 Worktree：web/docs 命中 → 禁用生效
     let out_main = resolve_effective(ResolveScopeRequest {
         profile: &loaded,
         repo_id: &d_main.identity.repo_id,

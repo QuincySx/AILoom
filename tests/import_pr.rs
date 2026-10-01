@@ -1323,3 +1323,32 @@ fn pr_merge_graph_baseline_targeting_snapshot_and_retry() {
     assert_eq!(v["result"]["baseline"]["graph_baseline"], "advanced", "{v}");
     assert!(marker_has_success(&head3));
 }
+
+/// C-03 回归：本地目录源（--local-path）绑定的工作区也能导入，不再被当作 Git 源解析。
+#[test]
+fn import_works_with_local_path_source() {
+    let c = Ctx::new();
+    common::make_team_source(c.tmp.path());
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--local-path",
+            "../team-src",
+            "--project",
+            "a",
+        ],
+    );
+    assert_eq!(code, 0, "init: {stderr}");
+    let dir = c.tmp.path().join("docs-in");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.md"), "# 标题\n\n内容\n").unwrap();
+    let (code, stdout, stderr) = run_refs(&c, &ws, &import_args(&c, &dir, "shared", "doc", false));
+    assert_eq!(code, 0, "local 源导入预览应成功: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert!(v["result"].is_object(), "{v}");
+}

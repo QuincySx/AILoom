@@ -1,7 +1,7 @@
 //! Git 本地 exclude（info/exclude）生命周期辅助（AIL-042）。
 //!
 //! 只管理 `# >>> ailoom-personal >>>` 托管块内的行：用户既有条目（含 common-dir
-//! 共享 exclude）原样保留。多工作树共用同一 common-dir 的 exclude，用数据区的
+//! 共享 exclude）原样保留。多 Worktree 共用同一 common-dir 的 exclude，用数据区的
 //! 引用计数决定何时真正移除某行。说明：exclude 对已跟踪文件无效，也不是强制
 //! add 的防泄漏保证——它只让普通 `git add` 默认不收 AILoom 生成的新增文件。
 
@@ -18,7 +18,7 @@ pub const MARKER_END: &str = "# <<< ailoom-personal <<<";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExcludeState {
     pub schema_version: u32,
-    /// pattern → 引用它的（仓库登记）工作树数
+    /// pattern → 引用它的（仓库登记）Worktree 数
     pub refcount: BTreeMap<String, u32>,
     pub updated_at: String,
 }
@@ -109,7 +109,7 @@ fn write_exclude_with(common_dir: &Path, patterns: &[String]) -> Result<()> {
 }
 
 /// 为本次部署登记 exclude patterns（引用计数 +1；幂等）。
-/// 同一 common-dir 的多个工作树共享 exclude 文件，计数到 0 才移除行。
+/// 同一 common-dir 的多个 Worktree 共享 exclude 文件，计数到 0 才移除行。
 pub fn add_patterns(
     common_dir: &Path,
     data_root: &Path,

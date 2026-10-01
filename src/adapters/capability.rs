@@ -26,6 +26,9 @@ pub struct Capability {
     pub load_mode: &'static str,
     /// 生效是否需要重启/新会话
     pub requires_new_session: bool,
+    /// Config generation does not install or verify this official extension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_extension: Option<&'static str>,
     pub notes: &'static str,
     /// 官方来源
     pub official_doc: &'static str,
@@ -36,7 +39,7 @@ pub struct Capability {
 
 /// 全量能力矩阵（与 docs/capabilities/ 保持同步；变更需同步更新 md）。
 pub fn matrix() -> Vec<Capability> {
-    vec![
+    let mut result = vec![
         // ---- Claude Code ----
         Capability {
             tool: "claude",
@@ -45,6 +48,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".claude/skills/<name>/SKILL.md（symlink 实体进 SkillStore）",
             requires_new_session: false,
+            required_extension: None,
             notes: "按需加载；子目录 skills 亦被发现",
             official_doc: "code.claude.com/docs/en/skills",
             verified: Some("claude 2.1.272，2026-09-16 隔离项目真实调用通过（docs/evidence/console/2026-09-16-host-probes.md）"),
@@ -56,7 +60,8 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".claude/rules/*.md（递归，frontmatter paths 条件由宿主解析）",
             requires_new_session: true,
-            notes: "会话加载；与 CLAUDE.md 基线共同生效",
+            required_extension: None,
+            notes: "与项目说明共同生效；Claude Code 2.1.277+ 默认无 CLAUDE.md/CLAUDE.local.md 时回退 AGENTS.md",
             official_doc: "code.claude.com/docs/en/memory",
             verified: None,
         },
@@ -65,8 +70,9 @@ pub fn matrix() -> Vec<Capability> {
             kind: "doc",
             scope: "project",
             support: Support::Generated,
-            load_mode: "受管副本 .ailoom/docs/ + CLAUDE.md 索引片段",
+            load_mode: "受管副本 .ailoom/docs/ + 项目说明索引片段（尊重 AGENTS.md 回退）",
             requires_new_session: true,
+            required_extension: None,
             notes: "个人模式不写 CLAUDE.md（AIL-042），改用个人指令视图",
             official_doc: "code.claude.com/docs/en/memory",
             verified: None,
@@ -78,6 +84,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".claude/agents/*.md",
             requires_new_session: true,
+            required_extension: None,
             notes: "会话加载",
             official_doc: "code.claude.com/docs/en/sub-agents",
             verified: None,
@@ -89,6 +96,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".mcp.json mcpServers.<name>（stdio/http）",
             requires_new_session: true,
+            required_extension: None,
             notes: "首次连接需用户批准；设置成功 ≠ 连接成功",
             official_doc: "code.claude.com/docs/en/mcp",
             verified: Some("claude 2.1.272，2026-09-16 mcp list 连接探测（docs/evidence/console/2026-09-16-host-probes.md）"),
@@ -101,6 +109,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".agents/skills/<name>（CWD 向上扫描至仓库根，支持 symlink）+ .codex/config.toml skills.config 显式条目",
             requires_new_session: true,
+            required_extension: None,
             notes: "2026-09-16 官方复核：原生发现路径为 .agents/skills；旧 .ailoom/skills 路径由 sync 过期清理迁移",
             official_doc: "learn.chatgpt.com/docs/build-skills",
             verified: Some("codex-cli 0.154.0，2026-09-16 隔离项目真实发现（docs/evidence/console/2026-09-16-host-probes.md）"),
@@ -112,6 +121,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Generated,
             load_mode: "仓库根 AGENTS.md 受管片段（就近优先）",
             requires_new_session: true,
+            required_extension: None,
             notes: "片段无条件语义；条件 paths 显式 Unsupported",
             official_doc: "learn.chatgpt.com/docs/agent-configuration/agents-md",
             verified: None,
@@ -123,6 +133,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Unknown,
             load_mode: "—",
             requires_new_session: false,
+            required_extension: None,
             notes: "官方文档未确认项目级自定义 Agent → 显式 Unsupported，不写用户级配置充数",
             official_doc: "未能核实",
             verified: None,
@@ -134,6 +145,7 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: ".codex/config.toml [mcp_servers.<name>]（stdio/http）",
             requires_new_session: true,
+            required_extension: None,
             notes: "官方文档：项目级配置仅受信项目加载（trust gate）；0.153.4 实测不加载 → 0.154.0 待本轮实测记录",
             official_doc: "learn.chatgpt.com/docs/extend/mcp",
             verified: Some("codex-cli 0.154.0，2026-09-16 mcp list 实测（docs/evidence/console/2026-09-16-host-probes.md）"),
@@ -146,11 +158,96 @@ pub fn matrix() -> Vec<Capability> {
             support: Support::Native,
             load_mode: "co-load .claude/skills 与 .mcp.json（paths.rs 核实）",
             requires_new_session: true,
+            required_extension: None,
             notes: "无需单独部署产物",
             official_doc: "alva 本地核实",
             verified: Some("2026-09-11 alva-agent 仓库实测（docs/capabilities/alva.md）"),
         },
-    ]
+    ];
+    for host in super::hosts::HOSTS {
+        let source = match host.id {
+            "grok" => "https://github.com/xai-org/grok-build/tree/f0e3be1100ef5252488e3be8bb0e91cf68d8c305",
+            "pi" => "https://github.com/badlogic/pi-mono/tree/7c696c00f34cf773c86d33093de8d5711994c5e4/packages/coding-agent",
+            "opencode" => "https://opencode.ai/docs/",
+            _ => "https://cursor.com/docs/",
+        };
+        for kind in ["skill", "agent", "mcp", "rule"] {
+            let (support, mode, notes) = match (host.id, kind) {
+                (_, "skill") => (
+                    Support::Native,
+                    host.skills,
+                    "原生技能目录；需项目可信并允许加载",
+                ),
+                ("pi", "agent") => (
+                    Support::Generated,
+                    ".pi/agents/*.md",
+                    "Pi 官方 subagent 扩展；调用时 agentScope 需为 project 或 both",
+                ),
+                ("pi", "mcp") => (
+                    Support::Unsupported,
+                    "—",
+                    "需要 MCP 扩展；原生 Pi 没有 MCP 配置入口",
+                ),
+                (_, "agent") => (
+                    Support::Native,
+                    host.agents.unwrap_or("—"),
+                    "模型与权限使用各工具自己的设置",
+                ),
+                ("grok", "mcp") => (
+                    Support::Native,
+                    ".grok/config.toml [mcp_servers]",
+                    "需允许项目 MCP 配置",
+                ),
+                ("opencode", "mcp") => (
+                    Support::Native,
+                    ".opencode/opencode.json mcp",
+                    "合并项目配置；此目录已有 JSONC 时暂不自动改写",
+                ),
+                ("cursor", "mcp") => (
+                    Support::Native,
+                    ".cursor/mcp.json mcpServers",
+                    "连接仍需工具授权",
+                ),
+                ("cursor", "rule") => (
+                    Support::Native,
+                    ".cursor/rules/*.mdc",
+                    "按规则的 paths 保留作用范围",
+                ),
+                ("grok", "rule") => (
+                    Support::Native,
+                    ".grok/rules/*.md",
+                    "Git 忽略的规则不会被 Grok 读取",
+                ),
+                ("pi", "rule") => (
+                    Support::Generated,
+                    ".pi/APPEND_SYSTEM.md",
+                    "追加指令；AGENTS.md 等项目基线保留",
+                ),
+                _ => (
+                    Support::Generated,
+                    "AGENTS.md",
+                    "受管片段；个人模式不改已跟踪文件",
+                ),
+            };
+            result.push(Capability {
+                tool: host.id,
+                kind,
+                scope: "project",
+                support,
+                load_mode: mode,
+                requires_new_session: true,
+                required_extension: if host.id == "pi" && kind == "agent" {
+                    Some("Pi 官方 subagent")
+                } else {
+                    None
+                },
+                notes,
+                official_doc: source,
+                verified: None,
+            });
+        }
+    }
+    result
 }
 
 /// 查询单条能力；未登记返回 None（调用方按 unknown 处理并显式说明）。

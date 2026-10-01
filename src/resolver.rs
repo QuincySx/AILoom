@@ -125,7 +125,7 @@ pub fn resolve(req: ResolveRequest<'_>) -> Result<DesiredSet> {
     for r in req.active_roles {
         req.manifest.require_role(r)?;
     }
-    let entries = enumerate(req.snapshot_root, req.manifest, req.source)?;
+    let entries = enumerate(req.snapshot_root, req.manifest, req.source, &mut Vec::new())?;
 
     let mut selected = Vec::new();
     let mut excluded = Vec::new();

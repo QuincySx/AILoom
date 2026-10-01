@@ -35,10 +35,6 @@ export function draft() {
   return get('draft') ?? { ...DEFAULT_DRAFT };
 }
 
-export function patchDraft(patch) {
-  set('draft', Object.assign({}, draft(), patch));
-}
-
 export async function saveDraft() {
   const rev = get('draftRev') ?? 0;
   try {

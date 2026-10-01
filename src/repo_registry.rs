@@ -1,4 +1,4 @@
-//! 仓库身份、工作树与子项目发现/登记（AIL-039）。
+//! 仓库身份、Worktree 与子项目发现/登记（AIL-039）。
 //!
 //! Git 身份与配置作用域分离：先按 Git 元数据（common-dir、worktree 列表）识别仓库，
 //! 再在仓库边界内登记配置作用域（子项目相对路径）。RepositoryId 以 common-dir 为
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// 工作树登记状态：active = 当前可见；missing = 注册时在、现在失联。
+/// Worktree 登记状态：active = 当前可见；missing = 注册时在、现在失联。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorktreeStatus {
@@ -50,7 +50,7 @@ impl WorktreeInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RepoIdentity {
-    /// 主工作树根（bare 仓库 = common-dir 本身）。
+    /// 主 Worktree 根（bare 仓库 = common-dir 本身）。
     pub repo_root: PathBuf,
     /// Git common-dir 绝对路径：同仓库所有 worktree 共享，是归组依据。
     pub common_dir: PathBuf,
@@ -69,7 +69,7 @@ pub struct RepoDiscovery {
     pub worktrees: Vec<WorktreeInfo>,
     /// 发现起点（canonical）。
     pub start: PathBuf,
-    /// 起点所在 worktree（最长路径前缀匹配；可能不是主工作树）。
+    /// 起点所在 worktree（最长路径前缀匹配；可能不是主 Worktree）。
     pub current_worktree: PathBuf,
 }
 
@@ -111,7 +111,7 @@ pub fn classify_path(start: &Path) -> Result<PathClass> {
     Ok(PathClass::Git(discover_repo(&start)?))
 }
 
-/// 发现仓库身份与全部关联工作树。
+/// 发现仓库身份与全部关联 Worktree。
 pub fn discover_repo(start: &Path) -> Result<RepoDiscovery> {
     let start = start.canonicalize().map_err(|e| {
         Error::new(code::WORKSPACE_INVALID, format!("路径不可用: {e}"))
@@ -165,7 +165,7 @@ pub fn discover_repo(start: &Path) -> Result<RepoDiscovery> {
         .ok_or_else(|| {
             Error::new(
                 code::WORKSPACE_INVALID,
-                "起点不在任何已枚举工作树内（worktree list 与路径不一致）",
+                "起点不在任何已枚举 Worktree 内（worktree list 与路径不一致）",
             )
             .context(serde_json::json!({ "start": start.display().to_string() }))
         })?;
@@ -231,7 +231,7 @@ pub fn list_worktrees(any_worktree: &Path) -> Result<Vec<WorktreeInfo>> {
     if out.is_empty() {
         return Err(Error::new(
             code::GIT_COMMAND_FAILED,
-            "worktree list 未返回任何工作树",
+            "worktree list 未返回任何 Worktree",
         ));
     }
     Ok(out)
@@ -308,7 +308,7 @@ impl RepoRegistry {
     /// 解析当前发现对应的登记身份（F05）：
     /// 1) repo_id 精确命中 → 直接加载；
     /// 2) 别名索引命中（common_dir 历史登记过）且 Git 证据吻合（origin 相同且
-    ///    至少一个工作树分支/HEAD 命中）→ 解析为原登记（搬迁后配置/身份不丢）；
+    ///    至少一个 Worktree 分支/HEAD 命中）→ 解析为原登记（搬迁后配置/身份不丢）；
     /// 3) 都不命中 → 按新仓库登记。
     ///
     /// 返回登记使用的 registry（repo_id 以 registry.repo_id 为准）。
@@ -350,15 +350,15 @@ impl RepoRegistry {
     }
 
     /// 用最新发现刷新登记：现存路径标 active 并更新 last_seen；失联路径保留并标 missing。
-    /// F05：同仓库内的工作树搬迁（新路径无登记、旧登记失联且分支唯一吻合）→
+    /// F05：同仓库内的 Worktree 搬迁（新路径无登记、旧登记失联且分支唯一吻合）→
     /// 自动重挂到旧登记 id（WorktreeId 稳定，配置不丢）。detached（无分支）不猜。
-    /// 返回本次新登记的工作树 id 列表。
+    /// 返回本次新登记的 Worktree id 列表。
     pub fn refresh_worktrees(&mut self, discovery: &RepoDiscovery, now: &str) -> Vec<String> {
         let mut fresh: BTreeMap<String, (PathBuf, Option<String>, Option<String>)> =
             Default::default();
         for w in &discovery.worktrees {
             if w.is_bare {
-                continue; // bare 容器不是可部署工作树，不进登记
+                continue; // bare 容器不是可部署 Worktree，不进登记
             }
             // git 仍会列出已移走/失联的路径：目录不存在时不刷新为 active，
             // 让旧登记按 missing 保留（用户显式重关联或清理）
@@ -441,7 +441,7 @@ impl RepoRegistry {
         added
     }
 
-    /// 重关联失联工作树到新位置（用户显式确认移动）。
+    /// 重关联失联 Worktree 到新位置（用户显式确认移动）。
     /// F04：新路径必须真实属于本仓库（common-dir 一致）。
     /// F05：common-dir 不一致 = 整仓搬迁 → 在分支/HEAD 证据吻合时执行身份迁移：
     /// 保持 repo_id / WorktreeId / 个人配置 / 指令条目不变，登记新位置；
@@ -454,7 +454,10 @@ impl RepoRegistry {
         now: &str,
     ) -> Result<RepoMoveOutcome> {
         let entry = self.worktrees.get_mut(id).ok_or_else(|| {
-            Error::new(code::UNKNOWN_REFERENCE, format!("工作树登记不存在: {id}"))
+            Error::new(
+                code::UNKNOWN_REFERENCE,
+                format!("Worktree 登记不存在: {id}"),
+            )
         })?;
         let new_path = new_path.canonicalize().map_err(|e| {
             Error::new(code::WORKSPACE_INVALID, format!("新路径不可用: {e}"))
@@ -468,7 +471,7 @@ impl RepoRegistry {
             if !belongs {
                 return Err(Error::new(
                     code::WORKSPACE_INVALID,
-                    "新路径不是本仓库的工作树，拒绝重关联",
+                    "新路径不是本仓库的 Worktree，拒绝重关联",
                 )
                 .context(serde_json::json!({ "path": new_path.display().to_string() })));
             }
@@ -510,7 +513,7 @@ impl RepoRegistry {
             .push(new_discovery.identity.common_dir.clone());
         self.common_dirs.sort();
         self.common_dirs.dedup();
-        // 按新发现刷新工作树（分支吻合自动重挂，保持 WorktreeId）
+        // 按新发现刷新 Worktree（分支吻合自动重挂，保持 WorktreeId）
         self.refresh_worktrees(&new_discovery, now);
         // 显式重关联的目标条目一定落位
         if let Some(e) = self.worktrees.get_mut(id) {
@@ -522,7 +525,7 @@ impl RepoRegistry {
         // 别名索引：在新 common-dir 计算出的新 repo_id → 原 repo_id
         record_alias(data_root, &new_repo_id, &old_repo_id)?;
         // 搬迁前若在新位置已产生空登记（发现即登记的副产物），清除以免遮蔽别名解析；
-        // 若已写入实际配置（有工作树/子项目/关联），保留并交由用户处置。
+        // 若已写入实际配置（有 Worktree/子项目/关联），保留并交由用户处置。
         let spurious = registry_path(data_root, &new_repo_id);
         if spurious.is_file() {
             if let Ok(text) = std::fs::read_to_string(&spurious) {
@@ -546,7 +549,7 @@ impl RepoRegistry {
     }
 }
 
-/// 重关联结果：仅工作树挪位，或整仓搬迁（含身份迁移说明）。
+/// 重关联结果：仅 Worktree 挪位，或整仓搬迁（含身份迁移说明）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RepoMoveOutcome {
@@ -944,7 +947,7 @@ mod tests {
             .worktrees
             .iter()
             .find(|w| w.path.file_name().map(|n| n == "wt-p").unwrap_or(false))
-            .expect("prunable 工作树仍在列表");
+            .expect("prunable Worktree 仍在列表");
         assert!(
             rec.prunable_reason.is_some() || !wt.exists(),
             "prunable 状态可见（git 未标记时目录缺失同样成立）"

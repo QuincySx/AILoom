@@ -1,6 +1,6 @@
 # 2026-09-17 返工轮验收证据索引
 
-本轮对应 [实现复审](../../reviews/2026-09-16-local-console-review.md) 的 S01–S04、Spec 轴 F01–F09、专项 Library/Workflow 缺陷与 UI U01–U04 的修复，按 [执行入口](../../initiatives/implementation-alignment-2026-09-17.md) 的 AIL-052～098 卡组织。本目录只收录本地 CLI/HTTP 层证据；真实宿主证据归 AIL-077，真实浏览器证据归 AIL-078/098，三者不互相替代。
+本轮对应 [实现复审](../../reviews/2026-09-16-local-console-review.md) 的 S01–S04、Spec 轴 F01–F09、专项 Library/Workflow 缺陷与 UI U01–U04 的修复，按 [执行入口](../../archive/initiatives/implementation-alignment-2026-09-17.md) 的 AIL-052～098 卡组织。本目录只收录本地 CLI/HTTP 层证据；真实宿主证据归 AIL-077，真实浏览器证据归 AIL-078/098，三者不互相替代。
 
 ## 证据文件
 

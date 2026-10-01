@@ -50,11 +50,24 @@ pub fn render_rules(
 ) -> Result<()> {
     let content =
         crate::adapters::rules::strip_frontmatter_content(entry.raw.as_deref().unwrap_or_default());
-    let fm = spec
-        .frontmatter
-        .replace("{name}", &entry.id.name)
-        .replace("{description}", &entry.description);
-    let file_content = format!("---\n{fm}\n---\n\n{content}");
+    let mut fields = serde_json::Map::new();
+    fields.insert("description".into(), entry.description.clone().into());
+    if spec.tool == "cursor" {
+        let paths = entry
+            .raw
+            .as_deref()
+            .and_then(|raw| crate::resource::split_frontmatter(raw).ok().flatten())
+            .and_then(|(yaml, _)| serde_yaml::from_str::<serde_json::Value>(&yaml).ok())
+            .and_then(|v| v.get("paths").cloned());
+        fields.insert("alwaysApply".into(), paths.is_none().into());
+        if let Some(paths) = paths {
+            fields.insert("globs".into(), paths);
+        }
+    } else {
+        fields.insert("trigger".into(), "always_on".into());
+    }
+    let fm = serde_yaml::to_string(&fields)?;
+    let file_content = format!("---\n{}---\n\n{content}", fm.trim_start_matches("---\n"));
     artifacts.push(Artifact {
         resource_id: entry.id.to_string(),
         target_tool: spec.tool.into(),

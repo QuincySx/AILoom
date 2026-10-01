@@ -27,3 +27,9 @@
 |---|---|
 | 实际部署验证 | alva-agent 仓库实测：`ailoom sync` 后 `.claude/skills/` 出现技能，与用户既有技能共存；settings.json hooks 注册保留用户条目 |
 | 已知默认行为 | 内置召回提示片段默认写 AGENTS.md——对 AGENTS.md 为 single source of truth 的项目应 `init --no-builtin`（alva 接入实测发现并已按此配置） |
+
+## 2026-09-24：AGENTS.md 默认回退
+
+[官方 Memory 文档](https://code.claude.com/docs/en/memory#agentsmd) 确认 Claude Code 2.1.277+ 默认使用 `claude-md-or-agents-md`：当前目录或祖先目录存在 `CLAUDE.md`、`.claude/CLAUDE.md`、`CLAUDE.local.md` 时不自动加载 AGENTS.md；均不存在时读取 AGENTS.md / .claude/AGENTS.md。用户级与组织级 CLAUDE.md、`.claude/rules` 不触发这个回退屏蔽。可在用户设置中选择同时加载；旧版本、禁用内置插件等情况除外。
+
+AILoom 个人说明仍写 `.claude/rules/ailoom-personal.md`，不会为了个人说明创建 CLAUDE.md 阻断原有回退。团队文档索引保留已有 CLAUDE 入口；无此入口时写 AGENTS.md 并去重，避免 Claude + Codex 对同一索引重复生成。此策略针对新版默认加载模式，不修改用户的全局指令模式设置。项目说明文件与 `.claude/agents/*.md` 子代理定义是两种独立能力。

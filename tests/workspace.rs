@@ -168,7 +168,7 @@ fn cache_key_stable_across_root_path_changes_of_same_remote() {
 }
 
 // ---------------------------------------------------------------------------
-// AIL-039：Git 仓库身份、工作树与子项目发现
+// AIL-039：Git 仓库身份、Worktree 与子项目发现
 // ---------------------------------------------------------------------------
 
 fn ail039_canon(p: &Path) -> PathBuf {
@@ -181,7 +181,7 @@ fn ail039_seed_repo(main: &Path) {
     git_commit_all(main, "seed", &["seed.txt"]).unwrap();
 }
 
-/// 从主工作树、linked worktree、子目录声明处发现同一仓库；
+/// 从主 Worktree、linked worktree、子目录声明处发现同一仓库；
 /// 子目录没有自身 .git 也不降为非 Git（anchor 用 Git 身份）。
 #[test]
 fn ail039_same_repo_from_main_wt_linked_wt_and_subdir_declaration() {

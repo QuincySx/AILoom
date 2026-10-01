@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AILoom</title>
+<style>
+:root{color-scheme:light dark;font:13px system-ui}body{margin:16px;line-height:1.5}h1{font-size:18px;margin:0 0 12px}label{display:block;margin-top:10px}input{box-sizing:border-box;width:100%;padding:7px;border:1px solid #8886;border-radius:5px;background:transparent;color:inherit}button{padding:6px 10px;border:1px solid #8886;border-radius:5px;background:transparent;color:inherit;cursor:pointer}button:disabled{opacity:.45;cursor:default}.actions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}#message{white-space:pre-wrap}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace;padding:10px;background:#8881;border-radius:5px}summary{cursor:pointer}.muted{opacity:.65;font-size:12px}
+</style>
+<h1>AILoom</h1>
+<p id="message" role="status">正在检查插件连接…</p>
+<form id="configuration">
+<label for="root">项目目录</label><input id="root" required placeholder="/path/to/project" autocomplete="off">
+<label for="executable">AILoom CLI</label><input id="executable" value="ailoom" required autocomplete="off">
+<details><summary>存储位置</summary><label for="dataRoot">数据目录（留空使用默认位置）</label><input id="dataRoot" autocomplete="off"></details>
+<div class="actions"><button id="bind" type="submit" disabled>绑定项目</button></div>
+</form>
+<p id="target" class="muted"></p>
+<div class="actions"><button data-action="status" disabled>检查</button><button data-action="plan" disabled>预览改动</button><button data-action="sync" disabled>应用改动</button><button data-action="recover" disabled>恢复未完成操作</button></div>
+<pre id="result" hidden></pre>
+<script>
+const pending=new Map();let sequence=0;let connected=false;let configured=false;let busy=false;let preview=false;
+const el=id=>document.getElementById(id);
+function controls(){el('bind').disabled=!connected||busy;document.querySelectorAll('[data-action]').forEach(b=>b.disabled=!configured||busy||(b.dataset.action==='sync'&&!preview));}
+window.addEventListener('message',event=>{
+ if(event.source!==parent)return;
+ const m=event.data;
+ if(m?.type==='orca-panel-ping'){parent.postMessage({type:'orca-panel-pong',pingId:m.pingId},'*');return;}
+ if(m?.type!=='orca-panel-action-result')return;
+ const p=pending.get(m.requestId);if(!p)return;pending.delete(m.requestId);clearTimeout(p.timer);
+ if(m.ok)p.resolve(m.value);else p.reject(new Error(m.error||'插件调用失败'));
+});
+function invoke(commandId,args){return new Promise((resolve,reject)=>{
+ const requestId='ailoom-'+(++sequence);
+ const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error('等待结果超时。请先检查状态，不要重复应用。'));},commandId==='ailoom-configuration'?5000:130000);
+ pending.set(requestId,{resolve,reject,timer});
+ parent.postMessage({type:'orca-panel-action',requestId,action:'commands.invokeOwn',params:{commandId,args:args??null}},'*');
+});}
+async function perform(action,args){busy=true;controls();el('message').textContent='处理中…';try{
+ const value=await invoke('ailoom-'+action,args);
+ if(action==='configure'){configured=true;preview=false;el('target').textContent='当前绑定：'+value.root;}
+ if(action==='plan')preview=true;
+ el('result').hidden=false;el('result').textContent=JSON.stringify(value,null,2);
+ el('message').textContent={configure:'已绑定',status:'检查完成',plan:'请查看改动，再点击应用',sync:'应用完成',recover:'恢复完成'}[action];
+ const r=value?.result;if(r?.skipped_conflicts?.length||r?.skipped_user_modified?.length)el('message').textContent='操作完成，部分文件因冲突已跳过，请查看结果';
+ }catch(error){preview=false;el('message').textContent=error.message;}finally{busy=false;controls();}}
+el('configuration').addEventListener('submit',event=>{event.preventDefault();perform('configure',{root:el('root').value,executable:el('executable').value,...(el('dataRoot').value?{dataRoot:el('dataRoot').value}:{})});});
+document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>{const action=button.dataset.action;if(action==='sync'||action==='recover')preview=false;perform(action);}));
+(async()=>{try{const c=await invoke('ailoom-configuration');connected=true;if(c){configured=true;el('root').value=c.root;el('executable').value=c.executable;el('dataRoot').value=c.dataRoot||'';el('target').textContent='当前绑定：'+c.root;}el('message').textContent=c?'已连接':'先绑定需要管理的项目';}catch{el('message').textContent='当前 ORCA 未提供插件面板通信，或插件权限尚未批准。此面板需要配套宿主补丁，不能直接在发行版上操作。';}controls();})();
+</script></html>

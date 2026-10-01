@@ -5,27 +5,25 @@ import { Dialog } from '../components/dialog.js';
 export function CcSwitchImport(container, { onChanged } = {}) {
   const body = document.createElement('div');
   body.innerHTML = `
-    <p>选择由谁维护 Skill。登记不会自动启用到项目，也不会删除 CC Switch 中的文件。</p>
-    <fieldset class="cc-management"><legend>管理方式</legend>
-      <label><input type="radio" name="cc-management" value="managed" checked>由 AILoom 管理（推荐）</label>
-      <label><input type="radio" name="cc-management" value="external">继续由 CC Switch 管理</label>
-      <p data-cc-mode-help class="muted">从原 Git 仓库拉取独立版本，由 AILoom 检查和更新；不带入 CC Switch 本地修改。</p>
+    <fieldset class="cc-management"><legend>迁移方式</legend>
+      <label><input type="radio" name="cc-management" value="managed" checked>重新导入到 AILoom</label>
+      <label><input type="radio" name="cc-management" value="external">使用 CC Switch 现有文件</label>
+      <p data-cc-mode-help class="muted">从仓库导入，不保留本地修改。</p>
     </fieldset>
-    <div data-cc-external hidden><label>外部 Skill 存放目录<div class="input-action"><input data-cc-skills-directory placeholder="选择包含各个 Skill 文件夹的目录"><button data-cc-skills-pick type="button">选择文件夹…</button></div></label><p class="muted">通常是 CC Switch 数据目录下的 skills；使用统一存储时请选择实际目录。不读取配置猜测路径。</p></div>
+    <div data-cc-external hidden><label>外部 Skill 存放目录<div class="input-action"><input data-cc-skills-directory placeholder="选择包含各个 Skill 文件夹的目录"><button data-cc-skills-pick type="button">选择文件夹…</button></div></label><p class="muted">请选择实际存放 Skill 的文件夹。</p></div>
     <label>CC Switch 数据目录<div class="input-action"><input data-cc-directory placeholder="默认 CC Switch 数据目录"><button data-cc-pick type="button">选择文件夹…</button></div></label>
-    <p class="muted">点击扫描后，仅在本机读取 Skill 的名称、仓库、分支与路径字段。不读取供应商配置，不修改 CC Switch 数据。</p>
-    <button data-cc-read class="primary">扫描 CC Switch 来源</button>
-    <details data-cc-fallback><summary>备用方式：导入来源 JSON</summary>
-    <p class="muted">用于跨机器或已有清单。不要上传数据库或完整配置。支持官方来源字段，也支持 repo_url（HTTPS / Git SSH）、repo_path 和 source_url（skills.sh）。</p>
-    <label>选择 Skill 来源 JSON<input data-cc-file type="file" accept=".json,application/json"></label>
-    <label>或粘贴来源清单<textarea data-cc-json rows="5" placeholder='[{"name":"example","repo_owner":"owner","repo_name":"repo","repo_branch":"main","readme_url":"https://github.com/owner/repo/blob/main/skills/example/SKILL.md"}]'></textarea></label>
-    <button data-cc-scan>扫描来源清单</button></details>
+    <button data-cc-read class="primary">扫描</button>
+    <details data-cc-fallback><summary>从 JSON 导入</summary>
+    <p class="muted">仅支持 Skill 来源清单，请勿选择完整配置或数据库。</p>
+    <label>选择 JSON 文件<input data-cc-file type="file" accept=".json,application/json"></label>
+    <label>或粘贴内容<textarea data-cc-json rows="5" placeholder='[{"name":"example","repo_owner":"owner","repo_name":"repo","repo_branch":"main","readme_url":"https://github.com/owner/repo/blob/main/skills/example/SKILL.md"}]'></textarea></label>
+    <button data-cc-scan>读取清单</button></details>
     <p data-cc-status class="inline-status muted" role="status" aria-live="polite"></p>
     <div data-cc-items></div><div data-cc-preview></div>
-    <footer class="dialog-actions"><button data-cc-close>关闭</button><button data-cc-prepare hidden>拉取并预览所选来源</button><button data-cc-apply class="primary" hidden>确认登记来源</button></footer>`;
+    <footer class="dialog-actions"><button data-cc-close hidden>关闭</button><button data-cc-prepare hidden>预览所选</button><button data-cc-apply class="primary" hidden>确认导入</button></footer>`;
   const q = s => body.querySelector(s);
   let alive = true, busy = false, scan = null, preview = null, completed = false, defaultDirectory = '';
-  const dialog = Dialog(container, { title:'从 CC Switch 迁移来源', content:body, open:false, keepMounted:true, canClose:() => !busy });
+  const dialog = Dialog(container, { title:'从 CC Switch 迁移', content:body, open:false, keepMounted:true, canClose:() => !busy });
   const status = text => { if (alive) q('[data-cc-status]').textContent = text; };
   function buttons() {
     if (!alive) return;
@@ -49,8 +47,8 @@ export function CcSwitchImport(container, { onChanged } = {}) {
     invalidatePreview();
     const external = management() === 'external';
     q('[data-cc-external]').hidden = !external;
-    q('[data-cc-mode-help]').textContent = external ? '只登记原目录并链接到项目，不复制、不做 Git 更新。原处修改立即生效，路径失效会提示；移除只解除引用。' : '从原 Git 仓库拉取独立版本，由 AILoom 检查和更新；不带入 CC Switch 本地修改。';
-    q('[data-cc-prepare]').textContent = external ? '检查外部目录并预览' : '拉取并预览所选来源';
+    q('[data-cc-mode-help]').textContent = external ? '保留现有文件及本地修改，后续修改同步生效。' : '从仓库导入，不保留本地修改。';
+    q('[data-cc-prepare]').textContent = external ? '预览所选' : '预览所选';
   }; });
   q('[data-cc-skills-directory]').oninput = invalidatePreview;
   q('[data-cc-skills-pick]').onclick = () => run(async () => {
@@ -68,7 +66,7 @@ export function CcSwitchImport(container, { onChanged } = {}) {
   q('[data-cc-read]').onclick = () => run(async () => {
     invalidateScan();
     const directory = q('[data-cc-directory]').value.trim();
-    status('正在本机读取 CC Switch 的 Skill 来源记录…');
+    status('正在扫描…');
     if (directory && directory !== defaultDirectory) await api.approveDir(directory);
     const result = await api.ccSwitchRead(directory || undefined);
     if (alive) renderScan(result);
@@ -82,7 +80,7 @@ export function CcSwitchImport(container, { onChanged } = {}) {
     const text = await file.text();
     if (!alive) return;
     q('[data-cc-json]').value = text;
-    status('已读取清单文件，请点击扫描来源清单。');
+    status('已读取清单文件，请点击读取清单。');
   });
   q('[data-cc-close]').onclick = () => dialog.close();
   q('[data-cc-scan]').onclick = () => run(async () => {
@@ -118,7 +116,7 @@ export function CcSwitchImport(container, { onChanged } = {}) {
     const result = await api.ccSwitchPreview(scan.scan_id, selected, mode, directory);
     if (!alive) return;
     preview = result;
-    q('[data-cc-preview]').innerHTML = '<h3>确认登记</h3><p class="muted">' + (mode === 'external' ? 'CC Switch 继续维护；项目链接到原目录，原处修改立即生效，不复制或更新外部文件。' : 'AILoom 独立管理；登记仓库的可用资源目录，不自动启用其他资源，也不复制 CC Switch 本地修改。') + '</p><div class="cc-skill-list">' + result.groups.map(group => `
+    q('[data-cc-preview]').innerHTML = '<h3>确认导入</h3><p class="muted">' + (mode === 'external' ? '使用原文件，后续修改同步生效。' : '从仓库导入，不保留本地修改。') + '</p><div class="cc-skill-list">' + result.groups.map(group => `
       <article class="cc-skill-row"><strong>${esc(group.skills.map(s=>s.name).join('、'))}</strong> <span class="badge ${group.state === 'error' ? 'bad' : 'ok'}">${esc(({ready:'待登记',existing:'已存在',error:'需要处理'})[group.state])}</span>
       <details><summary class="muted">${esc(group.error || group.external_path || group.url)}</summary><p class="path">${esc(group.external_path ? '外部管理：' + group.external_path : '锁定版本：' + (group.commit || '未解析'))}</p>
       <ul>${group.skills.map(skill => `<li>${esc(skill.name)} · <code>${esc(skill.repo_path || skill.directory)}</code></li>`).join('')}</ul></details></article>`).join('') + '</div>';
@@ -129,7 +127,7 @@ export function CcSwitchImport(container, { onChanged } = {}) {
     const result = await api.ccSwitchApply(preview.preview_id);
     if (!alive) return;
     completed = true;
-    status(`已登记 ${result.updated} 个来源。${management() === 'external' ? '继续由 CC Switch 维护，AILoom 仅引用外部目录。' : '由 AILoom 管理，可在资源中心检查更新。'}CC Switch 保持不变。`);
+    status(`已登记 ${result.updated} 个来源。${management() === 'external' ? '继续由 CC Switch 维护，AILoom 仅引用外部目录。' : '由 AILoom 管理，可在资源库检查更新。'}CC Switch 保持不变。`);
     await onChanged?.();
   });
   return { show() {

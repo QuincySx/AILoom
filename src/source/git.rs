@@ -217,6 +217,12 @@ impl GitSource {
 
     /// `git archive <commit>` 解包到临时目录 → 校验摘要 → 原子改名到 snapshots/<commit>。
     fn materialize(&self, cache_root: &Path, commit: &str) -> Result<(PathBuf, String)> {
+        with_file_lock(&cache_root.join("materialize.lock"), || {
+            self.materialize_locked(cache_root, commit)
+        })
+    }
+
+    fn materialize_locked(&self, cache_root: &Path, commit: &str) -> Result<(PathBuf, String)> {
         let final_dir = self.snapshot_dir(cache_root, commit);
         if self.verify_snapshot(&final_dir, commit)?.is_some() {
             let digest = super::tree_digest(&final_dir)?;

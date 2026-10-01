@@ -1,11 +1,11 @@
 //! 控制台任务（AIL-050）：把「计划 → 应用 → 宿主验证 → 撤销」连接为可重入任务。
 //!
-//! - 计划绑定配置/源/目标指纹：修改任一项后旧计划拒绝应用（不能写错工作树）。
+//! - 计划绑定配置/源/目标指纹：修改任一项后旧计划拒绝应用（不能写错 Worktree）。
 //! - 任务幂等：相同幂等键返回同一任务；浏览器断连重连不重复执行（服务端推进）。
 //! - 取消只在安全边界（步骤间）停止；部分应用可恢复；撤销仅回滚本任务写入项，
 //!   冲突项显式报告，不谎称全部回滚。
 
-use crate::console::ServerState;
+use crate::console::{LockExt, ServerState};
 use crate::error::Result;
 use crate::ids::{new_id, now_iso, sha256_hex};
 use serde::{Deserialize, Serialize};
@@ -104,7 +104,16 @@ fn persist_job(data_root: &Path, job: &Job) {
     }
 }
 
+/// 任务 id 只由 `<kind>-<uuid>` 这类字母数字与连字符组成；其他输入一律视为不存在，
+/// 防止 `../` 等路径穿越读到任务目录外的文件。
+fn is_valid_job_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 80 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
 pub fn load_job(data_root: &Path, id: &str) -> Option<Job> {
+    if !is_valid_job_id(id) {
+        return None;
+    }
     let p = jobs_dir(data_root).join(format!("{id}.json"));
     let text = std::fs::read_to_string(p).ok()?;
     serde_json::from_str(&text).ok()
@@ -144,7 +153,7 @@ pub fn load_all_jobs(data_root: &Path) -> (std::collections::BTreeMap<String, Jo
     (out, interrupted)
 }
 
-/// 计划指纹：profile + 仓库登记 + 个人库内容 + 目标/作用域 + 期望动作摘要。
+/// 计划指纹：profile + 仓库登记 + 资源库内容 + 目标/作用域 + 期望动作摘要。
 pub fn compute_fingerprint(
     state: &ServerState,
     root: &Path,
@@ -190,7 +199,7 @@ pub fn spawn_plan(
     scope: Option<String>,
     idempotency_key: Option<String>,
 ) -> Result<String> {
-    let mut jobs = state.jobs.lock().unwrap();
+    let mut jobs = state.jobs.lock_ok();
     if let Some(key) = &idempotency_key {
         if let Some(existing) = jobs
             .values()
@@ -240,7 +249,7 @@ fn nowstamp() -> String {
 }
 
 fn set_status(state: &ServerState, id: &str, status: JobStatus, note: &str) {
-    let mut jobs = state.jobs.lock().unwrap();
+    let mut jobs = state.jobs.lock_ok();
     if let Some(job) = jobs.get_mut(id) {
         if matches!(status, JobStatus::Cancelled) || job.status != JobStatus::Cancelled {
             job.status = status;
@@ -250,7 +259,7 @@ fn set_status(state: &ServerState, id: &str, status: JobStatus, note: &str) {
         let job = job.clone();
         drop(jobs);
         persist_job(&state.data_root, &job);
-        state.events.lock().unwrap().push(json!({
+        state.events.lock_ok().push(json!({
             "event": "job-progress", "id": id, "status": status, "note": note,
         }));
     }
@@ -270,7 +279,7 @@ fn is_cancelled(state: &ServerState, id: &str) -> bool {
 pub fn run_plan_job(state: &Arc<ServerState>, id: &str) {
     set_status(state, id, JobStatus::Running, "计算个人模式计划");
     let (root, scope) = {
-        let jobs = state.jobs.lock().unwrap();
+        let jobs = state.jobs.lock_ok();
         let Some(job) = jobs.get(id) else { return };
         (job.root.clone(), job.scope.clone())
     };
@@ -299,9 +308,12 @@ pub fn run_plan_job(state: &Arc<ServerState>, id: &str) {
         "effective_enabled": prepared.effective.enabled_resources(),
         "repo_id": prepared.repo.identity.repo_id,
         "worktree_id": prepared.wt_id,
+        // AIL-125：预览必须绑定目标与作用域（前端显示真实作用域，不冒充 Worktree 根）。
+        "active_rel": scope,
+        "scope_dir": prepared.scope_dir.display().to_string(),
     });
     // 同 AIL-072 竞态修复：指纹/result 与 Success 原子写入
-    let mut jobs = state.jobs.lock().unwrap();
+    let mut jobs = state.jobs.lock_ok();
     if let Some(job) = jobs.get_mut(id) {
         job.status = JobStatus::Success;
         job.fingerprint = Some(fingerprint);
@@ -321,7 +333,7 @@ pub fn spawn_apply(
     idempotency_key: Option<String>,
 ) -> std::result::Result<String, String> {
     let (plan_fingerprint, root, scope) = {
-        let jobs = state.jobs.lock().unwrap();
+        let jobs = state.jobs.lock_ok();
         let Some(plan_job) = jobs.get(plan_job_id) else {
             return Err("计划任务不存在".into());
         };
@@ -337,7 +349,7 @@ pub fn spawn_apply(
     let Some(plan_fingerprint) = plan_fingerprint else {
         return Err("计划缺少指纹，拒绝应用".into());
     };
-    let mut jobs = state.jobs.lock().unwrap();
+    let mut jobs = state.jobs.lock_ok();
     if let Some(key) = &idempotency_key {
         if let Some(existing) = jobs
             .values()
@@ -386,7 +398,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
     }
     set_status(state, id, JobStatus::Running, "校验计划指纹");
     let (root, scope, fingerprint) = {
-        let jobs = state.jobs.lock().unwrap();
+        let jobs = state.jobs.lock_ok();
         let Some(job) = jobs.get(id) else { return };
         (
             job.root.clone(),
@@ -420,46 +432,20 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
             JobStatus::Failed,
             "计划已过期（配置/源/目标已变化），旧计划拒绝应用",
         );
-        let mut jobs = state.jobs.lock().unwrap();
+        let mut jobs = state.jobs.lock_ok();
         if let Some(job) = jobs.get_mut(id) {
             job.error = Some("stale-plan".into());
             job.result = json!({ "stale": true, "current_fingerprint": current });
+            job.updated_at = nowstamp();
+            let job = job.clone();
+            drop(jobs);
+            // AIL-125：error/result 必须落盘，前端才能区分「过期」与其他失败。
+            persist_job(&state.data_root, &job);
         }
         return;
     }
-    // 记录撤销前像：仅本任务将写入的目标
-    let mut undo: Vec<UndoEntry> = Vec::new();
-    for a in &prepared.plan.actions {
-        if !matches!(
-            a.action,
-            crate::sync::plan::ActionKind::Create
-                | crate::sync::plan::ActionKind::Update
-                | crate::sync::plan::ActionKind::Restore
-        ) {
-            continue;
-        }
-        let target = root.join(&a.path);
-        let existed = target.symlink_metadata().is_ok();
-        let previous = if existed {
-            // 目录符号链接读链接字节；普通文件读内容
-            let meta = std::fs::symlink_metadata(&target).ok();
-            if meta.map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-                std::fs::read_link(&target)
-                    .ok()
-                    .map(|l| l.as_os_str().as_encoded_bytes().to_vec())
-            } else {
-                std::fs::read(&target).ok()
-            }
-        } else {
-            None
-        };
-        undo.push(UndoEntry {
-            path: a.path.clone(),
-            existed,
-            previous,
-            after_hash: None,
-        });
-    }
+    // 记录撤销前像：仅本任务将写入的目标（AIL-120：捕获逻辑抽为共用函数）
+    let mut undo = capture_undo_entries(&root, &prepared.plan);
     // 应用：复用 personal::sync（相同 lock/journal 管道），但要捕获其结果——
     // 这里直接调用库路径以保证 undo 语义
     set_status(state, id, JobStatus::Running, "应用计划");
@@ -493,7 +479,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
         JobStatus::Failed
     };
     {
-        let mut jobs = state.jobs.lock().unwrap();
+        let mut jobs = state.jobs.lock_ok();
         if let Some(job) = jobs.get_mut(id) {
             job.status = status;
             job.undo = Some(undo);
@@ -512,7 +498,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
                 report.applied.len(),
                 report.skipped_conflicts.len()
             ));
-            state.events.lock().unwrap().push(json!({
+            state.events.lock_ok().push(json!({
                 "event": "job-progress", "id": id, "status": status,
             }));
             let job = job.clone();
@@ -576,7 +562,7 @@ fn verify_deployment(prepared: &crate::commands::personal::PersonalPrepare, root
 
 /// 取消请求（安全边界生效）。
 pub fn request_cancel(state: &Arc<ServerState>, id: &str) -> bool {
-    let mut jobs = state.jobs.lock().unwrap();
+    let mut jobs = state.jobs.lock_ok();
     if let Some(job) = jobs.get_mut(id) {
         job.cancel_requested = true;
         true
@@ -586,7 +572,7 @@ pub fn request_cancel(state: &Arc<ServerState>, id: &str) -> bool {
 }
 
 fn push_event(state: &ServerState, event: Value) {
-    state.events.lock().unwrap().push(event);
+    state.events.lock_ok().push(event);
 }
 
 /// 撤销：仅回滚本任务写入的项；冲突显式报告。
@@ -594,14 +580,56 @@ fn push_event(state: &ServerState, event: Value) {
 /// 的项一律冲突保留——保存前像不等于有权覆盖后来的人工修改。
 /// AIL-053：可重入——UndoPartial 后可再次撤销，仅重试剩余未处理项；
 /// 已恢复项从清单移除，绝不重复覆盖。
-pub fn undo(state: &Arc<ServerState>, id: &str) -> std::result::Result<Value, String> {
-    let job = {
-        let jobs = state.jobs.lock().unwrap();
-        jobs.get(id).cloned()
-    };
-    let Some(job) = job else {
+/// 捕获撤销前像：仅统计将写入（Create/Update/Restore）的目标。
+fn capture_undo_entries(root: &Path, plan: &crate::sync::plan::SyncPlan) -> Vec<UndoEntry> {
+    let mut undo: Vec<UndoEntry> = Vec::new();
+    for a in &plan.actions {
+        if !matches!(
+            a.action,
+            crate::sync::plan::ActionKind::Create
+                | crate::sync::plan::ActionKind::Update
+                | crate::sync::plan::ActionKind::Restore
+        ) {
+            continue;
+        }
+        let target = root.join(&a.path);
+        let existed = target.symlink_metadata().is_ok();
+        let previous = if existed {
+            let meta = std::fs::symlink_metadata(&target).ok();
+            if meta.map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                std::fs::read_link(&target)
+                    .ok()
+                    .map(|l| l.as_os_str().as_encoded_bytes().to_vec())
+            } else {
+                std::fs::read(&target).ok()
+            }
+        } else {
+            None
+        };
+        undo.push(UndoEntry {
+            path: a.path.clone(),
+            existed,
+            previous,
+            after_hash: None,
+        });
+    }
+    undo
+}
+
+/// CLI 撤销：基于持久化任务（Web 或 CLI sync 创建的 Apply 任务均可撤销）。
+pub fn undo_persisted(data_root: &Path, id: &str) -> std::result::Result<Value, String> {
+    let mut jobs = load_all_jobs(data_root).0;
+    let Some(job) = jobs.get_mut(id) else {
         return Err("任务不存在".into());
     };
+    let result = undo_apply(job);
+    let j = job.clone();
+    persist_job(data_root, &j);
+    result
+}
+
+/// 撤销核心（CLI 与控制台共用）：校验可撤销性，执行回滚并就地更新任务状态。
+pub fn undo_apply(job: &mut Job) -> std::result::Result<Value, String> {
     if job.kind != JobKind::Apply {
         return Err("只有应用任务可撤销".into());
     }
@@ -617,57 +645,139 @@ pub fn undo(state: &Arc<ServerState>, id: &str) -> std::result::Result<Value, St
     if undo_entries.is_empty() {
         return Err("撤销清单已全部处理（无剩余项）".into());
     }
-    let root = &job.root;
+    let root = job.root.clone();
     let mut restored = Vec::new();
     let mut conflicts = Vec::new();
     for entry in undo_entries {
-        match undo_single(root, entry) {
+        match undo_single(&root, entry) {
             Ok(()) => restored.push(entry.path.clone()),
             Err(reason) => conflicts.push(reason),
         }
     }
-    let status = if conflicts.is_empty() {
+    job.status = if conflicts.is_empty() {
         JobStatus::Undone
     } else {
         JobStatus::UndoPartial
     };
-    // AIL-053：只保留未处理项，再次撤销时仅重试它们（已恢复项不重复覆盖）
     let remaining: Vec<UndoEntry> = undo_entries
         .iter()
         .filter(|e| !restored.contains(&e.path))
         .cloned()
         .collect();
-    {
-        let mut jobs = state.jobs.lock().unwrap();
-        if let Some(j) = jobs.get_mut(id) {
-            j.status = status;
-            j.undo = Some(remaining);
-            j.updated_at = nowstamp();
-            j.progress.push(format!(
-                "撤销：恢复 {} 项，冲突 {} 项{}",
-                restored.len(),
-                conflicts.len(),
-                if conflicts.is_empty() {
-                    String::new()
-                } else {
-                    "（剩余项可再次撤销重试）".to_string()
-                }
-            ));
-            let j = j.clone();
-            drop(jobs);
-            persist_job(&state.data_root, &j);
+    job.undo = Some(remaining);
+    job.updated_at = nowstamp();
+    job.progress.push(format!(
+        "撤销：恢复 {} 项，冲突 {} 项{}",
+        restored.len(),
+        conflicts.len(),
+        if conflicts.is_empty() {
+            String::new()
+        } else {
+            "（剩余项可再次撤销重试）".to_string()
         }
-    }
-    push_event(
-        state,
-        json!({ "event": "job-undo", "id": id, "restored": restored.len() }),
-    );
+    ));
     Ok(json!({
         "restored": restored,
         "conflicts": conflicts,
         "retryable": !conflicts.is_empty(),
         "note": if conflicts.is_empty() { "本任务写入项已全部回滚".to_string() } else { "部分回滚：冲突项保留（用户事后修改过），不谎称全部恢复；处理冲突后可再次撤销重试剩余项".to_string() },
     }))
+}
+
+/// CLI 同步：与 Web 应用同一管道（公司文件守卫 + lock/journal + 托管清单），
+/// 并持久化带撤销清单的 Apply 任务，使 CLI 部署同样可撤销（AIL-120 对齐）。
+pub fn cli_sync(
+    data_root: &Path,
+    root: &Path,
+    scope: Option<String>,
+    data_root_opt: Option<&Path>,
+    data_root_resolved: &Path,
+) -> std::result::Result<Value, String> {
+    use crate::ids::new_id;
+    let prepared = crate::commands::personal::prepare_personal(
+        data_root_opt,
+        Some(root),
+        scope.clone(),
+        data_root_resolved,
+    )
+    .map_err(|e| e.to_string())?;
+    // Plan paths are relative to the discovered workspace, not the invoking subdirectory.
+    let root = prepared.ctx.workspace.workspace_root.as_path();
+    let mut undo = capture_undo_entries(root, &prepared.plan);
+    let report =
+        crate::commands::personal::apply_prepared_personal(&prepared).map_err(|e| e.to_string())?;
+    if report.ok {
+        for entry in &mut undo {
+            entry.after_hash = current_fingerprint(&root.join(&entry.path));
+        }
+    }
+    let verification = verify_deployment(&prepared, root);
+    let status = if report.ok {
+        JobStatus::Success
+    } else {
+        JobStatus::Failed
+    };
+    let result = json!({
+        "ok": report.ok,
+        "applied": report.applied,
+        "noop": report.noop,
+        "skipped_conflicts": report.skipped_conflicts,
+        "failed": report.failed,
+        "pending_journal": report.pending_journal,
+        "verification": verification,
+        "notes": prepared.notes,
+        "next": "在宿主新会话中真实调用一次以确认加载（文件落盘不等于宿主已加载）",
+    });
+    let stamp = nowstamp();
+    let job = Job {
+        id: new_id(),
+        kind: JobKind::Apply,
+        status,
+        created_at: stamp.clone(),
+        updated_at: stamp,
+        root: root.to_path_buf(),
+        scope,
+        fingerprint: None,
+        plan_job_id: None,
+        idempotency_key: None,
+        progress: vec![format!(
+            "CLI sync 应用完成：写入 {} 项，冲突跳过 {} 项",
+            report.applied.len(),
+            report.skipped_conflicts.len()
+        )],
+        result: result.clone(),
+        undo: Some(undo),
+        error: None,
+        cancel_requested: false,
+    };
+    persist_job(data_root, &job);
+    Ok(result)
+}
+
+pub fn undo(state: &Arc<ServerState>, id: &str) -> std::result::Result<Value, String> {
+    let result = {
+        let mut jobs = state.jobs.lock_ok();
+        match jobs.get_mut(id) {
+            // AIL-120：撤销语义收敛到 undo_apply 核心，CLI 持久化任务走同一条路
+            Some(job) => undo_apply(job),
+            None => return Err("任务不存在".into()),
+        }
+    };
+    if let Ok(v) = &result {
+        if let Some(restored) = v["restored"].as_array() {
+            push_event(
+                state,
+                json!({ "event": "job-undo", "id": id, "restored": restored.len() }),
+            );
+        }
+    }
+    let jobs = state.jobs.lock_ok();
+    if let Some(j) = jobs.get(id) {
+        let j = j.clone();
+        drop(jobs);
+        persist_job(&state.data_root, &j);
+    }
+    result
 }
 
 /// 单条撤销（AIL-053）：指纹校验 + 类型保持的前像恢复。
@@ -789,5 +899,22 @@ pub fn test_support_undo_check(root: &Path, entries: &[UndoEntry]) -> Vec<String
 
 /// 从磁盘载入任务（重连恢复视图用）。
 pub fn list_persisted(state: &ServerState) -> Vec<Job> {
-    state.jobs.lock().unwrap().values().cloned().collect()
+    state.jobs.lock_ok().values().cloned().collect()
+}
+
+#[cfg(test)]
+mod job_id_tests {
+    use super::*;
+
+    #[test]
+    fn load_job_rejects_path_traversal_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(jobs_dir(&data)).unwrap();
+        std::fs::write(tmp.path().join("outside.json"), "{}").unwrap();
+        for id in ["../../outside", "..", "a/b", "", "x.y"] {
+            assert!(load_job(&data, id).is_none(), "{id}");
+        }
+        assert!(is_valid_job_id(&format!("plan-{}", crate::ids::new_id())));
+    }
 }

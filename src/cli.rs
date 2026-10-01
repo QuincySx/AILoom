@@ -26,9 +26,9 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// 输出版本与构建信息（AIL-002）
+    /// 输出版本与构建信息
     Version,
-    /// 团队资源源脚手架：生成 ailoom.toml + resources 骨架（AIL-038）
+    /// 团队资源源脚手架：生成 ailoom.toml + resources 骨架
     Source {
         /// 生成目录
         #[arg(long)]
@@ -52,8 +52,11 @@ pub enum Command {
         #[arg(long)]
         git: bool,
     },
-    /// 绑定团队源与项目/角色，生成本机锁（AIL-005）
+    /// 绑定团队源与项目/角色，生成本机锁
     Init {
+        /// 初始化项目知识库位置（不要求先绑定团队资源源）
+        #[arg(long)]
+        knowledge_path: Option<std::path::PathBuf>,
         /// 团队资源源 Git URL（禁止内嵌凭据）
         #[arg(long)]
         url: Option<String>,
@@ -72,7 +75,7 @@ pub enum Command {
         /// 绑定的职能角色（可重复；出现即整体替换）
         #[arg(long = "role")]
         roles: Vec<String>,
-        /// 启用的宿主工具（可重复：claude/codex；出现即整体替换）
+        /// 启用的 AI 工具（可重复：claude/codex/grok/pi/opencode/cursor；出现即整体替换）
         #[arg(long = "target")]
         targets: Vec<String>,
         /// 显式更新源到 ref 最新 commit
@@ -85,19 +88,19 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 展示工作区绑定与声明/锁一致性（AIL-005）
+    /// 展示工作区绑定与声明/锁一致性
     Status {
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 预览同步差异（无写入，AIL-007）
+    /// 预览同步差异（无写入）
     Plan {
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 执行同步计划（AIL-008）
+    /// 执行同步计划
     Sync {
         /// 显式工作区根
         #[arg(long)]
@@ -112,7 +115,7 @@ pub enum Command {
         #[arg(long, hide = true)]
         from_auto: bool,
     },
-    /// Hook 事件采集：stdin payload → 标准事件（AIL-018，由宿主调用）
+    /// Hook 事件采集：stdin payload → 标准事件（由宿主调用）
     Hook {
         /// 宿主工具
         #[arg(long)]
@@ -124,10 +127,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// Hook 注册管理：install/remove（AIL-018）
+    /// Hook 注册管理：install | remove | exec
     Hooks {
         /// 动作：install | remove | exec
-        #[arg(long)]
+        #[arg(long, value_parser = ["install", "remove", "exec"])]
         action: String,
         /// exec 的资源 ID
         #[arg(long)]
@@ -139,10 +142,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 会话指标与摘要：metrics | summary | ingest（AIL-019/020）
+    /// 会话指标与摘要：metrics | summary | ingest
     Session {
         /// 动作：metrics | summary | ingest
-        #[arg(long)]
+        #[arg(long, value_parser = ["metrics", "summary", "ingest"])]
         action: String,
         /// 会话 ID
         #[arg(long)]
@@ -157,7 +160,7 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 迁移独立源到同仓模式（AIL-036，copy→校验→切换→备份）
+    /// 迁移独立源到同仓模式（copy→校验→切换→备份）
     Migrate {
         /// 现有独立团队源目录
         #[arg(long)]
@@ -169,7 +172,7 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 批量导入目录文档为知识（AIL-034）
+    /// 批量导入目录文档为知识
     Import {
         /// 目标项目
         #[arg(long)]
@@ -184,7 +187,7 @@ pub enum Command {
         #[arg(long)]
         target: String,
         /// 资源类型：learning | doc
-        #[arg(long, default_value = "doc")]
+        #[arg(long, default_value = "doc", value_parser = ["learning", "doc"])]
         kind: String,
         /// 预览后确认执行
         #[arg(long)]
@@ -193,10 +196,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// PR/MR 知识候选（AIL-035，显式指定 URL）
+    /// PR/MR 知识候选（显式指定 URL）
     Pr {
         /// 动作：draft
-        #[arg(long, default_value = "draft")]
+        #[arg(long, default_value = "draft", value_parser = ["draft"])]
         action: String,
         /// GitHub PR URL
         #[arg(long)]
@@ -208,16 +211,16 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 数据留存与清理：rotate | export | cleanup（AIL-037）
+    /// 数据留存与清理：rotate | export | cleanup
     Data {
         /// 动作：rotate | export | cleanup
-        #[arg(long)]
+        #[arg(long, value_parser = ["rotate", "export", "cleanup"])]
         action: String,
         /// export 目标目录
         #[arg(long)]
         out: Option<std::path::PathBuf>,
-        /// rotate 阈值（MB）
-        #[arg(long, default_value = "10")]
+        /// rotate 阈值（MB，需大于 0）
+        #[arg(long, default_value = "10", value_parser = positive_f64)]
         max_size_mb: f64,
         /// 预览清理项
         #[arg(long)]
@@ -226,10 +229,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 成员名册：list | projects | register | remove（AIL-024）
+    /// 成员名册：list | projects | register | remove
     Members {
         /// 动作
-        #[arg(long)]
+        #[arg(long, value_parser = ["list", "projects", "register", "remove"])]
         action: String,
         /// 项目 ID
         #[arg(long)]
@@ -247,10 +250,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 团队包依赖：check | install（AIL-033）
+    /// 团队包依赖：check | install
     Packages {
         /// 动作：check | install
-        #[arg(long)]
+        #[arg(long, value_parser = ["check", "install"])]
         action: String,
         /// install 需显式确认
         #[arg(long)]
@@ -259,22 +262,22 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 代码事实与图谱：build | query（AIL-026/027，Rust 优先）
+    /// 代码事实与图谱：build | query（Rust 优先）
     Code {
         /// 动作：build | query
-        #[arg(long)]
+        #[arg(long, value_parser = ["build", "query"])]
         action: String,
         /// 查询关键词
         #[arg(long)]
         query: Option<String>,
         /// 图扩展跳数（0-2）
-        #[arg(long, default_value = "1")]
+        #[arg(long, default_value = "1", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(0..=2))]
         hops: usize,
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 本地实时看板（AIL-021，仅 loopback）
+    /// Hook 事件实时看板（仅 loopback；独立于网页控制台，日常管理用 ailoom web）
     Dashboard {
         /// 监听端口
         #[arg(long, default_value = "7777")]
@@ -283,19 +286,19 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 团队统计上报与汇总：push | digest | status（AIL-022）
+    /// 团队统计上报与汇总：push | retry | digest | status
     Report {
         /// 动作：push | retry | digest | status
-        #[arg(long)]
+        #[arg(long, value_parser = ["push", "retry", "digest", "status"])]
         action: String,
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 知识反馈与维护：feedback | maintenance | promote（AIL-028）
+    /// 项目知识库与知识维护：status | init | save | recall | sync | move | …（详见 --action）
     Knowledge {
-        /// 动作：feedback | maintenance | promote | archive | restore
-        #[arg(long)]
+        /// 动作：status | init | checkpoint | recover | clone | move | save | recall | sync；或 feedback | maintenance | promote | archive | restore
+        #[arg(long, value_parser = ["status", "init", "checkpoint", "recover", "clone", "move", "configure", "save", "recall", "sync", "feedback", "maintenance", "promote", "archive", "restore"])]
         action: String,
         /// 学习 ID
         #[arg(long)]
@@ -312,17 +315,44 @@ pub enum Command {
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
+        /// 初始化位置或迁移目标（可为独立仓库子目录）
+        #[arg(long)]
+        path: Option<std::path::PathBuf>,
+        /// 确认预览的指纹；move 默认仅预览
+        #[arg(long)]
+        expected: Option<String>,
+        #[arg(long)]
+        execute: bool,
+        /// 迁移成功后同步到已配置的远端
+        #[arg(long)]
+        sync_after: bool,
+        /// Git 同步地址；空字符串关闭远端同步
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        /// 远端知识分支内的子目录
+        #[arg(long)]
+        subdir: Option<String>,
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
     },
-    /// 检索本地知识索引（AIL-016）
+    /// 检索本地知识索引
     Recall {
         /// 查询关键词（支持中文）
         #[arg(long = "query", short = 'q')]
         query: String,
         /// 过滤资源类型：learning/rule/doc/skill
-        #[arg(long)]
+        #[arg(long, value_parser = ["learning", "rule", "doc", "skill"])]
         kind: Option<String>,
-        /// 返回条数上限
-        #[arg(long, default_value = "10")]
+        /// 返回条数上限（1-100）
+        #[arg(long, default_value = "10", value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..=100))]
         limit: usize,
         /// 强制重建索引
         #[arg(long)]
@@ -331,31 +361,31 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 贡献经验文档（AIL-015）
+    /// 贡献经验文档
     Contribute {
         /// 经验 Markdown 文档（frontmatter 含 title）
         #[arg(long)]
         file: std::path::PathBuf,
-        /// 归属项目
+        /// 归属项目（仅团队源 PR 流程；项目知识库模式下不需要）
         #[arg(long)]
         project: Option<String>,
-        /// 显式共享给全团队
+        /// 显式共享给全团队（仅团队源 PR 流程）
         #[arg(long)]
         shared: bool,
-        /// namespace（缺省按清单推导）
+        /// namespace，缺省按清单推导（仅团队源 PR 流程）
         #[arg(long)]
         namespace: Option<String>,
-        /// 提交信息
+        /// 提交信息（仅团队源 PR 流程）
         #[arg(long, default_value = "ailoom: 新增经验")]
         message: String,
-        /// PR 创建方式：auto 或 manual
-        #[arg(long, default_value = "auto")]
+        /// PR 创建方式（仅团队源 PR 流程）
+        #[arg(long, default_value = "auto", value_parser = ["auto", "manual"])]
         provider: String,
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 同仓贡献：把当前子树资源改动提交到隔离分支（AIL-036）
+    /// 同仓贡献：把当前子树资源改动提交到隔离分支
     ContributeSelf {
         /// 提交信息
         #[arg(long, default_value = "ailoom: 同仓资源贡献")]
@@ -364,7 +394,7 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 贡献资源修改：从修改过的源克隆建立变更集并推送（AIL-014）
+    /// 贡献资源修改：从修改过的源克隆建立变更集并推送
     Push {
         /// 修改过的团队源克隆目录
         #[arg(long)]
@@ -379,10 +409,10 @@ pub enum Command {
         #[arg(long)]
         root: Option<std::path::PathBuf>,
     },
-    /// 个人资源库：init | import | import-git | list | sources | check-update | update
+    /// 资源库：init | import | import-git | import-entry | list | sources | check-update | update | delete | recover
     Library {
-        /// 动作：init | import | import-git | import-entry | list | sources | check-update | update
-        #[arg(long)]
+        /// 动作：init | import | import-git | import-entry | list | sources | check-update | update | delete | recover
+        #[arg(long, value_parser = ["init", "import", "import-git", "import-entry", "list", "sources", "check-update", "update", "delete", "recover"])]
         action: String,
         /// import-git / import-entry 的仓库 URL 或发现入口（skills.sh/…）
         #[arg(long)]
@@ -399,6 +429,9 @@ pub enum Command {
         /// check-update / update 的 skill 名
         #[arg(long)]
         skill: Option<String>,
+        /// update：只应用这次检查的候选版本
+        #[arg(long)]
+        preview_id: Option<String>,
         /// import 的技能目录
         #[arg(long)]
         dir: Option<std::path::PathBuf>,
@@ -409,11 +442,17 @@ pub enum Command {
         #[arg(long)]
         execute: bool,
     },
-    /// 个人模式：effective | select | instructions | plan | sync（AIL-044）
+    /// 个人模式：effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit
     Personal {
-        /// 动作：effective | select | instructions | plan | sync | deploy-status | migrate-nongit
-        #[arg(long)]
+        /// 动作：effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit
+        #[arg(long, value_parser = ["effective", "select", "instructions", "plan", "sync", "deploy-status", "undo", "scan-skills", "migrate-nongit"])]
         action: String,
+        /// undo 的任务 ID（apply/sync 任务持久化后的 id）
+        #[arg(long)]
+        id: Option<String>,
+        /// scan-skills 的 Skill 根相对路径（可选，例如 skills）
+        #[arg(long)]
+        sub: Option<String>,
         /// 完整资源 ID（source/kind/namespace/name）
         #[arg(long)]
         resource: Option<String>,
@@ -426,7 +465,7 @@ pub enum Command {
         /// 子项目相对路径
         #[arg(long)]
         subproject: Option<String>,
-        /// 作用到当前工作树（默认仓库层）
+        /// 作用到当前 Worktree（默认仓库层）
         #[arg(long)]
         worktree: bool,
         /// instructions：从文件读取个人指令
@@ -441,13 +480,13 @@ pub enum Command {
         /// plan/sync/effective 的作用域相对路径
         #[arg(long)]
         scope: Option<String>,
-        /// select 的显式仓库/工作树根（F01：不用 profile 键序猜目标仓库）
+        /// select 的显式仓库/Worktree 根（不用 profile 键序猜目标仓库）
         #[arg(long)]
         repo: Option<std::path::PathBuf>,
     },
-    /// 资源合集：list | preview | apply（添加/更新不启用资源）
+    /// 资源合集：list | preview | apply | check | remove（添加/更新不启用资源）
     Collection {
-        #[arg(long, default_value = "list")]
+        #[arg(long, default_value = "list", value_parser = ["list", "preview", "apply", "check", "remove"])]
         action: String,
         #[arg(long)]
         name: Option<String>,
@@ -465,22 +504,40 @@ pub enum Command {
         #[arg(long)]
         execute: bool,
     },
-    /// 本地控制台（AIL-046，仅 loopback）
+    /// 前台运行网页控制台（调试用；日常请用 ailoom web）
+    #[command(hide = true)]
     Console {
         /// 监听端口（占用时自动向后寻找可用端口）
-        #[arg(long, default_value = "7800")]
+        #[arg(long, default_value_t = crate::console::DEFAULT_PORT)]
         port: u16,
         /// 不自动打开浏览器
         #[arg(long)]
         no_open: bool,
     },
-    /// 工作区体检（AIL-013）
+    /// 打开网页；自动启动或复用独立的后台服务
+    Web {
+        /// 端口（默认 47831）；已有服务在运行时沿用其端口
+        #[arg(long)]
+        port: Option<u16>,
+        /// 只输出访问地址，不打开浏览器
+        #[arg(long)]
+        no_open: bool,
+    },
+    /// 管理网页后台（普通 CLI 命令不依赖此服务）
+    Service {
+        #[command(subcommand)]
+        action: ServiceCommand,
+    },
+    /// 工作区体检
     Doctor {
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
+        /// 有失败项时以退出码 10 结束（供 CI / 脚本做门禁）；报告照常输出
+        #[arg(long)]
+        strict: bool,
     },
-    /// 按托管清单安全卸载（AIL-013）
+    /// 按托管清单安全卸载
     Uninstall {
         /// 显式工作区根
         #[arg(long)]
@@ -488,6 +545,33 @@ pub enum Command {
         /// 预览后确认执行
         #[arg(long)]
         execute: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ServiceCommand {
+    /// 启动后台服务，已运行则复用
+    Start {
+        /// 端口（默认 47831）；已有服务在运行时沿用其端口
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// 等待现有任务完成后停止服务，不关闭登录自启动
+    Stop,
+    /// 查看运行状态与登录自启动设置
+    Status,
+    /// 开启下次登录自启动；不改变当前运行状态
+    Enable {
+        #[arg(long, default_value_t = crate::console::DEFAULT_PORT)]
+        port: u16,
+    },
+    /// 关闭登录自启动；不停止当前服务
+    Disable,
+    /// 前台运行，供系统服务管理器调用
+    #[command(hide = true)]
+    Run {
+        #[arg(long, default_value_t = crate::console::DEFAULT_PORT)]
+        port: u16,
     },
 }
 
@@ -505,5 +589,13 @@ pub fn version_info() -> VersionInfo {
         version: env!("CARGO_PKG_VERSION"),
         schema_version: SCHEMA_VERSION,
         msrv: env!("CARGO_PKG_RUST_VERSION"),
+    }
+}
+
+/// 正数参数（如 rotate 阈值）：拒绝 0、负数与非数字。
+fn positive_f64(raw: &str) -> Result<f64, String> {
+    match raw.parse::<f64>() {
+        Ok(v) if v > 0.0 && v.is_finite() => Ok(v),
+        _ => Err(format!("需要大于 0 的数字，实际为 {raw}")),
     }
 }

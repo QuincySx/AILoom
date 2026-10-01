@@ -37,3 +37,25 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test --all-features
+
+  # AIL-130：声明的最低 Rust 版本（Cargo.toml rust-version）必须真实可编译
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - name: Check on MSRV
+        run: cargo check --locked --all-targets
+
+  # AIL-130：前端组件测试与文档门禁（断链、卡片状态一致性、看板生成区）
+  frontend-and-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Frontend components
+        run: node --experimental-vm-modules --test tests/frontend_components.mjs
+      - name: Docs check
+        run: python3 scripts/docs_check.py

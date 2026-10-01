@@ -310,9 +310,13 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
         );
         for c in &checks {
             let mark = if c["ok"] == true { "OK " } else { "!! " };
-            println!("{mark}{}", c["check"]);
+            println!("{mark}{}", c["check"].as_str().unwrap_or("?"));
             if c["ok"] == false {
-                println!("   详情: {}", c["detail"]);
+                let detail = match &c["detail"] {
+                    Value::String(s) => s.clone(),
+                    other => serde_json::to_string_pretty(other).unwrap_or_default(),
+                };
+                println!("   详情: {detail}");
                 if let Some(fix) = c["fix"].as_str() {
                     println!("   修复: {fix}");
                 }

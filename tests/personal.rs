@@ -35,8 +35,16 @@ impl Ctx {
         }
     }
     fn run(&self, cwd: &Path, args: &[&str]) -> (i32, String, String) {
-        let out = Command::new(bin())
-            .args(args)
+        let mut command = Command::new(bin());
+        command.args(args);
+        // Personal sync requires an explicit target; never rely on the last registered repo.
+        if args.contains(&"personal")
+            && args.windows(2).any(|v| v == ["--action", "sync"])
+            && !args.contains(&"--root")
+        {
+            command.arg("--root").arg(cwd);
+        }
+        let out = command
             .current_dir(cwd)
             .envs(common::isolated_child_env(self.tmp.path()))
             .output()
@@ -505,7 +513,7 @@ fn ail044_instructions_and_exclude_via_cli() {
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
 
-    // 个人指令（工作树级）
+    // 个人指令（Worktree 级）
     let instr = c.tmp.path().join("instr.md");
     std::fs::write(&instr, "- 个人：回答用中文\n").unwrap();
     let _ = c.run_json(
@@ -698,4 +706,181 @@ fn ail051_restore_inheritance_via_inherit_state() {
         "恢复继承后回到仓库默认值: {r}"
     );
     assert_eq!(r["origin"], serde_json::json!("repo_default"));
+}
+
+/// C-01 回归：团队 sync 与个人 sync 共用托管清单，但各自只清理本层条目，
+/// 交替执行不再互相删除（资源库 Skill 与内置资源都保持部署，计划均无增删）。
+#[test]
+fn team_and_personal_sync_do_not_undo_each_other() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let url = common::file_url(&common::make_team_source_full(&c.tmp.path().join("src")));
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            &url,
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    assert_eq!(code, 0, "init: {stderr}");
+    let (code, _, stderr) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "team sync: {stderr}");
+    let builtin = ws.join(".claude/agents/ailoom-recall.md");
+    assert!(builtin.exists(), "团队 sync 部署内置召回 Agent");
+
+    import_skill(&c, &ws, "hello");
+    let _ = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "select",
+            "--resource",
+            "personal/skill/personal/hello",
+            "--host",
+            "claude",
+            "--state",
+            "enable",
+        ],
+    );
+    let v = c.run_json(
+        &ws,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], serde_json::json!(true), "{v}");
+    let personal_skill = ws.join(".claude/skills/hello");
+    assert!(personal_skill.exists(), "个人 sync 部署资源库 Skill");
+    assert!(builtin.exists(), "个人 sync 不删除团队内置资源");
+
+    let (code, _, stderr) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "team sync again: {stderr}");
+    assert!(personal_skill.exists(), "团队 sync 不删除个人层部署");
+
+    let changes = |plan: &serde_json::Value| -> Vec<String> {
+        plan["actions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| matches!(a["action"].as_str(), Some("create" | "update" | "delete")))
+            .map(|a| format!("{} {}", a["action"], a["path"]))
+            .collect()
+    };
+    let team_plan = c.run_json(&ws, &["--json", "--data-root", &dr, "plan"]);
+    assert!(
+        changes(&team_plan).is_empty(),
+        "团队计划无增删: {:?}",
+        changes(&team_plan)
+    );
+    let personal_plan = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "plan",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    let personal_plan = if personal_plan["plan"].is_object() {
+        personal_plan["plan"].clone()
+    } else {
+        personal_plan
+    };
+    assert!(
+        changes(&personal_plan).is_empty(),
+        "个人计划无增删: {:?}",
+        changes(&personal_plan)
+    );
+}
+
+/// C-02 回归：非法资源 ID / 未知宿主 / 资源库中不存在的资源在写盘前拒绝（E3004，退出 12）。
+#[test]
+fn personal_select_rejects_invalid_resource_and_host_before_writing() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    let profile = c.tmp.path().join("data/profile/profile.toml");
+    for args in [
+        vec!["--resource", "bad"],
+        vec!["--resource", "personal/skill/personal/missing"],
+        vec!["--host", "nohost"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let (code, _, stderr) = c.run(&repo, &full);
+        assert_eq!(code, 12, "{args:?}: {stderr}");
+        assert!(stderr.contains("E3004"), "{stderr}");
+    }
+    let saved = std::fs::read_to_string(&profile).unwrap_or_default();
+    assert!(
+        !saved.contains("bad") && !saved.contains("nohost") && !saved.contains("missing"),
+        "{saved}"
+    );
+    // inherit 仍可清理历史脏值
+    let (code, _, stderr) = c.run(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--resource",
+            "bad",
+            "--state",
+            "inherit",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+}
+
+/// C-12 回归：同一目录内容未变时重复导入是 noop；内容变化后仍按冲突拒绝，不静默覆盖。
+#[test]
+fn reimporting_unchanged_skill_is_noop_but_changes_still_conflict() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    import_skill(&c, &repo, "hello");
+    let dir = c.tmp.path().join("skills/hello");
+    let dr = c.dr();
+    let args = [
+        "--json",
+        "--data-root",
+        dr.as_str(),
+        "library",
+        "--action",
+        "import",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--execute",
+    ];
+    let v = c.run_json(&repo, &args);
+    assert_eq!(v["files_copied"], 0, "{v}");
+    std::fs::write(dir.join("SKILL.md"), "# hello\n\n改过的正文。\n").unwrap();
+    let (code, _, stderr) = c.run(&repo, &args);
+    assert_ne!(code, 0);
+    assert!(stderr.contains("E2006"), "{stderr}");
 }

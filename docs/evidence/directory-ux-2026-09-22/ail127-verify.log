@@ -1,0 +1,23 @@
+PASS 1. 路由 #/projects 正常渲染
+PASS 2. 路由 #/library 正常渲染
+PASS 3. 路由 #/tasks 正常渲染
+PASS 4. 路由 #/onboarding 正常渲染
+PASS 5. 路由 #/overview 正常渲染
+PASS 6. 路由 #/samples 正常渲染
+PASS 7. 路由 #/scopes 正常渲染
+PASS 8. 路由 #/sources 正常渲染
+PASS 9. 路由 #/workflows 正常渲染
+PASS 10. 路由 #/instructions 正常渲染
+PASS 11. 清扫无控制台错误
+PASS 12. 刷新页面不产生新任务（不重放写入）
+PASS 13. scopes 显示来自项目页的当前目标
+PASS 14. scopes 提供返回项目链接
+PASS 15. 返回后回到项目页且目录保留（web）
+PASS 16. scopes 保留高级写入入口（显式按钮）
+PASS 17. 失联工作树有明确恢复入口
+PASS 18. 目录恢复后可重新检查（回到可用状态）
+PASS 19. 390px #/projects/repo-fabb1cfe5c90ca62 无横向溢出（超出 0px）
+PASS 20. 390px #/library 无横向溢出（超出 0px）
+PASS 21. 390px #/tasks 无横向溢出（超出 0px）
+
+== AIL-127: 21/21 PASS ==

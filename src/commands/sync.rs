@@ -18,6 +18,9 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
     if args.recover {
         let cwd = std::env::current_dir()?;
         let ctx = crate::appctx::AppContext::discover(data_root, &cwd, args.root.as_deref())?;
+        // 恢复与同步互斥：持锁期间另一次 sync 的 journal 不会被当作遗留回滚。
+        let _lock =
+            crate::sync::lock::SyncLock::acquire(&ctx.layout.ws_dir.join("locks"), &ctx.device)?;
         let report = recover(&ctx.layout.journal_dir, &ctx.workspace.workspace_root)?;
         let value = json!({
             "ok": report.ok,
@@ -28,14 +31,14 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
         });
         if !json {
             if report.recovered.is_empty() && report.skipped_user_modified.is_empty() {
-                crate::logging::info("没有待恢复的同步 journal");
+                println!("没有待恢复的同步 journal");
             } else {
                 if !report.recovered.is_empty() {
-                    crate::logging::info(format!(
-                        "已恢复 {} 项: {:?}",
+                    println!(
+                        "已恢复 {} 项: {}",
                         report.recovered.len(),
-                        report.recovered
-                    ));
+                        report.recovered.join(", ")
+                    );
                 }
                 if !report.skipped_user_modified.is_empty() {
                     crate::logging::warn(format!(
@@ -140,12 +143,12 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
     });
     if !json && !args.from_auto {
         if report.ok {
-            crate::logging::info(format!(
+            println!(
                 "同步完成：写入 {} 项，无操作 {} 项，冲突跳过 {} 项",
                 report.applied.len(),
                 report.noop,
                 report.skipped_conflicts.len()
-            ));
+            );
         } else {
             crate::logging::error(format!(
                 "同步失败：{}；恢复点 {}",

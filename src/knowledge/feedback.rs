@@ -230,7 +230,21 @@ pub struct KnowledgeArgs {
 
 pub fn run(args: &KnowledgeArgs, json: bool, data_root: Option<&std::path::Path>) -> Result<Value> {
     let cwd = std::env::current_dir()?;
-    let ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
+    let data = crate::paths::resolve_data_root(data_root)?;
+    let ctx =
+        match super::location::maintenance_context(&data, args.root.as_deref().unwrap_or(&cwd))? {
+            Some(ctx) => {
+                if args.id.as_deref().is_some_and(|id| {
+                    std::path::Path::new(id)
+                        .components()
+                        .any(|c| !matches!(c, std::path::Component::Normal(_)))
+                }) {
+                    return Err(Error::new(code::USAGE, "知识 ID 必须是库内相对路径"));
+                }
+                ctx
+            }
+            None => AppContext::discover(data_root, &cwd, args.root.as_deref())?,
+        };
     match args.action.as_str() {
         "feedback" => {
             let id = args

@@ -1,0 +1,60 @@
+PASS 1. 本地 Skill 区发现未托管 old-notes（真实路径）
+PASS 2. 未托管条目只有「接管说明/删除」，无更新按钮
+--- web 行（继承启用）---
+meeting-notes
+已启用
+
+会议记录整理与待办提取
+
+来自 当前目录配置 · 磁盘：未部署
+
+在此停用…
+PASS 3. 停用确认窗说明只改 web 配置
+--- web 行（停用后）---
+meeting-notes
+已在此移除
+
+会议记录整理与待办提取
+
+上游（当前目录配置）仍启用；已部署文件待「预览并应用」清理 · 磁盘：未部署
+
+恢复继承
+PASS 4. API：web 停用生效（deployed=false，来源 web 层）
+PASS 5. API：停用写在 worktree_subproject web
+PASS 6. API：main 根目录仍启用（不受 web 停用影响）
+PASS 7. 恢复继承确认窗预测上游=当前目录配置启用
+PASS 8. API：恢复继承后 web 回到启用（worktree_override）
+--- doc-search 行（添加后）---
+doc-search
+已启用
+
+文档检索入口与索引说明
+
+在此添加（上游：没有任何层设置） · 磁盘：未部署
+
+移除…
+PASS 9. doc-search 显示已启用（在此添加）
+PASS 10. API：web 层新增 doc-search
+PASS 11. 添加仅保存配置：磁盘尚未出现文件
+PASS 12. 待应用横幅出现（有真实待部署动作）
+PASS 13. 预览列出 web 实际落盘路径
+PASS 14. 磁盘：web/.claude/skills/doc-search 已写入
+PASS 15. 磁盘：main 根目录 .claude/skills 不受影响
+PASS 16. 磁盘：另一工作树零变化
+PASS 17. 磁盘：另一知识库（乙）哈希不变
+--- doc-search 行（应用后）---
+doc-search
+已启用
+
+文档检索入口与索引说明
+
+在此添加（上游：没有任何层设置） · 磁盘：已部署
+
+移除…
+PASS 18. 应用后重新查询：doc-search 行显示磁盘已部署
+PASS 19. 磁盘：doc-search 已从 web 清理
+PASS 20. 磁盘：old-notes（用户自建）未被误删
+PASS 21. 磁盘：知识库乙哈希仍不变
+PASS 22. profile revision 已推进（有写入发生）
+
+== AIL-123: 22/22 PASS ==

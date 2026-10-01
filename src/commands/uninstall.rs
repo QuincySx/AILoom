@@ -151,11 +151,11 @@ pub fn run(args: &UninstallArgs, json: bool, data_root: Option<&std::path::Path>
         "failed": report.failed,
     });
     if !json {
-        crate::logging::info(format!(
+        println!(
             "卸载完成：移除 {} 项，保留（冲突）{} 项",
             report.applied.len(),
             report.skipped_conflicts.len()
-        ));
+        );
     }
     if !report.ok {
         return Err(Error::new(code::WRITE_FAILED, "卸载未全部完成").context(value.clone()));

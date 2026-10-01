@@ -398,7 +398,7 @@ fn ail055_select_targets_explicit_repo() {
 }
 
 // ---------------------------------------------------------------------------
-// AIL-058（F02）：连续单项工作树选择互相保留（不整层替换）
+// AIL-058（F02）：连续单项 Worktree 选择互相保留（不整层替换）
 // ---------------------------------------------------------------------------
 #[test]
 fn ail058_sequential_worktree_selections_merge() {
@@ -549,7 +549,7 @@ fn ail056_relink_validates_identity_and_preserves_config() {
         ailoom::repo_registry::RepoMoveOutcome::RepoMoved { .. }
     ));
 
-    // F04：把登记工作树重关联到独立仓库 B → 拒绝（common-dir 与身份证据不符）
+    // F04：把登记 Worktree 重关联到独立仓库 B → 拒绝（common-dir 与身份证据不符）
     let other_repo_id = {
         let d = ailoom::repo_registry::discover_repo(&other).unwrap();
         let mut reg =
@@ -1141,4 +1141,75 @@ fn ail076_baseline_change_resynthesizes_view() {
         "视图包含未调整的公司新基线"
     );
     assert!(content2.contains("回答用中文"), "个人补充保留");
+}
+
+#[test]
+fn cli_sync_from_subdirectory_records_workspace_root_for_undo() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "subdir-sync");
+    std::fs::write(repo.join("base.txt"), "base").unwrap();
+    git_add_commit(&c, &repo, "base");
+    let sub = repo.join("docs");
+    std::fs::create_dir_all(&sub).unwrap();
+    let dr = c.dr();
+    let instructions = c.tmp.path().join("instructions.md");
+    std::fs::write(&instructions, "Local instructions for subdirectory sync").unwrap();
+    c.run_json(
+        &sub,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "instructions",
+            "--file",
+            instructions.to_str().unwrap(),
+        ],
+    );
+    c.run_json(
+        &sub,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "select",
+            "--host",
+            "codex",
+            "--state",
+            "enable",
+        ],
+    );
+    let result = c.run_json(
+        &sub,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(result["ok"], true);
+    let jobs = std::fs::read_dir(Path::new(&dr).join("console/jobs")).unwrap();
+    let job_path = jobs
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|e| e == "json"))
+        .unwrap();
+    let job: serde_json::Value = serde_json::from_slice(&std::fs::read(job_path).unwrap()).unwrap();
+    assert_eq!(job["root"], repo.canonicalize().unwrap().to_str().unwrap());
+    let entries = job["undo"].as_array().unwrap();
+    assert!(
+        !entries.is_empty(),
+        "must exercise real deployment: {result}"
+    );
+    for entry in entries {
+        assert!(repo.join(entry["path"].as_str().unwrap()).exists());
+        assert!(
+            entry["after_hash"].is_string(),
+            "missing deployed fingerprint: {entry}"
+        );
+    }
+    let undone =
+        ailoom::console::jobs::undo_persisted(Path::new(&dr), job["id"].as_str().unwrap()).unwrap();
+    assert!(
+        !undone["restored"].as_array().unwrap().is_empty(),
+        "{undone}"
+    );
 }

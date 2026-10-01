@@ -22,6 +22,34 @@ pub fn render(
     artifacts: &mut Vec<Artifact>,
     _unsupported: &mut Vec<UnsupportedItem>,
 ) -> Result<()> {
+    let link_path: PathBuf = match tool {
+        Tool::Claude => PathBuf::from(format!(".claude/skills/{}", entry.id.name)),
+        // AIL-041：官方原生项目技能目录（symlink 可被宿主扫描发现）
+        Tool::Codex => PathBuf::from(format!("{CODEX_NATIVE_SKILLS_DIR}/{}", entry.id.name)),
+        // alva 通过 co-load 直接读取 .claude/skills（paths.rs 核实），无需单独部署
+        Tool::Alva => return Ok(()),
+    };
+
+    render_at(
+        entry,
+        snapshot_root,
+        source_identity,
+        skills_root,
+        tool.as_str(),
+        link_path,
+        artifacts,
+    )
+}
+
+pub fn render_at(
+    entry: &ResourceEntry,
+    snapshot_root: &Path,
+    source_identity: &str,
+    skills_root: &str,
+    tool: &str,
+    link_path: PathBuf,
+    artifacts: &mut Vec<Artifact>,
+) -> Result<()> {
     let src_dir = snapshot_root.join(&entry.path);
     if !src_dir.is_dir() {
         return Err(Error::new(
@@ -35,17 +63,9 @@ pub fn render(
     // 只计算期望摘要，不在 plan 阶段写 store（避免覆盖用户经软链的修改）
     let digest = store::dir_digest(&src_dir)?;
 
-    let link_path: PathBuf = match tool {
-        Tool::Claude => PathBuf::from(format!(".claude/skills/{}", entry.id.name)),
-        // AIL-041：官方原生项目技能目录（symlink 可被宿主扫描发现）
-        Tool::Codex => PathBuf::from(format!("{CODEX_NATIVE_SKILLS_DIR}/{}", entry.id.name)),
-        // alva 通过 co-load 直接读取 .claude/skills（paths.rs 核实），无需单独部署
-        Tool::Alva => return Ok(()),
-    };
-
     artifacts.push(Artifact {
         resource_id: entry.id.to_string(),
-        target_tool: tool.as_str().into(),
+        target_tool: tool.into(),
         kind: "skill".into(),
         path: link_path,
         body: ArtifactBody::Symlink {

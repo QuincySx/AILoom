@@ -1,7 +1,7 @@
 //! 本地目录源（AIL-004）：无锁定 commit，内容摘要标识当前状态并声明可变性。
 
 use super::Snapshot;
-use crate::error::Result;
+use crate::error::{code, Error, Result};
 use crate::gitx;
 use crate::ids::now_iso;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,14 @@ pub struct LocalSource {
 
 impl LocalSource {
     pub fn new(path: &Path) -> Result<Self> {
-        let path = path.canonicalize()?;
+        let path = path.canonicalize().map_err(|e| {
+            Error::new(
+                code::SOURCE_FETCH_FAILED,
+                format!("本地源目录不可用: {}（{e}）", path.display()),
+            )
+            .context(serde_json::json!({ "path": path }))
+            .fix("检查路径是否存在，或改用 --url 指定 Git 源")
+        })?;
         let identity = format!(
             "local+{}",
             gitx::normalize_remote_url(&path.to_string_lossy())

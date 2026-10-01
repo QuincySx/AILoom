@@ -8,7 +8,9 @@
 - [ ] `cargo clippy --all-targets -- -D warnings` 通过
 - [ ] `cargo test` 全部通过（含 tests/e2e.rs 端到端验收）
 - [ ] 端到端验收（AIL-023）在目标平台跑通并记录输出摘要
-- [ ] MSRV（1.75）下 `cargo check` 通过（若变更依赖）
+- [ ] 浏览器验收：`scripts/ui-browser.sh` 全部模式 PASS（需要本机 Chrome；CI 暂不运行），日志与截图在 `target/ui-browser/`
+- [ ] `python3 scripts/docs_check.py` 与 `node --experimental-vm-modules --test tests/frontend_components.mjs` 通过（CI `frontend-and-docs` job）
+- [ ] MSRV（1.85，CI `msrv` job）下 `cargo check --locked --all-targets` 通过（若变更依赖，同步更新 Cargo.toml `rust-version` 与 CI）
 
 ## 2. 宿主能力复核
 

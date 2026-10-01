@@ -4,13 +4,16 @@
 
 参考用户指定的 [stitch-skills / shadcn-ui](https://github.com/google-labs-code/stitch-skills/blob/main/plugins/stitch-build/skills/shadcn-ui/SKILL.md) 及其 customization-guide，采用语义颜色、显式变体和基础组件/业务组合分层。不安装 Skill，不运行 shadcn CLI，不引入 React/Tailwind 或其他依赖。
 
-当前实现是原生 JS/CSS，**不是官方 shadcn React 组件**。原来的 artifact-design `theme.css` / `theme.js` 文件保留供历史兼容，但应用壳不再加载；颜色不再跨两套主题间接定义。
+当前实现是原生 JS/CSS，**不是官方 shadcn React 组件**。原来的 artifact-design `theme.css` / `theme.js` 已于 2026-10-01 删除（AIL-138），颜色只由 `tokens.css` 定义。
 
 ## 三层职责
 
 1. `tokens.css`：唯一设计值来源。background/foreground、primary/primary-foreground、muted、destructive、border/input/ring，统一字号、4/8 间距、圆角、44px 控件高度。旧 c-* 名称只作同文件中的兼容别名。
 2. `components.css` 与 `components/*.js`：按钮、输入、标签、表格、弹窗、状态徽章的视觉和基础交互，不发业务请求。
 3. `base.css` 与 features/pages：应用壳和页面布局、业务组合，不定义新的颜色值。
+4. `workspace.css`：目录优先工作台（`#/projects`）与顶部导航的布局。工作台使用**紧凑密度**：只在 `.workspace-explorer` 内把 `--control-height` 调为 32px，不得在 `:root` 等全局选择器上覆盖 token；其他页面保持 44px。窄屏（≤700px）导航项整体换行，文字不在词中折断。
+
+已知待收敛（AIL-139）：`workspace.css` 仍有大量硬编码像素与 11–12px 字号，以及多处相互覆盖的 `.sidebar` 规则；`data-variant` 契约在页面中尚未使用，按钮仍依赖 `primary` / `danger` 类名。
 
 ## 使用
 

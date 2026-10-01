@@ -187,7 +187,7 @@ pub fn run_hooks_cmd(
                 crate::events::hooks::install_registration(&declaration, &ctx)?;
             let value = json!({ "registered": registered, "unsupported": unsupported });
             if !json {
-                crate::logging::info(format!("hooks 注册：{} 个事件", registered.len()));
+                println!("hooks 注册：{} 个事件", registered.len());
             }
             Ok(value)
         }
@@ -206,7 +206,7 @@ pub fn run_hooks_cmd(
             managed.save(&managed_path)?;
             let value = json!({ "removed": removed });
             if !json {
-                crate::logging::info("已移除 ailoom hook 注册");
+                println!("已移除 ailoom hook 注册");
             }
             Ok(value)
         }

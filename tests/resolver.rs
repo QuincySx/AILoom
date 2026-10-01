@@ -203,8 +203,12 @@ fn symlink_escape_in_skill_dir_rejected() {
     #[cfg(windows)]
     std::os::windows::fs::symlink_file(&secret, src.join("resources/skills/common-greet/evil"))
         .unwrap();
-    let err = resolve_at(&src, &[], &[]).unwrap_err();
-    assert_eq!(err.code, "E3003", "{err}");
+    let desired = resolve_at(&src, &[], &[]).unwrap();
+    assert!(!desired
+        .selected
+        .iter()
+        .any(|item| item.name == "common-greet"));
+    assert!(desired.selected.iter().any(|item| item.kind == "rule"));
 }
 
 #[test]

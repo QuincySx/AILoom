@@ -7,7 +7,7 @@ use crate::resource::ResourceEntry;
 use std::path::Path;
 
 /// 规则是否声明了条件（frontmatter `paths`）。
-fn conditional(raw: Option<&str>) -> bool {
+pub fn conditional(raw: Option<&str>) -> bool {
     let Some(text) = raw else { return false };
     let Some(rest) = text.strip_prefix("---\n") else {
         return false;

@@ -1,9 +1,8 @@
 # AILoom
 
-以 Rust 构建的项目与团队 AI 资源、知识和协作工具。
+以 Rust 构建的本地优先工具，把项目与团队的 AI 资源（Skill、Rules、Agent、MCP）、知识与协作经验统一管理，并部署到各家 AI 编程工具。
 
-**状态：2026-09-17 需求实现对齐：98 张主卡，58 Backlog、4 Blocked、36 Done。**
-新增47张执行卡（28张功能修复/补齐/验收 + 19张Web分层实施），11张旧主卡已根据复审重新打开。执行者从[本轮入口](docs/initiatives/implementation-alignment-2026-09-17.md)开始，Web按[Token→组件→状态→页面蓝图](docs/initiatives/web-console-blueprint-2026-09-17.md)逐步实施；全局状态见[任务看板](docs/BACKLOG.md)。旧测试通过不代表本轮需求已验收。
+> 当前迭代：[2026-10 稳定与收敛迭代](docs/initiatives/iteration-2026-10.md) · 任务状态见 [任务看板](docs/BACKLOG.md)（以 [cards.json](docs/cards.json) 为准）
 
 ## 快速开始
 
@@ -12,25 +11,33 @@ cargo build --release
 target/release/ailoom --help
 ```
 
-完整流程（绑定→同步→检索→贡献→观测→卸载）见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+CLI 命令执行完即退出，无需常驻服务。网页按需启动：
+
+```sh
+ailoom web                  # 启动或复用后台服务并打开网页
+ailoom service stop         # 停止网页服务
+ailoom service enable       # 可选：登录时自动启动（会写入系统登录项）
+ailoom service disable      # 关闭登录自启动
+```
+
+上手流程见 [快速上手](docs/guide/QUICKSTART.md)；网页服务的命令、平台支持与日志见 [CLI 与网页服务](docs/guide/WEB-SERVICE.md)。
 
 ## 能力概览
 
-- **项目资源**：Git/本地/同仓团队源、版本锁定、离线可用、计划/同步/冲突保留/journal 恢复（AIL-003—008）
-- **宿主适配**：Claude Code 与 Codex 的 Skills/Rules/Agent/MCP（发现路径按官方文档核实，见 [docs/capabilities/](docs/capabilities/)）（AIL-009—012）
-- **诊断**：doctor 体检、按托管清单安全卸载（AIL-013）
-- **知识闭环**：经验贡献（明确归属）、关键词+中文索引、项目隔离召回（AIL-014—017）
-- **可观测**：Hook 事件协议、会话/Token/干预聚合、摩擦提示（每会话一次）、本地 loopback 看板、Git 报告分支统计（默认关闭）（AIL-018—023）
-- **NEXT/LATER**：成员名册、多源订阅（标签订阅/排除）、Rust 代码图谱与图召回、知识反馈与维护、npm 分发设计、管理后端设计、环境配置、团队 Hook、包依赖、批量导入、PR 知识候选（AIL-024—037）
+- **团队资源**：Git / 本地 / 同仓团队源，版本锁定、离线可用；计划 → 同步 → 冲突保留 → journal 恢复。
+- **个人层**：仓外个人配置，按仓库 / Worktree / 子目录三态选择资源与宿主；资源库、资源合集、CC Switch 来源迁移。
+- **宿主适配**：Claude Code、Codex 为主要宿主；Grok、Pi、OpenCode、Cursor 等为附加宿主，能力与核实状态见 [能力矩阵](docs/capabilities/)。
+- **原生文件**：在网页里直接编辑各宿主的 Rules / Agent 原生文件，见 [原生文件](docs/guide/NATIVE-FILES.md)。
+- **知识闭环**：经验贡献、中文检索与项目隔离召回；知识库位置迁移与换机恢复，见 [项目与知识库恢复](docs/guide/KNOWLEDGE-PORTABILITY.md)。
+- **观测**：Hook 事件、会话 / Token 聚合、摩擦提示、本地 loopback 看板。
+- **网页控制台**：目录优先的项目工作台、全局规则与 Agent、资源库、操作记录。
+- **ORCA 接入层**（实验）：见 [plugins/orca](plugins/orca/README.md)。
 
-## 任务看板与文档
+## 文档
 
-- [任务看板与实施顺序](docs/BACKLOG.md)（当前状态以 cards.json 为准）
-- [返工派工单](docs/REWORK.md) · [完成度与代码审查报告](docs/reviews/2026-09-15-agent-implementation-review.md)
-- [公共契约 v1](docs/CONTRACTS.md)（文件格式/错误码/冲突矩阵）
-- [能力矩阵](docs/capabilities/)（官方来源与核实日期；未知标 unknown）
-- [快速上手](docs/QUICKSTART.md) · [支持范围](docs/SUPPORT.md) · [发布检查单](docs/RELEASE-CHECKLIST.md) · [安装](docs/INSTALL.md)
-- [管理后端设计](docs/backend/architecture.md)（仅设计，AIL-030）
+- [文档地图](docs/README.md)：用户手册、契约、能力矩阵、开发流程与历史归档的入口。
+- [公共契约](docs/CONTRACTS.md)：文件格式、错误码、退出码与冲突矩阵。
+- [开发与关卡流程](docs/IMPLEMENTATION-GUIDE.md) · [发布检查单](docs/RELEASE-CHECKLIST.md)
 
 ## 验证
 
@@ -38,11 +45,7 @@ target/release/ailoom --help
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --all-features
+python3 scripts/docs_check.py      # 断链、卡片状态一致性、看板生成区
 ```
 
-2026-09-15 第二轮返工：286 个测试通过 / 0 失败 / 1 ignored（真实 npm registry 用例），fmt/Clippy 干净；S01–S04、R01–R15 全部反例以真实入口修复并回归（[返工派工单](docs/REWORK.md)、[子卡索引](docs/rework/2026-09-15/README.md)）。2026-09-13 真机验收记录保留；Linux/Windows、真实 GitHub 写入仍未验证，边界见各卡。逐卡证据见各卡「重新关卡记录」。
-
-后续能力独立保留，不以同步器代替完整产品目标。
-
-- [本地控制台与 Onboarding 需求规格（本轮返工中）](docs/initiatives/local-console.md)
-- [个人配置/Git 需求及回复审查](docs/reviews/2026-09-15-onboarding-requirements-review.md)
+测试数量与逐卡证据记录在各卡片与 [docs/reviews/](docs/reviews/)，README 不再维护快照数字。
