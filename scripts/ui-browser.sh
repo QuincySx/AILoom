@@ -12,6 +12,7 @@ CDP_PORT=${CDP_PORT:-9251}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ailoom-ui.XXXXXX")
 mkdir -p "$OUT"
 
+REAL_HOME=$HOME
 export HOME="$WORK/home" XDG_STATE_HOME="$WORK/home/state" XDG_DATA_HOME="$WORK/home/data" \
   XDG_CONFIG_HOME="$WORK/home/config" CLAUDE_CONFIG_DIR="$WORK/home/claude" CODEX_HOME="$WORK/home/codex" \
   PI_CODING_AGENT_DIR="$WORK/home/pi" AILOOM_REPORTING=off AILOOM_AUTO_SYNC=off
@@ -21,9 +22,12 @@ mkdir -p "$HOME"
 CONSOLE_PID=$!
 start_chrome() {
   # 关闭后台网络、组件更新与同步，避免 Chrome 自身的后台任务（含自更新）干扰无头实例。
-  "$CHROME" --headless=new --remote-debugging-port="$CDP_PORT" --user-data-dir="$WORK/chrome-$1" \
+  # Chrome 用真实 HOME 启动并使用模拟钥匙串：HOME 指向临时目录时，macOS 上的网络服务会卡在钥匙串初始化，
+  # 表现为连接已建立却不发出请求（Page.navigate 无响应）。隔离数据只作用于控制台进程。
+  HOME="$REAL_HOME" "$CHROME" --headless=new --remote-debugging-port="$CDP_PORT" --user-data-dir="$WORK/chrome-$1" \
     --no-first-run --no-default-browser-check --disable-background-networking --disable-component-update \
-    --disable-sync --disable-default-apps --metrics-recording-only about:blank >>"$OUT/chrome.log" 2>&1 &
+    --disable-sync --disable-default-apps --metrics-recording-only --use-mock-keychain --password-store=basic \
+    about:blank >>"$OUT/chrome.log" 2>&1 &
   CHROME_PID=$!
   for _ in $(seq 1 60); do
     curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null && break
@@ -39,8 +43,8 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 
-mkdir -p "$WORK/project-a" "$WORK/project-b" "$WORK/skills/browser-skill"
-git -C "$WORK/project-a" init -q && git -C "$WORK/project-b" init -q
+mkdir -p "$WORK/project-a" "$WORK/project-b" "$WORK/project-c" "$WORK/skills/browser-skill"
+git -C "$WORK/project-a" init -q && git -C "$WORK/project-b" init -q && git -C "$WORK/project-c" init -q
 printf -- "---\nname: browser-skill\ndescription: 浏览器验收用\n---\n正文\n" >"$WORK/skills/browser-skill/SKILL.md"
 
 failed=0
@@ -73,5 +77,6 @@ run grouped
 run cc-switch
 run projects "$WORK/project-a"
 run onboarding
+run instructions "$WORK/project-c"
 run design "$WORK/project-b" "$WORK/skills/browser-skill"
 exit $failed

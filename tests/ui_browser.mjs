@@ -183,6 +183,24 @@ if (mode === 'projects' || mode === 'design') {
   if (await evaluate('document.documentElement.scrollWidth > innerWidth + 1')) throw new Error('Project list overflow');
   await send('Emulation.setDeviceMetricsOverride', { width:1440,height:1000,deviceScaleFactor:1,mobile:false });
 }
+if (mode === 'instructions') {
+  // 项目说明的并发保护：别处先保存后，本页保存出现冲突确认；取消则载入最新内容，不覆盖别处的保存。
+  const [project] = process.argv.slice(5);
+  const api = body => `(async()=>{const {api}=await import('/ui/services/api.js');return api.instructions(${JSON.stringify(body)});})()`;
+  const repoId = await evaluate(`(async()=>{const {api}=await import('/ui/services/api.js');await api.approveDir(${JSON.stringify(project)});return (await api.repoDiscover(${JSON.stringify(project)})).repo_id;})()`);
+  await evaluate(`location.hash='#/projects/${repoId}/instructions'`);
+  await waitFor("!!document.querySelector('[data-save]') && !document.querySelector('[data-save]').disabled");
+  await evaluate(api({ root: project, content: '别处保存的说明' }));
+  await evaluate("{const t=document.querySelector('[data-editor] textarea'); t.value='本页的说明'; t.dispatchEvent(new Event('input')); document.querySelector('[data-save]').click()}");
+  await waitFor("document.querySelector('dialog:modal')?.innerText.includes('已在其他页面被修改')");
+  await screenshot(output + '-instructions-conflict.png');
+  await evaluate("[...document.querySelectorAll('dialog:modal button')].find(b=>b.textContent.trim()==='取消').click()");
+  await waitFor("document.querySelector('[data-editor] textarea').value==='别处保存的说明' && document.querySelector('[data-msg]').textContent.includes('已载入最新')");
+  if ((await evaluate(api({ root: project, read: true }))).content !== '别处保存的说明') throw new Error('Concurrent save was overwritten');
+  await evaluate("{const t=document.querySelector('[data-editor] textarea'); t.value='合并后的说明'; t.dispatchEvent(new Event('input')); document.querySelector('[data-save]').click()}");
+  await waitFor("document.querySelector('[data-msg]').textContent.includes('已保存')");
+  if ((await evaluate(api({ root: project, read: true }))).content !== '合并后的说明') throw new Error('Save on latest revision failed');
+}
 if (mode === 'onboarding') {
   // 三步引导页只做讲解与直达入口，不承载配置动作。
   for (const [index, target] of [[0, '#/projects/manage'], [1, '#/library'], [2, '#/projects']]) {

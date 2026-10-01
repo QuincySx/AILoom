@@ -1709,3 +1709,305 @@ fn web_apply_partial_failure_reports_and_recovers() {
     server.shutdown();
     server.join();
 }
+
+/// AIL-107 缺口：预览之后目标文件被改动 → 旧计划判为过期（stale-plan），不覆盖用户写入的内容。
+#[test]
+fn plan_becomes_stale_when_target_file_changes_after_preview() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17823)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let _ = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": tmp.path() }),
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/repo/discover",
+            &auth,
+            json!({ "path": repo })
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/profile/select",
+            &auth,
+            json!({ "host": "claude", "state": "enable", "root": repo })
+        )
+        .0,
+        200
+    );
+    let skill_src = tmp.path().join("skills/stale-check");
+    std::fs::create_dir_all(&skill_src).unwrap();
+    std::fs::write(skill_src.join("SKILL.md"), "# stale-check\n\n说明\n").unwrap();
+    let out = std::process::Command::new(ailoom_bin())
+        .args([
+            "--data-root",
+            server.state.data_root.to_str().unwrap(),
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            skill_src.to_str().unwrap(),
+            "--execute",
+        ])
+        .current_dir(&repo)
+        .envs(isolate_env(tmp.path()))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let _ = post(
+        server.port,
+        "/api/profile/select",
+        &auth,
+        json!({ "resource": "personal/skill/personal/stale-check", "state": "enable", "root": repo }),
+    );
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/plan",
+        &auth,
+        json!({ "root": repo }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let plan_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        wait_job(&server, &plan_id, Duration::from_secs(20))["status"],
+        "success"
+    );
+    // 预览之后，用户在目标位置放了自己的目录
+    let target = repo.join(".claude/skills/stale-check");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("SKILL.md"), "用户自己的版本").unwrap();
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/apply",
+        &auth,
+        json!({ "plan_job_id": plan_id }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let job = wait_job(
+        &server,
+        json_body(&raw)["job_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    );
+    assert_eq!(job["error"], "stale-plan", "{job}");
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        "用户自己的版本"
+    );
+    server.shutdown();
+    server.join();
+}
+
+/// AIL-106 缺口：两个页面同时编辑项目说明，后保存的一方不能静默覆盖前者（乐观并发）。
+#[test]
+fn instructions_save_rejects_stale_revision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17825)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let _ = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": tmp.path() }),
+    );
+    let call = |body: Value| {
+        let (code, raw) = post(server.port, "/api/profile/instructions", &auth, body);
+        (code, json_body(&raw))
+    };
+    let (code, first) = call(json!({ "root": repo, "read": true }));
+    assert_eq!(code, 200, "{first}");
+    let r0 = first["revision"].as_str().unwrap().to_string();
+    // 页面 A 保存成功
+    let (code, saved) = call(json!({ "root": repo, "content": "A 的说明", "base_revision": r0 }));
+    assert_eq!(code, 200, "{saved}");
+    let r1 = saved["revision"].as_str().unwrap().to_string();
+    assert_ne!(r0, r1);
+    // 页面 B 仍持有旧版本：拒绝并返回最新内容，不写入
+    let (code, conflict) =
+        call(json!({ "root": repo, "content": "B 的说明", "base_revision": r0 }));
+    assert_eq!(code, 409, "{conflict}");
+    assert_eq!(conflict["current_content"], "A 的说明");
+    assert_eq!(conflict["current_revision"], r1.as_str());
+    assert_eq!(
+        call(json!({ "root": repo, "read": true })).1["content"],
+        "A 的说明"
+    );
+    // 未带版本号的调用（旧客户端 / 显式覆盖）仍可写入
+    assert_eq!(call(json!({ "root": repo, "content": "覆盖" })).0, 200);
+    server.shutdown();
+    server.join();
+}
+
+/// AIL-072 缺口：服务重启时仍处于「待执行 / 执行中」的任务标为 interrupted，且绝不自动重放。
+#[test]
+fn restart_marks_queued_and_running_jobs_interrupted_without_replay() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let server = ConsoleServer::start(&opts(tmp.path(), 17827)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let _ = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": tmp.path() }),
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/repo/discover",
+            &auth,
+            json!({ "path": repo })
+        )
+        .0,
+        200
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/profile/select",
+            &auth,
+            json!({ "host": "claude", "state": "enable", "root": repo })
+        )
+        .0,
+        200
+    );
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/plan",
+        &auth,
+        json!({ "root": repo }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let plan_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        wait_job(&server, &plan_id, Duration::from_secs(20))["status"],
+        "success"
+    );
+    let data_root = server.state.data_root.clone();
+    server.shutdown();
+    server.join();
+
+    // 模拟崩溃现场：计划任务停在 queued，另有一个停在 running 的应用任务
+    let jobs = data_root.join("console/jobs");
+    let mut plan: Value =
+        serde_json::from_slice(&std::fs::read(jobs.join(format!("{plan_id}.json"))).unwrap())
+            .unwrap();
+    plan["status"] = json!("queued");
+    std::fs::write(jobs.join(format!("{plan_id}.json")), plan.to_string()).unwrap();
+    let mut apply = plan.clone();
+    apply["id"] = json!("apply-crashed");
+    apply["kind"] = json!("apply");
+    apply["status"] = json!("running");
+    apply["plan_job_id"] = json!(plan_id);
+    std::fs::write(jobs.join("apply-crashed.json"), apply.to_string()).unwrap();
+
+    let server = ConsoleServer::start(&opts(tmp.path(), 17827)).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let status = |id: &str| {
+        server
+            .state
+            .jobs
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|j| serde_json::to_value(j).unwrap()["status"].clone())
+    };
+    assert_eq!(status(&plan_id), Some(json!("interrupted")));
+    assert_eq!(status("apply-crashed"), Some(json!("interrupted")));
+    assert!(
+        !repo.join(".claude/agents").exists()
+            || std::fs::read_dir(repo.join(".claude/agents"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "中断的应用不得重放"
+    );
+    server.shutdown();
+    server.join();
+}
+
+/// AIL-122 缺口：含空格 / 中文的目录可用；`../` 穿越、越界符号链接与不存在的目录被拒绝。
+#[test]
+fn directory_paths_with_spaces_work_and_escapes_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let root = base.join("我的 项目");
+    std::fs::create_dir_all(root.join("子 目录")).unwrap();
+    std::fs::create_dir_all(base.join("outside")).unwrap();
+    std::os::unix::fs::symlink(base.join("outside"), root.join("escape")).unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17829)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    assert_eq!(
+        post(
+            server.port,
+            "/api/fs/approve",
+            &auth,
+            json!({ "path": root })
+        )
+        .0,
+        200
+    );
+    let enc = |p: &std::path::Path| {
+        p.to_str()
+            .unwrap()
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'/' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect::<String>()
+    };
+    let get = |path: &str| {
+        let (code, raw) = method(server.port, "GET", path, &auth, None);
+        (code, json_body(&raw))
+    };
+    let (code, v) = get(&format!("/api/fs/list?path={}", enc(&root)));
+    assert_eq!(code, 200, "{v}");
+    assert!(v.to_string().contains("子 目录"), "{v}");
+    assert_eq!(
+        get(&format!("/api/fs/list?path={}", enc(&root.join("子 目录")))).0,
+        200
+    );
+    for bad in [
+        root.join("..").join("outside"),
+        root.join("escape"),
+        root.join("不存在"),
+    ] {
+        let (code, v) = get(&format!("/api/fs/list?path={}", enc(&bad)));
+        assert!((400..500).contains(&code), "{bad:?}: {code} {v}");
+        assert!(v["error"].is_string(), "{v}");
+    }
+    server.shutdown();
+    server.join();
+}

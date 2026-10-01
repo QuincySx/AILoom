@@ -30,6 +30,7 @@ export function InstructionsPanel(container, props) {
   });
   let cur = props;
   let saved = '';
+  let revision = null; // 读取时的版本号；保存时带上，防止覆盖别处的修改
   let disposed = false;
   let busy = true;
   let baselineText = '';
@@ -59,6 +60,7 @@ export function InstructionsPanel(container, props) {
   api.instructions({root:cur.target?.path, read:true}).then(result => {
     if (disposed) return;
     saved = result.content;
+    revision = result.revision ?? null;
     field.setValue(saved);
     busy = false;
     saveButton.disabled = clearButton.disabled = false;
@@ -70,12 +72,30 @@ export function InstructionsPanel(container, props) {
     busy = true;
     saveButton.disabled = clearButton.disabled = true;
     try {
-      await api.instructions({root:cur.target?.path, content});
+      const r = await api.instructions({root:cur.target?.path, content, base_revision: revision});
       saved = content;
+      revision = r.revision ?? revision;
       msg.textContent = '已保存。到项目中应用后，新开 AI 会话使用。';
       cur.onChanged?.();
     } catch (e) {
-      msg.textContent = '失败：' + e.message;
+      if (e.kind === 'conflict' && e.data?.current_revision) {
+        // 别处已修改：保留当前编辑，让用户选择载入最新或覆盖
+        msg.textContent = e.message;
+        const latest = e.data.current_content ?? '';
+        const nextRevision = e.data.current_revision;
+        if (await confirmAction('项目说明已在其他页面被修改。用你现在的内容覆盖它？选择取消将载入最新内容（你的编辑会被替换）。', {title:'说明已被修改', confirmLabel:'用我的内容覆盖'})) {
+          revision = nextRevision;
+          busy = false;
+          saveButton.disabled = clearButton.disabled = false;
+          return wrap.querySelector('[data-save]').onclick();
+        }
+        saved = latest;
+        revision = nextRevision;
+        field.setValue(latest);
+        msg.textContent = '已载入最新内容。';
+      } else {
+        msg.textContent = '失败：' + e.message;
+      }
     } finally {
       busy = false;
       saveButton.disabled = clearButton.disabled = false;
@@ -87,8 +107,9 @@ export function InstructionsPanel(container, props) {
     busy = true;
     saveButton.disabled = clearButton.disabled = true;
     try {
-      await api.instructions({root:cur.target?.path, clear:true});
+      const r = await api.instructions({root:cur.target?.path, clear:true, base_revision: revision});
       saved = '';
+      revision = r.revision ?? null;
       field.setValue('');
       msg.textContent = '已清除。到项目中应用改动。';
       cur.onChanged?.();

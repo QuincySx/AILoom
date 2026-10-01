@@ -194,7 +194,11 @@ fn corrupted_profile_errors_loudly() {
     )
     .unwrap();
     let err = PersonalProfile::load_or_default(&data_root).unwrap_err();
-    assert_eq!(err.code, "E3001");
+    assert_eq!(err.code, "E3002", "解析失败与团队声明一致用 E3002");
+    assert!(
+        err.fix.as_deref().unwrap_or("").contains("profile.toml"),
+        "给出修复建议"
+    );
 
     std::fs::write(
         PersonalProfile::profile_path(&data_root),

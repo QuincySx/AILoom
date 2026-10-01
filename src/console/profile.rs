@@ -215,20 +215,38 @@ pub(super) fn api_profile_instructions(state: &Arc<ServerState>, req: &Request) 
         Err(e) => return Response::error(400, &e),
     };
     let repo_id = repo.identity.repo_id.clone();
+    // 乐观并发：版本号即当前内容的哈希。写入时带 base_revision，若与当前不同则拒绝，
+    // 避免两个页面同时编辑时后保存的一方静默覆盖前者（AIL-106）。
+    let current = crate::personal_instructions::load_entry(&state.data_root, &repo_id, None)
+        .unwrap_or_default();
+    let revision = |text: &str| crate::ids::sha256_hex(text.as_bytes())[..16].to_string();
     if req.body["read"].as_bool() == Some(true) {
         return Response::json(
             200,
-            json!({"repo_id":repo_id,"content":crate::personal_instructions::load_entry(&state.data_root,&repo_id,None).unwrap_or_default()}),
+            json!({"repo_id":repo_id,"content":current,"revision":revision(&current)}),
         );
+    }
+    if let Some(base) = req.body["base_revision"].as_str() {
+        if base != revision(&current) {
+            return Response::json(
+                409,
+                json!({
+                    "error": "项目说明已在其他页面或会话中被修改，本次未保存",
+                    "code": crate::error::code::PRECONDITION_FAILED,
+                    "current_content": current,
+                    "current_revision": revision(&current),
+                }),
+            );
+        }
     }
     let result = if clear {
         crate::personal_instructions::clear_entry(&state.data_root, &repo_id, None)
-            .map(|_| json!({ "cleared": true }))
+            .map(|_| json!({ "cleared": true, "revision": revision("") }))
     } else {
         match req.body.get("content").and_then(|v| v.as_str()) {
             Some(content) => {
                 crate::personal_instructions::save_entry(&state.data_root, &repo_id, None, content)
-                    .map(|_| json!({ "saved": true }))
+                    .map(|_| json!({ "saved": true, "revision": revision(content) }))
             }
             None => Err(crate::error::Error::new(
                 crate::error::code::USAGE,

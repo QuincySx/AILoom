@@ -2442,5 +2442,15 @@
     "size": "M",
     "depends_on": [],
     "file": "cards/AIL-150.md"
+  },
+  {
+    "id": "AIL-151",
+    "title": "修复：项目说明并发覆盖与配置损坏的诊断",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "S",
+    "depends_on": [],
+    "file": "cards/AIL-151.md"
   }
 ]

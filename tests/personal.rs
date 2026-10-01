@@ -1116,3 +1116,125 @@ fn nongit_folder_partial_failure_recovers_with_personal_recover() {
     assert_eq!(v["ok"], true, "{v}");
     assert!(folder.join(".claude/skills/s1").exists());
 }
+
+/// AIL-053 缺口：已部署目标被删除 → 计划恢复；被换成用户自己的目录（类型变化）→ 冲突且保留用户内容。
+#[test]
+fn deleted_target_is_restored_and_type_changed_target_conflicts() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let url = common::file_url(&common::make_team_source(&c.tmp.path().join("src")));
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            &url,
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "{stderr}");
+    let rule = ws.join(".claude/rules/coding-standards.md");
+    let skill = ws.join(".claude/skills/common-greet");
+    assert!(
+        rule.exists()
+            && std::fs::symlink_metadata(&skill)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+    );
+    std::fs::remove_file(&rule).unwrap();
+    std::fs::remove_file(&skill).unwrap();
+    std::fs::create_dir(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "mine").unwrap();
+    let plan = c.run_json(&ws, &["--json", "--data-root", &dr, "plan"]);
+    let action = |p: &str| {
+        plan["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["path"] == p)
+            .map(|a| a["action"].clone())
+    };
+    assert_eq!(
+        action(".claude/rules/coding-standards.md"),
+        Some(serde_json::json!("restore")),
+        "{plan}"
+    );
+    assert_eq!(
+        action(".claude/skills/common-greet"),
+        Some(serde_json::json!("conflict")),
+        "{plan}"
+    );
+    let (code, _, stderr) = c.run(&ws, &["--data-root", &dr, "sync"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(rule.exists(), "被删的托管目标已恢复");
+    assert_eq!(
+        std::fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "mine",
+        "用户内容保留"
+    );
+}
+
+/// AIL-023 缺口（坏配置）：托管清单损坏时给出专门的错误码与可执行的修复建议，不猜测、不改写任何部署。
+#[test]
+fn corrupt_managed_manifest_is_diagnosed_with_actionable_fix() {
+    let c = Ctx::new();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let url = common::file_url(&common::make_team_source(&c.tmp.path().join("src")));
+    let dr = c.dr();
+    assert_eq!(
+        c.run(
+            &ws,
+            &[
+                "--data-root",
+                &dr,
+                "init",
+                "--url",
+                &url,
+                "--project",
+                "a",
+                "--role",
+                "dev"
+            ]
+        )
+        .0,
+        0
+    );
+    assert_eq!(c.run(&ws, &["--data-root", &dr, "sync"]).0, 0);
+    let manifest = walkdir::WalkDir::new(c.tmp.path().join("data"))
+        .into_iter()
+        .flatten()
+        .find(|e| e.file_name() == "managed-manifest.json")
+        .expect("托管清单")
+        .into_path();
+    std::fs::write(&manifest, "{bad").unwrap();
+    let before = std::fs::read_to_string(ws.join(".claude/rules/coding-standards.md")).unwrap();
+    for cmd in ["plan", "sync"] {
+        let (code, _, stderr) = c.run(&ws, &["--json", "--data-root", &dr, cmd]);
+        assert_eq!(code, 13, "{cmd}: {stderr}");
+        let e: serde_json::Value =
+            serde_json::from_str(stderr.trim().lines().last().unwrap()).unwrap();
+        assert_eq!(e["code"], "E4006", "{e}");
+        assert!(
+            e["fix"].as_str().unwrap().contains("managed-manifest.json"),
+            "{e}"
+        );
+        assert!(
+            !e["message"].as_str().unwrap().contains("force-manifest"),
+            "{e}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(ws.join(".claude/rules/coding-standards.md")).unwrap(),
+        before,
+        "部署未被改写"
+    );
+}

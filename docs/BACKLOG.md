@@ -15,7 +15,7 @@
 ## 卡片总表
 
 <!-- cards:begin -->
-**150 张主卡：7 Backlog、18 In progress、5 Blocked、108 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
+**151 张主卡：7 Backlog、18 In progress、5 Blocked、109 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
 
 | 卡片 | 任务 | 里程碑 | 优先级 | 规模 | 状态 | 前置 |
 |---|---|---|---|---|---|---|
@@ -169,6 +169,7 @@
 | [AIL-148](cards/AIL-148.md) | 并发 sync 误把进行中的 journal 当作崩溃遗留 | IT-1 门禁与关卡 | P1 | S | Done | — |
 | [AIL-149](cards/AIL-149.md) | 知识库默认托管位置与迁移：范围追认与验收 | IT-4 架构与范围 | P1 | M | Done | AIL-141 |
 | [AIL-150](cards/AIL-150.md) | 修复：坏资源拖垮计划、部分失败误报与无法撤回 | IT-1 门禁与关卡 | P1 | M | Done | — |
+| [AIL-151](cards/AIL-151.md) | 修复：项目说明并发覆盖与配置损坏的诊断 | IT-1 门禁与关卡 | P1 | S | Done | — |
 <!-- cards:end -->
 
 ## 后续范围：统一插件管理

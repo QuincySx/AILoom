@@ -31,3 +31,14 @@ console 后端拆分（AIL-143）之后，浏览器验收出现间歇失败，�
 4. **兜底重试。** `scripts/ui-browser.sh` 只在出现「Chrome 卡住」（`Page.navigate` 无响应）这类失败时，重启 Chrome 并重跑该模式一次，结果标注为「重启后重试通过」。其他断言失败一律直接判为失败。
 
 另外：`shell.html` 增加了空 favicon，消除每次加载都出现的 `/favicon.ico` 404。
+
+## 更正（2026-10-02）：Chrome 卡住的真正原因
+
+上面第 3 条把 Chrome 卡住归因于后台更新程序，这个判断不对。2026-10-02 用对照实验定位到了真正原因：
+
+- **对照实验**：同一时段、用同样参数启动的无头 Chrome——
+  - HOME 指向临时目录时，打开 ailoom 和打开 Python 的 `http.server` 都会卡住；
+  - 改用真实 HOME 时，两边都正常。
+- **抓包结果**：在中间加一个记录流量的 TCP 代理后看到，卡住的 Chrome 建立了 TCP 连接，却一个字节都没有发出来。所以问题和服务端回什么无关。
+- **原因**：macOS 上 Chrome 的网络服务启动时要做钥匙串初始化（用于 Cookie 加密）。HOME 被换成临时目录后，这一步会挂住。
+- **修复**：`scripts/ui-browser.sh` 改为用真实 HOME 启动 Chrome，并加 `--use-mock-keychain --password-store=basic`。隔离的 HOME / XDG 只作用于控制台进程。修复后连续三轮，原有六个模式全部通过，没有触发任何重试。

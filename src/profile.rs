@@ -117,8 +117,15 @@ impl PersonalProfile {
     pub fn load(path: &Path) -> Result<PersonalProfile> {
         let text = std::fs::read_to_string(path)?;
         let profile: PersonalProfile = toml::from_str(&text).map_err(|e| {
-            Error::new(code::SCHEMA_VERSION, format!("profile.toml 解析失败: {e}"))
-                .context(serde_json::json!({ "path": path.display().to_string() }))
+            Error::new(
+                code::MANIFEST_MISSING_FIELD,
+                format!("profile.toml 解析失败: {e}"),
+            )
+            .context(serde_json::json!({ "path": path.display().to_string() }))
+            .fix(format!(
+                "修正 {} 的语法，或从备份恢复；修复前个人配置相关命令不会写入该文件",
+                path.display()
+            ))
         })?;
         profile.validate()?;
         Ok(profile)
@@ -342,9 +349,13 @@ pub fn select_scoped_in_place(
             .context(serde_json::json!({ "current_revision": current_rev })));
         }
     }
-    let mut doc = raw
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| Error::new(code::SCHEMA_VERSION, format!("profile.toml 解析失败: {e}")))?;
+    let mut doc = raw.parse::<toml_edit::DocumentMut>().map_err(|e| {
+        Error::new(
+            code::MANIFEST_MISSING_FIELD,
+            format!("profile.toml 解析失败: {e}"),
+        )
+        .fix("修正 profile.toml 的语法，或从备份恢复；修复前不会写入该文件")
+    })?;
     doc["schema_version"] = toml_edit::value(i64::from(PROFILE_SCHEMA_VERSION));
     doc["revision"] = toml_edit::value((current_rev + 1) as i64);
 

@@ -45,10 +45,14 @@ impl ManagedManifest {
         let text = std::fs::read_to_string(path)?;
         let m: ManagedManifest = serde_json::from_str(&text).map_err(|e| {
             Error::new(
-                code::INTERNAL,
-                format!("托管清单损坏（拒绝猜测，可用 `ailoom uninstall --force-manifest` 之外的手动方式处理）: {e}"),
+                code::MANAGED_MANIFEST_CORRUPT,
+                format!("托管清单损坏，无法判断哪些文件由 AILoom 部署（不做猜测）: {e}"),
             )
             .context(serde_json::json!({ "path": path.display().to_string() }))
+            .fix(format!(
+                "从备份恢复 {}；没有备份时把它移走后重新同步——已有部署会被当作用户文件按冲突保留，确认后手动删除再同步",
+                path.display()
+            ))
         })?;
         if m.schema_version != 1 {
             return Err(Error::new(

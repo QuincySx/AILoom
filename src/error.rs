@@ -31,6 +31,8 @@ pub mod code {
     pub const LOCK_HELD: &str = "E4003";
     pub const WRITE_FAILED: &str = "E4004";
     pub const JOURNAL_RESTORE_FAILED: &str = "E4005";
+    /// 托管清单（managed-manifest.json）损坏：无法判断哪些文件由 AILoom 部署。
+    pub const MANAGED_MANIFEST_CORRUPT: &str = "E4006";
     pub const HOST_UNSUPPORTED: &str = "E5001";
     pub const RENDER_FAILED: &str = "E5002";
     pub const CAPABILITY_UNKNOWN: &str = "E5003";

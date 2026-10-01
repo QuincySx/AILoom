@@ -260,7 +260,7 @@ skills = ["common-greet"]
 | 10 | 工作区 | E1000-E1999 | E1001 未找到项目根；E1002 非法 workspace；E1003 拒绝静默写全局 |
 | 11 | 源/Git | E2000-E2999 | E2001 源未缓存且离线；E2002 fetch 失败；E2003 无效 ref；E2004 URL 含凭据；E2005 缓存损坏；E2006 源身份/导入冲突；E2007 git 命令失败 |
 | 12 | 清单/资源 | E3000-E3999 | E3001 未知 schema_version；E3002 缺字段；E3003 路径穿越；E3004 未知 project/role/namespace/**Require Skill** 引用；E3005 归属全空；E3006 资源身份冲突；E3007 非法路径；E3008 重复项 |
-| 13 | 计划/同步 | E4000-E4999 | E4001 前置 hash 不符；E4002 目标冲突；E4003 锁被他人持有；E4004 写失败；E4005 journal 恢复失败 |
+| 13 | 计划/同步 | E4000-E4999 | E4001 前置 hash 不符；E4002 目标冲突；E4003 锁被他人持有；E4004 写失败；E4005 journal 恢复失败；E4006 托管清单损坏（v1.4） |
 | 14 | 宿主/适配 | E5000-E5999 | E5001 宿主目标不支持；E5002 渲染失败；E5003 能力未知；E5004 用户内容冲突 |
 | 15 | 知识 | E6000-E6999 | E6001 索引损坏；E6002 经验归属非法；E6003 知识库位置/恢复状态无效或冲突（v1.4） |
 | 16 | 事件 | E7000-E7999 | E7001 事件负载非法 |
@@ -310,7 +310,7 @@ JSON envelope：`{"schema_version":1,"result":…}` 成功；失败输出 `{"sch
 - v1.1（2026-09-14，用户决定）：§3 路径解析优先级由「自有 `AILOOM_*` 高于 XDG」改为「已设 XDG 变量高于 `AILOOM_*`」；无任何覆盖时的默认根由 `~/.ailoom` 改为 XDG 规范默认（`~/.local/state/ailoom`、`~/.local/share/ailoom/store`），并提供旧默认 `~/.ailoom` 的一次性自动迁移（失败回退旧目录并告警）。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 8 项 + `test_isolation` 集成。
 - v1.2（2026-09-15，RW-01/S01）：§3 兼容迁移补充可达性与身份连续性要求——迁移时把 `<legacy>/device-id` 复制到新数据根（目标已存在则不覆盖），保证设备身份跨升级连续；迁移成功后在旧 `store` 位置保留指向新位置的兼容符号链接，使既有工作区指向旧 store 的绝对 Skill 链接无需重新 sync 仍可达；迁移中段失败回滚时一并清理本次新建的空目录，避免下一进程把空新根误判为新旧并存并采用。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 12 项 + `skill_store_require` 迁移集成 2 项。
 
-- v1.4（2026-10-01，审查修复）：新增 E6003（知识库位置/可迁移恢复状态，原误用 E5004）与 E9101（本地网页服务，原误用 E4001）；`.ailoom/knowledge.json` 不支持的版本改报 E3001；`--json` 错误输出补顶层 `schema_version`（字段保持平铺，向后兼容），§5 前后两处写法统一；E8100-E8199 退出码按表修正为 18（原实现误为 17）；§5 补登记已在用的 E2006、E2007；非宿主文件的并发/版本不符改用 E4001、目标冲突改用 E4002、非法路径改用 E3007（原挪用 E5004，AIL-136），控制台对 E4001/E4002/E5004/E6003 统一返回 409。未托管 Skill 删除的链接恢复记录带 `schema_version: 1`。§0 登记 `.ailoom/knowledge.json`、`knowledge/bindings.json`、`service/runtime.json` 三个文件（后两者补 `schema_version`，缺省按 1 读取）；§11.2 登记 `independent_resources` 语义。
+- v1.4（2026-10-01，审查修复）：新增 E6003（知识库位置/可迁移恢复状态，原误用 E5004）与 E9101（本地网页服务，原误用 E4001）；`.ailoom/knowledge.json` 不支持的版本改报 E3001；`--json` 错误输出补顶层 `schema_version`（字段保持平铺，向后兼容），§5 前后两处写法统一；E8100-E8199 退出码按表修正为 18（原实现误为 17）；§5 补登记已在用的 E2006、E2007；非宿主文件的并发/版本不符改用 E4001、目标冲突改用 E4002、非法路径改用 E3007（原挪用 E5004，AIL-136），控制台对 E4001/E4002/E5004/E6003 统一返回 409；托管清单损坏改用新增的 E4006（原为 E9000，提示中引用了不存在的 `--force-manifest`）；`profile.toml` 解析失败与团队声明一致改为 E3002（E3001 只表示未知 schema_version），并附路径与修复建议。未托管 Skill 删除的链接恢复记录带 `schema_version: 1`。§0 登记 `.ailoom/knowledge.json`、`knowledge/bindings.json`、`service/runtime.json` 三个文件（后两者补 `schema_version`，缺省按 1 读取）；§11.2 登记 `independent_resources` 语义。
 
 ## 11. 仓库身份、个人配置层与本地控制台（v1.3，2026-09-16，AIL-039/040 新增）
 
