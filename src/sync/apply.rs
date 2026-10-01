@@ -19,6 +19,9 @@ pub struct ApplyReport {
     pub applied: Vec<String>,
     pub noop: usize,
     pub skipped_conflicts: Vec<String>,
+    /// 宿主 / 适配器不支持而未部署的资源（不是冲突；单独列出，避免被当成「部分失败」）
+    #[serde(default)]
+    pub skipped_unsupported: Vec<String>,
     pub deployed_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed: Option<serde_json::Value>,
@@ -64,6 +67,7 @@ pub fn apply(
         applied: vec![],
         noop: 0,
         skipped_conflicts: vec![],
+        skipped_unsupported: vec![],
         deployed_revision: None,
         failed: None,
         pending_journal: None,
@@ -73,9 +77,9 @@ pub fn apply(
         for action in &plan.actions {
             match action.action {
                 ActionKind::Noop => report.noop += 1,
-                ActionKind::Unsupported => report
-                    .skipped_conflicts
-                    .push(format!("unsupported:{}", action.resource_id)),
+                ActionKind::Unsupported => {
+                    report.skipped_unsupported.push(action.resource_id.clone())
+                }
                 ActionKind::Conflict => report.skipped_conflicts.push(action.path.clone()),
                 ActionKind::Create
                 | ActionKind::Update

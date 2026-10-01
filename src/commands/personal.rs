@@ -13,7 +13,7 @@
 //! - F01/F02：select 以显式仓库/Worktree 根定位身份，逐字段合并不整层替换。
 //! - F09：MCP 缺失引用环境变量检查进入 notes（只报缺失，不读取/输出值）。
 
-use crate::adapters::{render as render_artifacts, ToolTargets};
+use crate::adapters::{render_lenient as render_artifacts, ToolTargets};
 use crate::appctx::AppContext;
 use crate::error::{code, Error, Result};
 use crate::personal_instructions as pi;
@@ -221,6 +221,37 @@ fn directory_cleanup_preserves_unregistered_and_nested_scopes() {
         Some("web"),
         &["web".into(), "web/docs".into()]
     ));
+}
+
+/// 撤回中途失败的个人同步：按与 personal sync 相同的方式定位工作区（Git 与非 Git 目录都适用），
+/// 持同步锁执行 journal 恢复，与正在进行的同步互斥。
+pub fn recover(root: &Path, data_root: Option<&Path>) -> Result<Value> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("目录不可用: {e}")))?;
+    let ctx = match repo_registry::classify_path(&root)? {
+        repo_registry::PathClass::Git(_) => AppContext::discover(data_root, &root, Some(&root))?,
+        repo_registry::PathClass::NonGit { root } => nongit_ctx(data_root, &root)?,
+    };
+    let _lock =
+        crate::sync::lock::SyncLock::acquire(&ctx.layout.ws_dir.join("locks"), &ctx.device)?;
+    let report =
+        crate::sync::apply::recover(&ctx.layout.journal_dir, &ctx.workspace.workspace_root)?;
+    let value = json!({
+        "ok": report.ok,
+        "recovered": report.recovered,
+        "skipped_user_modified": report.skipped_user_modified,
+        "broken_backups": report.broken_backups,
+        "pending_runs": report.pending_runs,
+    });
+    if !report.ok {
+        return Err(Error::new(
+            code::JOURNAL_RESTORE_FAILED,
+            "恢复失败：存在缺失或摘要不匹配的备份，未清理恢复点",
+        )
+        .context(value));
+    }
+    Ok(value)
 }
 
 /// 组装个人模式部署准备（不写盘；plan 纯只读）。
@@ -1400,6 +1431,7 @@ pub fn sync(
         "applied": report.applied,
         "noop": report.noop,
         "skipped_conflicts": report.skipped_conflicts,
+        "skipped_unsupported": report.skipped_unsupported,
         "failed": report.failed,
         "pending_journal": report.pending_journal,
         "skipped_company_files": p.skipped,

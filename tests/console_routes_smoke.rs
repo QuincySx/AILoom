@@ -190,6 +190,31 @@ fn previously_untested_routes_respond_with_json_and_no_server_errors() {
         .0,
         401
     );
+    // 撤回中途失败的同步：没有恢复点时返回空结果；缺 root 与未带令牌被拒绝
+    let (code, v) = call(
+        port,
+        t,
+        "POST",
+        "/api/project/recover",
+        Some(json!({ "root": repo })),
+    );
+    assert_eq!(code, 200, "{v}");
+    assert_eq!(v["recovered"], json!([]));
+    assert_eq!(
+        call(port, t, "POST", "/api/project/recover", Some(json!({}))).0,
+        400
+    );
+    assert_eq!(
+        call(
+            port,
+            None,
+            "POST",
+            "/api/project/recover",
+            Some(json!({ "root": repo }))
+        )
+        .0,
+        401
+    );
 
     server.shutdown();
     server.join();

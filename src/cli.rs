@@ -442,10 +442,10 @@ pub enum Command {
         #[arg(long)]
         execute: bool,
     },
-    /// 个人模式：effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit
+    /// 个人模式：effective | select | instructions | plan | sync | recover | deploy-status | undo | scan-skills | migrate-nongit
     Personal {
         /// 动作：effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit
-        #[arg(long, value_parser = ["effective", "select", "instructions", "plan", "sync", "deploy-status", "undo", "scan-skills", "migrate-nongit"])]
+        #[arg(long, value_parser = ["effective", "select", "instructions", "plan", "sync", "recover", "deploy-status", "undo", "scan-skills", "migrate-nongit"])]
         action: String,
         /// undo 的任务 ID（apply/sync 任务持久化后的 id）
         #[arg(long)]

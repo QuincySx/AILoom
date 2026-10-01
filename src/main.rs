@@ -662,10 +662,11 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     scope.clone(),
                     cli.data_root.as_deref(),
                     &data_root_resolved,
-                )
-                .map_err(|e| {
-                    ailoom::error::Error::new(ailoom::error::code::INTERNAL, e)
-                })?,
+                )?,
+                "recover" => ailoom::commands::personal::recover(
+                    root.as_deref().unwrap_or(&std::env::current_dir()?),
+                    cli.data_root.as_deref(),
+                )?,
                 "select" => {
                     let args = ailoom::commands::personal::SelectArgs {
                         resource: resource.clone(),
@@ -738,7 +739,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     return Err(ailoom::error::Error::new(
                         ailoom::error::code::USAGE,
                         format!(
-                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit）"
+                            "未知 personal 动作: {other}（effective | select | instructions | plan | sync | recover | deploy-status | undo | scan-skills | migrate-nongit）"
                         ),
                     ))
                 }

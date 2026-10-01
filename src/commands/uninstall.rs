@@ -105,6 +105,7 @@ pub fn run(args: &UninstallArgs, json: bool, data_root: Option<&std::path::Path>
         applied: vec![],
         noop: 0,
         skipped_conflicts: vec![],
+        skipped_unsupported: vec![],
         deployed_revision: None,
         failed: None,
         pending_journal: None,

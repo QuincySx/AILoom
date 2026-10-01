@@ -884,3 +884,235 @@ fn reimporting_unchanged_skill_is_noop_but_changes_still_conflict() {
     assert_ne!(code, 0);
     assert!(stderr.contains("E2006"), "{stderr}");
 }
+
+/// 一个定义无效的 MCP 不拖垮整个个人计划：列为 unsupported 并给出原因，其他资源照常部署；
+/// 「不支持」不计入冲突；CLI sync 的错误保留原始错误码（不包成 E9000）。
+#[test]
+fn invalid_mcp_is_reported_without_blocking_other_resources() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "hello");
+    let mcp_dir = c.tmp.path().join("data/library/resources/mcp");
+    std::fs::create_dir_all(&mcp_dir).unwrap();
+    std::fs::write(
+        mcp_dir.join("broken.toml"),
+        "name = \"broken\"\ntype = \"stdio\"\nnamespace = \"personal\"\nshared = true\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["--host", "claude"],
+        vec!["--resource", "personal/skill/personal/hello"],
+        vec!["--resource", "personal/mcp/personal/broken"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let _ = c.run_json(&repo, &full);
+    }
+    let plan = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "plan"],
+    );
+    let actions = plan["actions"].as_array().unwrap();
+    let bad = actions
+        .iter()
+        .find(|a| a["resource_id"] == "personal/mcp/personal/broken")
+        .expect("坏 MCP 出现在计划中");
+    assert_eq!(bad["action"], "unsupported");
+    assert!(
+        bad["reason"].as_str().unwrap().contains("缺少 command"),
+        "{bad}"
+    );
+    let sync = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(sync["ok"], true, "{sync}");
+    assert!(
+        repo.join(".claude/skills/hello").exists(),
+        "其他资源照常部署"
+    );
+    assert!(
+        sync["skipped_conflicts"].as_array().unwrap().is_empty(),
+        "不支持不算冲突: {sync}"
+    );
+    assert_eq!(
+        sync["skipped_unsupported"],
+        serde_json::json!(["personal/mcp/personal/broken"])
+    );
+
+    let (code, _, stderr) = c.run(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "sync",
+            "--scope",
+            "no-such-dir",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(!stderr.contains("E9000"), "保留原始错误码: {stderr}");
+}
+
+/// AIL-125 缺口：应用中途失败（目标目录不可写）——CLI 以 E4004 / 退出 13 报告并给出恢复路径；
+/// `sync --recover` 撤回已写入部分后，重新同步成功且计划无增删。
+#[cfg(unix)]
+#[test]
+fn partial_sync_failure_is_reported_and_recoverable() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "s1");
+    for args in [
+        vec!["--host", "claude"],
+        vec!["--host", "codex"],
+        vec!["--resource", "personal/skill/personal/s1"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let _ = c.run_json(&repo, &full);
+    }
+    let locked = repo.join(".claude/skills");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, _, stderr) = c.run(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code, 13, "中途失败必须非 0 退出: {stderr}");
+    let e: serde_json::Value = serde_json::from_str(stderr.trim().lines().last().unwrap()).unwrap();
+    assert_eq!(e["code"], "E4004", "{e}");
+    assert!(
+        e["fix"]
+            .as_str()
+            .unwrap()
+            .contains("personal --action recover"),
+        "{e}"
+    );
+    assert_eq!(e["context"]["ok"], false);
+
+    let (code, _, stderr) = c.run(&repo, &["--data-root", &dr, "sync", "--recover"]);
+    assert_eq!(code, 0, "{stderr}");
+    let v = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(repo.join(".claude/skills/s1").exists() && repo.join(".agents/skills/s1").exists());
+    let plan = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "plan"],
+    );
+    let changes: Vec<_> = plan["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| {
+            matches!(
+                a["action"].as_str(),
+                Some("create" | "update" | "delete" | "conflict")
+            )
+        })
+        .collect();
+    assert!(
+        changes.is_empty(),
+        "恢复并重新同步后计划无增删: {changes:?}"
+    );
+}
+
+/// 非 Git 文件夹项目同样可以撤回中途失败的同步：`personal --action recover` 与个人同步用同一方式定位工作区。
+#[cfg(unix)]
+#[test]
+fn nongit_folder_partial_failure_recovers_with_personal_recover() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = Ctx::new();
+    let folder = c.tmp.path().join("notes-folder");
+    std::fs::create_dir_all(&folder).unwrap();
+    let dr = c.dr();
+    import_skill(&c, &folder, "s1");
+    for args in [
+        vec!["--host", "claude"],
+        vec!["--host", "codex"],
+        vec!["--resource", "personal/skill/personal/s1"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let _ = c.run_json(&folder, &full);
+    }
+    let locked = folder.join(".claude/skills");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, _, stderr) = c.run(
+        &folder,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code, 13, "{stderr}");
+    assert!(
+        stderr.contains("personal --action recover"),
+        "非 Git 项目给出可用的恢复命令: {stderr}"
+    );
+    // 恢复点存在时直接同步会被挡住
+    let (code, _, _) = c.run(
+        &folder,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_ne!(code, 0);
+    let v = c.run_json(
+        &folder,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "recover",
+            "--root",
+            folder.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(
+        !v["recovered"].as_array().unwrap().is_empty(),
+        "撤回了已写入的部分: {v}"
+    );
+    let v = c.run_json(
+        &folder,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(folder.join(".claude/skills/s1").exists());
+}

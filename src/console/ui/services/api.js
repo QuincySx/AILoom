@@ -102,6 +102,8 @@ export const api = {
   updateSkill: (skill, execute, previewId) => request('POST', '/api/library/update', { skill, execute, preview_id:previewId }),
   // 任务
   plan: (root, scope, idempotencyKey) => request('POST', '/api/jobs/plan', { root, scope, idempotency_key: idempotencyKey }),
+  // 撤回中途失败的同步（journal 恢复），与 `ailoom personal --action recover` 同一实现
+  projectRecover: (root) => request('POST', '/api/project/recover', { root }),
   apply: (planJobId, idempotencyKey) => request('POST', '/api/jobs/apply', { plan_job_id: planJobId, idempotency_key: idempotencyKey }),
   job: (id) => request('GET', '/api/jobs/' + encodeURIComponent(id)),
   jobs: () => request('GET', '/api/jobs'),

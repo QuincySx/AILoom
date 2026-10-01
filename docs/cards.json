@@ -2039,7 +2039,7 @@
   {
     "id": "AIL-119",
     "title": "来源故障、符号链接与失效引用恢复",
-    "status": "In progress",
+    "status": "Done",
     "priority": "P1",
     "milestone": "USABLE-LOCAL",
     "size": "M",
@@ -2432,5 +2432,15 @@
       "AIL-141"
     ],
     "file": "cards/AIL-149.md"
+  },
+  {
+    "id": "AIL-150",
+    "title": "修复：坏资源拖垮计划、部分失败误报与无法撤回",
+    "status": "Done",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-150.md"
   }
 ]

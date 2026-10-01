@@ -184,3 +184,25 @@ pub(super) fn post_repo_relink(state: &Arc<ServerState>, req: &Request) -> Respo
         Err(e) => Response::error(400, &e),
     }
 }
+
+/// `POST /api/project/recover`：撤回该目录中途失败的同步（与 `ailoom personal --action recover` 同一实现）。
+pub(super) fn post_project_recover(state: &Arc<ServerState>, req: &Request) -> Response {
+    let Some(root) = req.body["root"].as_str() else {
+        return Response::json(400, json!({ "error": "需要 root" }));
+    };
+    let root = match ensure_within_roots(state, Path::new(root)) {
+        Ok(p) => p,
+        Err(e) => return Response::json(403, json!({ "error": e })),
+    };
+    match crate::commands::personal::recover(&root, Some(&state.data_root)) {
+        Ok(v) => Response::json(200, v),
+        Err(e) => Response::error(
+            if crate::error::is_conflict(&e.code) {
+                409
+            } else {
+                400
+            },
+            &e,
+        ),
+    }
+}

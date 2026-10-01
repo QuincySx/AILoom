@@ -134,6 +134,7 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
         "applied": report.applied,
         "noop": report.noop,
         "skipped_conflicts": report.skipped_conflicts,
+        "skipped_unsupported": report.skipped_unsupported,
         "deployed_revision": report.deployed_revision,
         "failed": report.failed,
         "pending_journal": report.pending_journal,

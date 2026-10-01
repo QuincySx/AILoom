@@ -458,7 +458,7 @@ fn pinned_collection_update_does_not_change_unselected_worktree_or_local_edits()
             third.to_str().unwrap(),
         ],
     );
-    let (_, report, error) = f.run(
+    let (ok, _, error) = f.run(
         &third,
         &[
             "personal",
@@ -468,10 +468,12 @@ fn pinned_collection_update_does_not_change_unselected_worktree_or_local_edits()
             third.to_str().unwrap(),
         ],
     );
-    assert_eq!(
-        report["ok"], false,
-        "共享实体后改必须拒绝覆盖: {report}; {error}"
-    );
+    // 中途失败以非 0 退出，结果放在错误 JSON 的 context 中
+    assert!(!ok, "共享实体后改必须拒绝覆盖: {error}");
+    let err: Value = serde_json::from_str(error.trim().lines().last().unwrap()).unwrap();
+    assert_eq!(err["code"], "E4004", "{err}");
+    let report = err["context"].clone();
+    assert_eq!(report["ok"], false, "{report}");
     assert!(!report["failed"].is_null());
     assert_eq!(
         std::fs::read_to_string(current_skill).unwrap(),
@@ -879,4 +881,94 @@ fn team_personal_collection_and_subdirectory_layers_converge() {
         "子目录计划: {:?}",
         changes(&sub_plan)
     );
+}
+
+/// AIL-119 缺口：符号链接成环 / 外逃的合集——预览、应用、部署都不卡住，
+/// 部署到 Store 的实体不含任何符号链接；项目扫描遇到环也能正常返回。
+#[test]
+fn looping_symlinks_in_collection_and_project_are_contained() {
+    let f = Fixture::new();
+    let col = f.source("loop-collection", "L", false);
+    let skill = col.join("skills/chosen");
+    std::os::unix::fs::symlink("../..", skill.join("loop")).unwrap();
+    std::os::unix::fs::symlink(".", skill.join("self")).unwrap();
+    f.commit(&col);
+    let id = f.add(&col, "环链接合集")["source"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ws = f.tmp.path().join("project");
+    std::fs::create_dir_all(ws.join(".claude/skills/local")).unwrap();
+    std::fs::write(
+        ws.join(".claude/skills/local/SKILL.md"),
+        "---\nname: local\ndescription: d\n---\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("..", ws.join(".claude/skills/local/up")).unwrap();
+    std::os::unix::fs::symlink("../.claude", ws.join(".claude/skills/selfref")).unwrap();
+    f.host(&ws);
+    f.select(&ws, &format!("{id}/skill/common/chosen"), "enable");
+    f.sync(&ws);
+    let deployed = ws.join(".claude/skills/chosen").canonicalize().unwrap();
+    for entry in walkdir::WalkDir::new(&deployed).follow_links(false) {
+        assert!(
+            !entry.unwrap().file_type().is_symlink(),
+            "部署实体不应含符号链接"
+        );
+    }
+    let scan = f.ok(
+        &ws,
+        &[
+            "personal",
+            "--action",
+            "scan-skills",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        scan["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["dir_name"] == "local"),
+        "{scan}"
+    );
+}
+
+/// AIL-119 缺口：同一来源同时供项目 A、B 使用；A 取消引用并应用后，B 的部署不受影响。
+#[test]
+fn removing_reference_in_one_project_keeps_other_project_deployed() {
+    let f = Fixture::new();
+    let col = f.source("shared-collection", "S", false);
+    let id = f.add(&col, "共享合集")["source"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let rid = format!("{id}/skill/common/chosen");
+    let (a, b) = (
+        f.tmp.path().join("project-a"),
+        f.tmp.path().join("project-b"),
+    );
+    for ws in [&a, &b] {
+        std::fs::create_dir_all(ws).unwrap();
+        f.host(ws);
+        f.select(ws, &rid, "enable");
+        f.sync(ws);
+        assert!(ws.join(".claude/skills/chosen/SKILL.md").exists());
+    }
+    f.select(&a, &rid, "disable");
+    f.sync(&a);
+    assert!(!a.join(".claude/skills/chosen").exists(), "A 已移除");
+    assert!(
+        b.join(".claude/skills/chosen/SKILL.md").exists(),
+        "B 不受影响"
+    );
+    assert!(
+        std::fs::read_to_string(b.join(".claude/skills/chosen/SKILL.md"))
+            .unwrap()
+            .contains('S')
+    );
+    let list = f.ok(f.tmp.path(), &["collection", "--action", "list"]);
+    assert_eq!(list["sources"].as_array().unwrap().len(), 1, "来源仍登记");
 }

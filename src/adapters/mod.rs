@@ -83,6 +83,40 @@ pub struct UnsupportedItem {
     pub reason: String,
 }
 
+/// 宽松渲染（个人层用）：单个资源定义无效时不拖垮整个计划——找出出错的资源，
+/// 作为 unsupported 明确列出原因，其余资源照常渲染。团队源仍走严格的 [`render`]。
+pub fn render_lenient(
+    desired: &DesiredSet,
+    snapshot_root: &Path,
+    targets: &ToolTargets,
+    ws_root: &Path,
+) -> Result<(Vec<Artifact>, Vec<UnsupportedItem>)> {
+    if let Ok(rendered) = render(desired, snapshot_root, targets, ws_root) {
+        return Ok(rendered);
+    }
+    let mut invalid = Vec::new();
+    let mut valid = desired.clone();
+    valid.selected.retain(|s| {
+        let mut one = desired.clone();
+        one.selected = vec![s.clone()];
+        match render(&one, snapshot_root, targets, ws_root) {
+            Ok(_) => true,
+            Err(e) => {
+                invalid.push(UnsupportedItem {
+                    resource_id: s.id.clone(),
+                    tool: "-".into(),
+                    kind: s.kind.clone(),
+                    reason: format!("资源定义无效，未部署：{}（其他资源照常部署）", e.message),
+                });
+                false
+            }
+        }
+    });
+    let (artifacts, mut unsupported) = render(&valid, snapshot_root, targets, ws_root)?;
+    unsupported.extend(invalid);
+    Ok((artifacts, unsupported))
+}
+
 /// 把期望资源渲染为各工具产物。
 pub fn render(
     desired: &DesiredSet,

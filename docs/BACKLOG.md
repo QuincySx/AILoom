@@ -15,7 +15,7 @@
 ## 卡片总表
 
 <!-- cards:begin -->
-**149 张主卡：7 Backlog、19 In progress、5 Blocked、106 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
+**150 张主卡：7 Backlog、18 In progress、5 Blocked、108 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
 
 | 卡片 | 任务 | 里程碑 | 优先级 | 规模 | 状态 | 前置 |
 |---|---|---|---|---|---|---|
@@ -137,7 +137,7 @@
 | [AIL-116](cards/AIL-116.md) | MCP 项目参数与安全凭据管理 | USABLE-LOCAL | P1 | M | Backlog | AIL-114 |
 | [AIL-117](cards/AIL-117.md) | 统一 Markdown 指令与最新宿主能力规则 | USABLE-LOCAL | P1 | M | Backlog | AIL-114 |
 | [AIL-118](cards/AIL-118.md) | 其余页面逐动作补漏与旧入口一致性 | USABLE-LOCAL | P1 | M | Done | AIL-114 |
-| [AIL-119](cards/AIL-119.md) | 来源故障、符号链接与失效引用恢复 | USABLE-LOCAL | P1 | M | In progress | AIL-111, AIL-113 |
+| [AIL-119](cards/AIL-119.md) | 来源故障、符号链接与失效引用恢复 | USABLE-LOCAL | P1 | M | Done | AIL-111, AIL-113 |
 | [AIL-120](cards/AIL-120.md) | CLI 能力对齐与专项走查 | USABLE-LOCAL | — | M | Done | AIL-114, AIL-115 |
 | [AIL-121](cards/AIL-121.md) | 统一目录目标与有效配置契约 | DIRECTORY-UX | P0 | M | Done | — |
 | [AIL-122](cards/AIL-122.md) | 项目目录导航与选择 Dialog | DIRECTORY-UX | P0 | M | Done | AIL-121 |
@@ -168,6 +168,7 @@
 | [AIL-147](cards/AIL-147.md) | 发布准备：安装脚本、分发地址与发布清单复核 | IT-5 文档与发布 | P2 | M | Backlog | AIL-130, AIL-145 |
 | [AIL-148](cards/AIL-148.md) | 并发 sync 误把进行中的 journal 当作崩溃遗留 | IT-1 门禁与关卡 | P1 | S | Done | — |
 | [AIL-149](cards/AIL-149.md) | 知识库默认托管位置与迁移：范围追认与验收 | IT-4 架构与范围 | P1 | M | Done | AIL-141 |
+| [AIL-150](cards/AIL-150.md) | 修复：坏资源拖垮计划、部分失败误报与无法撤回 | IT-1 门禁与关卡 | P1 | M | Done | — |
 <!-- cards:end -->
 
 ## 后续范围：统一插件管理

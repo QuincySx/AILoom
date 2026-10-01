@@ -483,21 +483,41 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
         if let Some(job) = jobs.get_mut(id) {
             job.status = status;
             job.undo = Some(undo);
+            // 失败原因与恢复点必须随结果返回，否则界面只能显示「未知错误」且无法撤回。
             job.result = json!({
                 "ok": report.ok,
                 "applied": report.applied,
                 "noop": report.noop,
                 "skipped_conflicts": report.skipped_conflicts,
+                "skipped_unsupported": report.skipped_unsupported,
+                "failed": report.failed,
+                "pending_journal": report.pending_journal,
                 "verification": verification,
                 "notes": prepared.notes,
-                "next": "在宿主新会话中真实调用一次以确认加载（文件落盘不等于宿主已加载）",
+                "next": if report.ok {
+                    "在宿主新会话中真实调用一次以确认加载（文件落盘不等于宿主已加载）"
+                } else {
+                    "应用中途失败：已写入的部分保留在恢复点中，可在界面撤回或运行 ailoom personal --action recover"
+                },
             });
             job.updated_at = nowstamp();
-            job.progress.push(format!(
-                "应用完成：写入 {} 项，冲突跳过 {} 项",
-                report.applied.len(),
-                report.skipped_conflicts.len()
-            ));
+            job.progress.push(if report.ok {
+                format!(
+                    "应用完成：写入 {} 项，冲突跳过 {} 项",
+                    report.applied.len(),
+                    report.skipped_conflicts.len()
+                )
+            } else {
+                format!(
+                    "应用中途失败：已写入 {} 项后停止（{}）",
+                    report.applied.len(),
+                    report
+                        .failed
+                        .as_ref()
+                        .and_then(|f| f["message"].as_str())
+                        .unwrap_or("未知错误")
+                )
+            });
             state.events.lock_ok().push(json!({
                 "event": "job-progress", "id": id, "status": status,
             }));
@@ -554,7 +574,7 @@ fn verify_deployment(prepared: &crate::commands::personal::PersonalPrepare, root
             "path": a.path,
             "deployed": deployed,
             "host_state": if deployed { host_state } else { "missing" },
-            "note": note,
+            "note": if deployed { note } else { "未写入：本次同步中途失败或目标不可写" },
         }));
     }
     json!({ "items": items, "invocation": "manual", "invocation_note": "真实调用验证由用户在宿主内执行（onboarding 提供下一步动作与验证提示）" })
@@ -692,20 +712,19 @@ pub fn cli_sync(
     scope: Option<String>,
     data_root_opt: Option<&Path>,
     data_root_resolved: &Path,
-) -> std::result::Result<Value, String> {
+) -> Result<Value> {
     use crate::ids::new_id;
+    // 保留原始错误码（如 E3004 / E5002），不在 CLI 层包成 E9000。
     let prepared = crate::commands::personal::prepare_personal(
         data_root_opt,
         Some(root),
         scope.clone(),
         data_root_resolved,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     // Plan paths are relative to the discovered workspace, not the invoking subdirectory.
     let root = prepared.ctx.workspace.workspace_root.as_path();
     let mut undo = capture_undo_entries(root, &prepared.plan);
-    let report =
-        crate::commands::personal::apply_prepared_personal(&prepared).map_err(|e| e.to_string())?;
+    let report = crate::commands::personal::apply_prepared_personal(&prepared)?;
     if report.ok {
         for entry in &mut undo {
             entry.after_hash = current_fingerprint(&root.join(&entry.path));
@@ -722,6 +741,7 @@ pub fn cli_sync(
         "applied": report.applied,
         "noop": report.noop,
         "skipped_conflicts": report.skipped_conflicts,
+        "skipped_unsupported": report.skipped_unsupported,
         "failed": report.failed,
         "pending_journal": report.pending_journal,
         "verification": verification,
@@ -751,6 +771,21 @@ pub fn cli_sync(
         cancel_requested: false,
     };
     persist_job(data_root, &job);
+    // 与团队 sync 一致：中途失败时以非 0 退出，并给出恢复路径（已写入部分保留在 journal 中）。
+    if !report.ok {
+        let reason = report
+            .failed
+            .as_ref()
+            .and_then(|f| f["message"].as_str())
+            .unwrap_or("未知错误")
+            .to_string();
+        return Err(crate::error::Error::new(
+            crate::error::code::WRITE_FAILED,
+            format!("同步未全部完成：{reason}"),
+        )
+        .context(result)
+        .fix("修正问题后运行 ailoom personal --action recover 撤回已写入的部分，再重新同步"));
+    }
     Ok(result)
 }
 

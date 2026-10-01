@@ -1540,3 +1540,172 @@ fn definition_editor_retains_host_metadata_and_refuses_symlink_destination() {
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     }
 }
+
+/// AIL-125 缺口：网页应用中途失败——任务结果如实报告失败与已写入部分；
+/// 恢复点存在时再次应用被拒绝；`/api/project/recover` 撤回后重新计划、应用成功。
+#[cfg(unix)]
+#[test]
+fn web_apply_partial_failure_reports_and_recovers() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 17821)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let _ = post(
+        server.port,
+        "/api/fs/approve",
+        &auth,
+        json!({ "path": tmp.path() }),
+    );
+    assert_eq!(
+        post(
+            server.port,
+            "/api/repo/discover",
+            &auth,
+            json!({ "path": repo })
+        )
+        .0,
+        200
+    );
+    for host in ["claude", "codex"] {
+        assert_eq!(
+            post(
+                server.port,
+                "/api/profile/select",
+                &auth,
+                json!({ "host": host, "state": "enable", "root": repo })
+            )
+            .0,
+            200
+        );
+    }
+    let skill_src = tmp.path().join("skills/web-partial");
+    std::fs::create_dir_all(&skill_src).unwrap();
+    std::fs::write(skill_src.join("SKILL.md"), "# web-partial\n\n说明\n").unwrap();
+    let out = std::process::Command::new(ailoom_bin())
+        .args([
+            "--data-root",
+            server.state.data_root.to_str().unwrap(),
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            skill_src.to_str().unwrap(),
+            "--execute",
+        ])
+        .current_dir(&repo)
+        .envs(isolate_env(tmp.path()))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = post(
+        server.port,
+        "/api/profile/select",
+        &auth,
+        json!({ "resource": "personal/skill/personal/web-partial", "state": "enable", "root": repo }),
+    );
+
+    let plan_and_apply = |key: &str| {
+        let (code, raw) = post(
+            server.port,
+            "/api/jobs/plan",
+            &auth,
+            json!({ "root": repo, "idempotency_key": format!("p-{key}") }),
+        );
+        assert_eq!(code, 202, "{raw}");
+        let plan_id = json_body(&raw)["job_id"].as_str().unwrap().to_string();
+        assert_eq!(
+            wait_job(&server, &plan_id, Duration::from_secs(20))["status"],
+            "success"
+        );
+        let (code, raw) = post(
+            server.port,
+            "/api/jobs/apply",
+            &auth,
+            json!({ "plan_job_id": plan_id, "idempotency_key": format!("a-{key}") }),
+        );
+        assert_eq!(code, 202, "{raw}");
+        wait_job(
+            &server,
+            json_body(&raw)["job_id"].as_str().unwrap(),
+            Duration::from_secs(30),
+        )
+    };
+
+    let locked = repo.join(".claude/skills");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = plan_and_apply("1");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let result = &failed["result"];
+    assert_eq!(result["ok"], false, "{failed}");
+    assert!(result["failed"]["message"].as_str().is_some(), "{failed}");
+    assert!(
+        result["applied"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == ".agents/skills/web-partial"),
+        "部分成功如实列出: {failed}"
+    );
+    assert!(repo.join(".agents/skills/web-partial").exists());
+
+    // 恢复点未清理时再次应用被拒绝
+    let blocked = plan_and_apply("2");
+    assert_ne!(blocked["status"], "success", "{blocked}");
+
+    let (code, raw) = post(
+        server.port,
+        "/api/project/recover",
+        &auth,
+        json!({ "root": repo }),
+    );
+    assert_eq!(code, 200, "{raw}");
+    assert!(
+        json_body(&raw)["recovered"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == ".agents/skills/web-partial"),
+        "{raw}"
+    );
+    assert!(
+        !repo.join(".agents/skills/web-partial").exists(),
+        "已写入部分被撤回"
+    );
+
+    let ok = plan_and_apply("3");
+    assert_eq!(ok["status"], "success", "{ok}");
+    assert_eq!(ok["result"]["ok"], true, "{ok}");
+    assert!(
+        repo.join(".claude/skills/web-partial").exists()
+            && repo.join(".agents/skills/web-partial").exists()
+    );
+    // 无变化：成功应用后再次计划，没有待执行动作
+    let (code, raw) = post(
+        server.port,
+        "/api/jobs/plan",
+        &auth,
+        json!({ "root": repo, "idempotency_key": "p-4" }),
+    );
+    assert_eq!(code, 202, "{raw}");
+    let again = wait_job(
+        &server,
+        json_body(&raw)["job_id"].as_str().unwrap(),
+        Duration::from_secs(20),
+    );
+    assert_eq!(again["result"]["pending"], 0, "{again}");
+    server.shutdown();
+    server.join();
+}

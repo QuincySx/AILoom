@@ -416,13 +416,17 @@ export function mount(container, {projectId}) {
           if(!alive(gen)||!modal.isOpen)return;
           if(result.status!=='success')throw Error(result.error==='stale-plan'?'预览已经过期，没有写入文件。请返回并重新查看改动。':result.error||'应用失败');
           const r=result.result||{};
-          if(r.ok===false||(r.skipped_conflicts||[]).length)throw Error('部分改动未完成，冲突文件已保留。请到操作记录查看详情，再重新预览。');
+          if(r.ok===false){const err=Error(`应用中途失败：${r.failed?.message||'未知错误'}。已写入的部分保留在恢复点中，可以撤回后再试。`);err.recoverable=true;throw err;}
+          if((r.skipped_conflicts||[]).length)throw Error(`${r.skipped_conflicts.length} 个文件因冲突未应用，你的修改已保留。请到操作记录查看详情，处理后重新预览。`);
           const count=Array.isArray(r.applied)?r.applied.length:r.applied||0;
           const extensionNotes=[...new Set(changes.filter(a=>['create','update','restore'].includes(a.action)).flatMap(a=>(capabilities.capabilities||[]).filter(c=>c.kind===a.kind&&c.tool===a.target_tool&&c.required_extension).map(c=>`${c.required_extension}配置已生成；扩展加载未验证。`)))];
-          content.innerHTML=`<div class="workspace-apply-success">${icon('check')}<h2>已应用 ${count} 项改动</h2>${extensionNotes.map(note=>`<p>${esc(note)}</p>`).join('')}${extensionNotes.length?'':`<p>在 ${esc(Object.keys(tools).filter(k=>effective.hosts?.[k]?.enabled).map(k=>tools[k]).join(' / ')||'AI 工具')} 中新开会话后使用。</p>`}<a href="#/tasks" data-result-history>查看操作记录或撤销</a></div>`;
+          content.innerHTML=`<div class="workspace-apply-success">${icon('check')}<h2>已应用 ${count} 项改动</h2>${extensionNotes.map(note=>`<p>${esc(note)}</p>`).join('')}${(r.skipped_unsupported||[]).length?`<p class="muted">${r.skipped_unsupported.length} 项当前 AI 工具暂不支持，未部署：${esc(r.skipped_unsupported.join('、'))}</p>`:''}${extensionNotes.length?'':`<p>在 ${esc(Object.keys(tools).filter(k=>effective.hosts?.[k]?.enabled).map(k=>tools[k]).join(' / ')||'AI 工具')} 中新开会话后使用。</p>`}<a href="#/tasks" data-result-history>查看操作记录或撤销</a></div>`;
           content.querySelector('[data-result-history]').onclick=()=>modal.close();apply.textContent='已应用';
           notice=`已应用到 ${frozen.resolvedPath}。`;await refresh();
-        }catch(e){if(!disposed){const p=document.createElement('p');p.className='field-error';p.textContent=e.message;content.append(p);}}
+        }catch(e){if(!disposed){const p=document.createElement('p');p.className='field-error';p.textContent=e.message;content.append(p);
+          // 中途失败或有遗留恢复点时，提供撤回入口（否则后续每次应用都会被恢复点挡住）
+          if(e.recoverable||/未完成的同步/.test(e.message)){const b=document.createElement('button');b.textContent='撤回已写入的部分';b.dataset.recover='';content.append(b);
+            b.onclick=async()=>{b.disabled=true;try{const v=await api.projectRecover(frozen.rootPath);p.className='muted';p.textContent=`已撤回 ${v.recovered?.length||0} 项改动${(v.skipped_user_modified||[]).length?`；${v.skipped_user_modified.length} 项已被修改，未覆盖`:''}。可以重新查看改动后再应用。`;b.remove();await refresh();}catch(err){p.textContent=`撤回失败：${err.message}`;b.disabled=false;}};}}}
         finally{applying=false;if(!disposed){body.querySelector('[data-close-review]').disabled=false;body.querySelector('[data-close-review]').textContent='返回目录';}}
       };
     }catch(e){if(!disposed&&modal.isOpen)content.textContent=`预览失败：${e.message}`;}
