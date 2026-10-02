@@ -23,7 +23,8 @@ pub struct Workspace {
 }
 
 /// 发现工作区。`explicit_root` 优先（显式 --root 或测试注入），否则从 cwd 向上找。
-/// 优先级：最近的 `.ailoom/project.toml` 声明 > 最近的 Git 根。两者都无 → E1001。
+/// 优先级：当前 Git 边界内最近的 `.ailoom/project.toml` 声明 > 最近的 Git 根。
+/// 到达 Git 根即停止，避免嵌套仓库或 linked worktree 继承外部声明。两者都无 → E1001。
 pub fn discover(cwd: &Path, explicit_root: Option<&Path>) -> Result<Workspace> {
     let start = match explicit_root {
         Some(root) => canonicalize(root).map_err(|e| {
@@ -34,21 +35,16 @@ pub fn discover(cwd: &Path, explicit_root: Option<&Path>) -> Result<Workspace> {
             .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("cwd 不可用: {e}")))?,
     };
 
-    let mut nearest_git_root: Option<PathBuf> = None;
     let mut dir: Option<&Path> = Some(start.as_path());
     while let Some(current) = dir {
         let declaration = current.join(AILOOM_DIR).join(DECLARATION_FILE);
         if declaration.is_file() {
             return build_workspace(current, true);
         }
-        if nearest_git_root.is_none() && current.join(".git").exists() {
-            nearest_git_root = Some(current.to_path_buf());
+        if current.join(".git").exists() {
+            return build_workspace(current, false);
         }
         dir = current.parent();
-    }
-
-    if let Some(git_root) = nearest_git_root {
-        return build_workspace(&git_root, false);
     }
 
     Err(Error::new(
@@ -257,6 +253,84 @@ mod tests {
         assert_eq!(ws_main.anchor_key, ws_wt.anchor_key);
         // 主 checkout 不作为 worktree 的资源目标
         assert_ne!(ws_main.workspace_root, ws_wt.workspace_root);
+    }
+
+    #[test]
+    fn declaration_discovery_stops_at_nested_git_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("parent");
+        git_init(&parent, false).unwrap();
+        std::fs::create_dir_all(parent.join(AILOOM_DIR)).unwrap();
+        std::fs::write(
+            parent.join(AILOOM_DIR).join(DECLARATION_FILE),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        let same_repo = parent.join("services/ordinary/deep");
+        std::fs::create_dir_all(&same_repo).unwrap();
+        assert_eq!(
+            discover_at(&same_repo).unwrap().workspace_root,
+            canon(&parent)
+        );
+
+        let child = parent.join("child");
+        git_init(&child, false).unwrap();
+        let deep = child.join("src/deep");
+        std::fs::create_dir_all(&deep).unwrap();
+        for ws in [
+            discover_at(&deep).unwrap(),
+            discover(tmp.path(), Some(&child)).unwrap(),
+        ] {
+            assert_eq!(ws.workspace_root, canon(&child));
+            assert!(ws.declaration_path.is_none(), "子仓库不得继承父声明");
+        }
+        std::fs::create_dir_all(child.join(AILOOM_DIR)).unwrap();
+        std::fs::write(
+            child.join(AILOOM_DIR).join(DECLARATION_FILE),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            discover_at(&deep).unwrap().declaration_path,
+            Some(canon(&child).join(AILOOM_DIR).join(DECLARATION_FILE))
+        );
+    }
+
+    #[test]
+    fn linked_worktree_does_not_inherit_enclosing_declaration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        git_init(&main, false).unwrap();
+        std::fs::write(main.join("seed.txt"), "seed").unwrap();
+        git_commit_all(&main, "seed", &["seed.txt"]).unwrap();
+        let parent = tmp.path().join("parent");
+        std::fs::create_dir_all(parent.join(AILOOM_DIR)).unwrap();
+        std::fs::write(
+            parent.join(AILOOM_DIR).join(DECLARATION_FILE),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        let wt = parent.join("wt");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                wt.to_str().unwrap(),
+                "-b",
+                "nested-wt",
+            ],
+        )
+        .unwrap();
+        assert!(wt.join(".git").is_file());
+        let ws = discover_at(&wt).unwrap();
+        assert_eq!(ws.workspace_root, canon(&wt));
+        assert!(ws.declaration_path.is_none());
+        assert_eq!(
+            ws.repository_anchor,
+            discover_at(&main).unwrap().repository_anchor
+        );
     }
 
     #[test]

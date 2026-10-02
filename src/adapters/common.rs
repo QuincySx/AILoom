@@ -169,7 +169,10 @@ pub fn read_fragment(file_text: &str, resource_id: &str) -> Option<String> {
     let end = fragment_end(resource_id);
     let start = file_text.find(&begin)? + begin.len();
     let stop = file_text[start..].find(&end)? + start;
-    Some(file_text[start..stop].trim_matches('\n').to_string())
+    // upsert_fragment 只在正文两侧各插入一个分隔换行；正文自身的换行参与哈希。
+    let content = &file_text[start..stop];
+    let content = content.strip_prefix('\n').unwrap_or(content);
+    Some(content.strip_suffix('\n').unwrap_or(content).to_string())
 }
 
 /// 从文本中移除托管片段（含标记行），返回 (新文本, 是否存在)。
@@ -334,6 +337,15 @@ mod tests {
         assert!(existed);
         assert!(!removed.contains("AILOOM"));
         assert!(removed.contains("自定义说明"));
+    }
+
+    #[test]
+    fn fragment_roundtrip_preserves_payload_boundary_newlines() {
+        let id = "personal/rule/personal/chinese";
+        for content in ["", "\n", "规则正文", "规则正文\n", "\n规则正文\n\n"] {
+            let file = upsert_fragment("用户前文\n", id, content);
+            assert_eq!(read_fragment(&file, id).as_deref(), Some(content));
+        }
     }
 
     #[test]
