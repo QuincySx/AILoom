@@ -39,6 +39,17 @@ ailoom service disable      # 关闭登录自启动
 - [公共契约](docs/CONTRACTS.md)：文件格式、错误码、退出码与冲突矩阵。
 - [开发与关卡流程](docs/IMPLEMENTATION-GUIDE.md) · [发布检查单](docs/RELEASE-CHECKLIST.md)
 
+## 开发用 Skill
+
+本仓库用 AILoom 管理自己开发时用的 Skill（代码审查、编码与 Git 规范、安全闸门、规划与文档）：源在 [.ailoom/team](.ailoom/team/)，团队层共享。clone 后在仓库根运行：
+
+```bash
+ailoom init      # 按 .ailoom/project.toml 绑定本机（不改仓库内容）
+ailoom sync      # 部署到 .claude/skills 与 .agents/skills（已在 .gitignore 中）
+```
+
+新增或修改 Skill：改 `.ailoom/team/resources/skills/<名字>/`，SKILL.md frontmatter 需含 `namespace: common` 与 `shared: true`，提交后各自 `ailoom sync`。这些 Skill 多数来自第三方来源，推送到公开远端前请核对各自的许可证。
+
 ## 验证
 
 ```bash

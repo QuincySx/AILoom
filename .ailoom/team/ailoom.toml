@@ -1,0 +1,8 @@
+# AILoom 开发用的团队资源：本仓库自己的 Skill，团队层共享。
+# 协作者在仓库根运行 `ailoom init` 绑定、`ailoom sync` 部署到 .claude/skills 与 .agents/skills。
+schema_version = 1
+team_id = "ailoom"
+
+[namespaces]
+known = ["common"]
+shared = ["common"]

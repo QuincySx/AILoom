@@ -1,14 +1,13 @@
 schema_version = 1
-projects = ["a"]
+projects = []
 roles = []
-builtins = true
+builtins = false
 reporting_enabled = false
 
 [source]
 name = "team"
-type = "git"
-url = "/tmp/rw15-repro/src"
-ref_ = "main"
+type = "local"
+path = ".ailoom/team"
 
 [targets]
 claude = true
