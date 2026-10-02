@@ -622,7 +622,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             if cli.json {
                 output::emit_json(&value);
             } else {
-                output::emit_human(&value);
+                output::emit_library(action, &value);
             }
             Ok(())
         }
@@ -702,9 +702,11 @@ fn run(cli: &cli::Cli) -> Result<()> {
                         )
                         .fix("在网页「操作记录」中查看可撤销的任务 ID"));
                     }
-                    ailoom::console::jobs::undo_persisted(&data_root_resolved, &id).map_err(
-                        |e| ailoom::error::Error::new(ailoom::error::code::INTERNAL, e),
-                    )?
+                    // 不可撤销是前置条件问题（已撤销、状态不对、清单为空），不是内部错误
+                    ailoom::console::jobs::undo_persisted(&data_root_resolved, &id).map_err(|e| {
+                        ailoom::error::Error::new(ailoom::error::code::PRECONDITION_FAILED, e)
+                            .fix("在网页「操作记录」查看该任务的状态与可撤销项")
+                    })?
                 }
                 // AIL-120：CLI 只读扫描（与控制台 /api/project/scan-skills 共用实现）
                 "scan-skills" => {
@@ -772,13 +774,26 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 "remove" => {
                     ailoom::collections::remove(&data, &required(source, "source")?, *execute)?
                 }
-                "preview" => ailoom::collections::preview(
-                    &data,
-                    &required(name, "name")?,
-                    &required(url, "url")?,
-                    ref_.as_deref(),
-                    source.as_deref(),
-                )?,
+                "preview" => {
+                    // 更新已登记的合集：名称和地址默认沿用登记值，只需 --source
+                    let existing = match source.as_deref() {
+                        Some(id) => ailoom::collections::load(&data)?.sources.get(id).cloned(),
+                        None => None,
+                    };
+                    let name = name
+                        .clone()
+                        .or_else(|| existing.as_ref().map(|c| c.name.clone()));
+                    let url = url
+                        .clone()
+                        .or_else(|| existing.as_ref().map(|c| c.url.clone()));
+                    ailoom::collections::preview(
+                        &data,
+                        &required(&name, "name")?,
+                        &required(&url, "url")?,
+                        ref_.as_deref(),
+                        source.as_deref(),
+                    )?
+                }
                 "apply" => {
                     ailoom::collections::apply_preview(&data, &required(preview_id, "preview-id")?)?
                 }

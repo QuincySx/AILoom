@@ -47,6 +47,10 @@ ailoom personal --action sync                                       # 应用
 （Claude 走追加式 `.claude/rules/ailoom-personal.md`；Codex 生成包含公司
 AGENTS.md 全文的本地视图，不遮蔽公司基线）。
 
+资源库里某个条目的定义坏了（例如手工改出非法 YAML）时，只有它自己会被跳过：其他能力照常启用和同步；
+它已部署到项目里的文件保留不动，直到修好后重新同步。网页「资源库」页顶部会列出这些条目，可以直接「打开修复」或「删除…」；
+CLI 下 `ailoom library --action list` 的 `issues` 列出问题文件，`ailoom library --action delete --skill <名字> --execute` 可删除（移入本机归档）。
+
 日常管理在网页「我的目录」与「资源库」完成；个人文档与流程产物默认保存在仓外数据区。
 
 ## 多个 Git 合集：按需引用 Skill / MCP
@@ -71,6 +75,9 @@ ailoom personal --action select --resource <collection-id>/mcp/common/search --s
 ailoom personal --action plan
 ailoom personal --action sync
 ```
+
+更新已登记的合集：`ailoom collection --action check` 查看是否有新版本，
+`ailoom collection --action preview --source <collection-id>` 预览（名称与地址沿用登记值），再用返回的 preview_id 执行 apply。
 
 普通 Skill 仓库通过递归查找 `SKILL.md` 识别，无需额外清单。
 Skill/MCP 混合集使用下文的 `ailoom.toml` 和资源目录约定；不自动识别任意第三方
@@ -153,6 +160,8 @@ ailoom sync --recover    # 若曾中断，先恢复 journal
 
 同步后：技能进入 `.claude/skills/`（Claude Code）与 `.agents/skills/` + `.codex/config.toml`（Codex）；
 规则进入 `.claude/rules/` 与 `AGENTS.md` 受管片段；MCP 进入 `.mcp.json` 与 `.codex/config.toml`。
+例外：含 `$ENV:` 秘密引用的 MCP 不写入 Codex（其配置是否支持环境变量插值未经官方确认，AILoom 不落明文），计划中显示为 unsupported 并注明原因；
+另外 Codex 实测版本不加载项目级 MCP 配置，见 [Codex 能力矩阵](../capabilities/codex.md)。
 
 ### 无感知自动同步（默认开）
 

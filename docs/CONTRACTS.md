@@ -161,15 +161,18 @@ name = "files"
 type = "stdio"               # stdio | http
 command = "uvx"              # stdio 必填；args/env 可选
 args = ["mcp-server-files"]
-[mcp.env]                    # 值为字面量或 "$ENV:VAR_NAME" 引用
-API_BASE = "https://example.internal"
-TOKEN = "$ENV:AILOOM_MCP_TOKEN"
 # type = "http" 时：url = "..."，headers 同 env 规则
 shared = true
 projects = []
 roles = []
 namespace = "common"
 targets = ["claude"]
+
+# 表头必须放在所有顶层字段之后：TOML 中表头之后的键都属于该表，
+# 写在 [mcp.env] 下面的 shared / namespace 会被当成环境变量。
+[mcp.env]                    # 值为字面量或 "$ENV:VAR_NAME" 引用
+API_BASE = "https://example.internal"
+TOKEN = "$ENV:AILOOM_MCP_TOKEN"
 ```
 
 **env**：`<env_dir>/<name>.toml`：`[vars]` 字面量、`[secret_refs]` 键→`$ENV:NAME` 引用；`shared/projects/roles/namespace/targets` 同上。

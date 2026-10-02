@@ -168,7 +168,7 @@ pub fn render(
                         resource_id: entry.id.to_string(),
                         tool: tool.as_str().into(),
                         kind: "package".into(),
-                        reason: "包依赖经 ailoom packages check/install 显式管理，不随 sync 部署（AIL-033）".into(),
+                        reason: "包依赖经 ailoom packages --action check / --action install 显式管理，不随 sync 部署（AIL-033）".into(),
                     });
                 }
                 ResourceKind::Learning => {}

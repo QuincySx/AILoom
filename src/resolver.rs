@@ -126,7 +126,29 @@ pub fn resolve(req: ResolveRequest<'_>) -> Result<DesiredSet> {
         req.manifest.require_role(r)?;
     }
     let entries = enumerate(req.snapshot_root, req.manifest, req.source, &mut Vec::new())?;
+    select(&req, entries)
+}
 
+/// 同 [`resolve`]，但无效条目被隔离返回而不使整体失败（个人资源库用）。
+pub fn resolve_isolating(
+    req: ResolveRequest<'_>,
+) -> Result<(DesiredSet, Vec<crate::resource::InvalidEntry>)> {
+    for p in req.active_projects {
+        req.manifest.require_project(p)?;
+    }
+    for r in req.active_roles {
+        req.manifest.require_role(r)?;
+    }
+    let (entries, invalid) = crate::resource::enumerate_isolating(
+        req.snapshot_root,
+        req.manifest,
+        req.source,
+        &mut Vec::new(),
+    )?;
+    Ok((select(&req, entries)?, invalid))
+}
+
+fn select(req: &ResolveRequest<'_>, entries: Vec<ResourceEntry>) -> Result<DesiredSet> {
     let mut selected = Vec::new();
     let mut excluded = Vec::new();
     for entry in entries {

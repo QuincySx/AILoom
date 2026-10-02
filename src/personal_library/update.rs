@@ -1,5 +1,5 @@
 //! Personal Skill updates: inspect a fixed snapshot, then replace with rollback.
-use super::{copy_tree, recovery, skill_dir_digest, skill_git_cache};
+use super::{recovery, skill_dir_digest, skill_git_cache};
 use crate::error::{code, Error, Result};
 use crate::ids::now_iso;
 use crate::manifest::valid_name;
@@ -16,19 +16,24 @@ struct CheckedUpdate {
 }
 
 impl CheckedUpdate {
-    fn candidate(&self) -> Result<(&SkillSourceMeta, &SourceLock)> {
+    /// 本地来源没有快照锁（返回 None）；内容由执行时的摘要比对固定。
+    fn candidate(&self) -> Result<(&SkillSourceMeta, Option<&SourceLock>)> {
         let invalid = || Error::new(code::SOURCE_CACHE_CORRUPT, "更新候选不完整，请重新检查");
         let source = self.source.as_ref().ok_or_else(invalid)?;
-        let lock = self.snapshot.as_ref().ok_or_else(invalid)?;
         if self.status.local_digest.as_deref() != Some(source.imported_digest.as_str())
             || self.status.upstream_digest.is_none()
             || self.status.preview_id.is_none()
-            || lock.resolved_commit.is_none()
-            || lock.resolved_commit != self.status.upstream_commit
         {
             return Err(invalid());
         }
-        Ok((source, lock))
+        if source.local_dir().is_some() {
+            return Ok((source, None));
+        }
+        let lock = self.snapshot.as_ref().ok_or_else(invalid)?;
+        if lock.resolved_commit.is_none() || lock.resolved_commit != self.status.upstream_commit {
+            return Err(invalid());
+        }
+        Ok((source, Some(lock)))
     }
 
     fn fail(&mut self, note: String) {
@@ -84,7 +89,18 @@ fn upstream_path(snapshot: &Snapshot, source: &SkillSourceMeta) -> Result<PathBu
     {
         return Err(Error::new(code::PATH_TRAVERSAL, "Skill 的上游路径越界"));
     }
-    Ok(snapshot.root.join(relative))
+    let path = snapshot.root.join(relative);
+    // 上游可能把目录换成符号链接指到仓库外：解析后必须仍在快照内。
+    if let (Ok(real), Ok(root)) = (path.canonicalize(), snapshot.root.canonicalize()) {
+        if !real.starts_with(&root) {
+            return Err(Error::new(
+                code::PATH_TRAVERSAL,
+                "Skill 的上游目录经符号链接指向仓库外，拒绝更新",
+            )
+            .fix("上游仓库需要把该目录恢复为真实目录后再检查更新"));
+        }
+    }
+    Ok(path)
 }
 
 fn save_check(data: &Path, checked: &CheckedUpdate) -> Result<()> {
@@ -204,10 +220,15 @@ fn inspect_update(data_root: &Path, name: &str) -> Result<CheckedUpdate> {
         });
     };
     let local_digest = skill_dir_digest(&skill_dir)?;
-    let snap = resolve_upstream(data_root, meta, None)?;
-    let upstream_dir = upstream_path(&snap, meta)?;
     status.local_digest = Some(local_digest.clone());
-    status.upstream_commit = snap.resolved_commit.clone();
+    let (upstream_dir, snap) = match meta.local_dir() {
+        Some(dir) => (dir, None),
+        None => {
+            let snap = resolve_upstream(data_root, meta, None)?;
+            (upstream_path(&snap, meta)?, Some(snap))
+        }
+    };
+    status.upstream_commit = snap.as_ref().and_then(|s| s.resolved_commit.clone());
     if !upstream_dir.join("SKILL.md").is_file() {
         status.state = "upstream-missing".into();
         status.note = Some("上游 skill 目录已不存在（可能删除/改名）".into());
@@ -217,7 +238,7 @@ fn inspect_update(data_root: &Path, name: &str) -> Result<CheckedUpdate> {
             status,
         });
     }
-    let upstream_digest = skill_dir_digest(&upstream_dir)?;
+    let upstream_digest = super::normalized_digest(data_root, &upstream_dir, name)?;
     status.state = match (
         local_digest == meta.imported_digest,
         upstream_digest == meta.imported_digest,
@@ -234,17 +255,17 @@ fn inspect_update(data_root: &Path, name: &str) -> Result<CheckedUpdate> {
         "入口 {}（只检查未应用；检查不等于更新）",
         meta.discovery_entry
     ));
-    let lock = SourceLock {
+    let lock = snap.map(|snap| SourceLock {
         kind: "git".into(),
         identity: snap.identity,
         ref_: snap.ref_,
         resolved_commit: snap.resolved_commit,
         content_digest: snap.content_digest,
         locked_at: snap.locked_at,
-    };
+    });
     Ok(CheckedUpdate {
         source,
-        snapshot: Some(lock),
+        snapshot: lock,
         status,
     })
 }
@@ -274,10 +295,11 @@ fn apply_checked(data: &Path, name: &str, preview_id: Option<&str>) -> Result<se
         let mut checked = load_check(data, name)?
             .ok_or_else(|| Error::new(code::PRECONDITION_FAILED, "请先检查 Skill 更新"))?;
         if preview_id.is_some_and(|id| checked.status.preview_id.as_deref() != Some(id)) {
-            return Err(Error::new(
-                code::PRECONDITION_FAILED,
-                "更新预览已变化，请重新检查",
-            ));
+            return Err(
+                Error::new(code::PRECONDITION_FAILED, "更新预览已变化，请重新检查").fix(format!(
+                    "运行 ailoom library --action check-update --skill {name} 获取新的 preview_id"
+                )),
+            );
         }
         crate::skill_source::ensure_updatable(&checked.status)?;
         let result = match prepare_and_replace(data, name, &checked) {
@@ -324,10 +346,21 @@ fn prepare_and_replace(
         ))
     };
     ensure_local()?;
-    let snapshot = resolve_upstream(data, source, Some(lock))?;
-    let upstream = upstream_path(&snapshot, source)?;
+    let (upstream, resolved_commit) = match (source.local_dir(), lock) {
+        (Some(dir), _) => (dir, None),
+        (None, Some(lock)) => {
+            let snapshot = resolve_upstream(data, source, Some(lock))?;
+            (upstream_path(&snapshot, source)?, snapshot.resolved_commit)
+        }
+        (None, None) => {
+            return Err(Error::new(
+                code::SOURCE_CACHE_CORRUPT,
+                "更新候选不完整，请重新检查",
+            ))
+        }
+    };
     let stage = recovery::stage(data)?;
-    copy_tree(&upstream, stage.path())?;
+    super::copy_normalized(data, &upstream, name, stage.path())?;
     let digest = skill_dir_digest(stage.path())?;
     if Some(&digest) != checked.status.upstream_digest.as_ref() {
         return Err(Error::new(
@@ -336,7 +369,7 @@ fn prepare_and_replace(
         ));
     }
     let mut next_source = source.clone();
-    next_source.resolved_commit = snapshot.resolved_commit;
+    next_source.resolved_commit = resolved_commit;
     next_source.imported_digest = digest;
     next_source.fetched_at = now_iso();
     crate::skill_source::write_meta(stage.path(), &next_source)?;

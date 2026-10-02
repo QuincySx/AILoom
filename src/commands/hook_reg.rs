@@ -83,7 +83,7 @@ pub fn run_hook_cmd(
                         let should = decision.get("prompt").and_then(Value::as_bool) == Some(true);
                         if should {
                             let msg = format!(
-                                "会话 {} 摩擦较高（打断 {} / 工具错误 {} / 纠正 {}）。可运行 `ailoom session summary --session {}` 沉淀经验（本提示每会话最多一次）",
+                                "会话 {} 摩擦较高（打断 {} / 工具错误 {} / 纠正 {}）。可运行 `ailoom session --action summary --session {}` 沉淀经验（本提示每会话最多一次）",
                                 sid,
                                 decision.get("interventions").and_then(Value::as_u64).unwrap_or(0),
                                 decision.get("tool_errors").and_then(Value::as_u64).unwrap_or(0),

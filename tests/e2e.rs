@@ -428,3 +428,59 @@ fn full_acceptance_chain_two_projects_two_roles() {
         "应包含 common-greet 用户修改: {doctor}"
     );
 }
+
+/// 盲测回归：项目声明与源锁按契约使用 `ref` 字段；手写 `ref` 必须生效（不存在的分支要报错），
+/// 早期版本写下的 `ref_` 仍可读取。
+#[test]
+fn project_declaration_uses_contract_ref_field() {
+    let c = Ctx::new();
+    let src = common::make_team_source(c.tmp.path());
+    ailoom::gitx::git(&src, &["branch", "-M", "main"]).unwrap();
+    let url = common::file_url(&src);
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            &url,
+            "--ref",
+            "main",
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let decl_path = common::declaration_path(&ws);
+    let decl = std::fs::read_to_string(&decl_path).unwrap();
+    assert!(
+        decl.contains("ref = \"main\"") && !decl.contains("ref_"),
+        "{decl}"
+    );
+    let lock = std::fs::read_to_string(ws.join(".ailoom/machine/sources.lock.json")).unwrap();
+    assert!(lock.contains("\"ref\"") && !lock.contains("ref_"), "{lock}");
+
+    // 按契约手写一个不存在的分支：不能被静默忽略
+    std::fs::write(
+        &decl_path,
+        decl.replace("ref = \"main\"", "ref = \"no-such-branch\""),
+    )
+    .unwrap();
+    let (code, _, stderr) = c.run(&ws, &["--json", "--data-root", &dr, "sync", "--refresh"]);
+    assert_ne!(code, 0, "不存在的分支必须报错: {stderr}");
+    assert!(stderr.contains("no-such-branch"), "{stderr}");
+
+    // 早期版本写下的 ref_ 仍可读取
+    std::fs::write(
+        &decl_path,
+        decl.replace("ref = \"main\"", "ref_ = \"main\""),
+    )
+    .unwrap();
+    let (code, _, stderr) = c.run(&ws, &["--json", "--data-root", &dr, "sync", "--refresh"]);
+    assert_eq!(code, 0, "{stderr}");
+}

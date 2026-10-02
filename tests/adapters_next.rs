@@ -412,7 +412,7 @@ fn team_hook_registered_and_user_hooks_preserved() {
         stop.iter().any(|e| e["hooks"][0]["command"]
             .as_str()
             .unwrap_or("")
-            .starts_with("ailoom hooks exec --id")),
+            .starts_with("ailoom hooks --action exec --id")),
         "团队 hook 以 exec 包装注册"
     );
 }
@@ -436,7 +436,7 @@ fn managed_stop_entries(settings: &serde_json::Value) -> Vec<String> {
         .unwrap()
         .iter()
         .filter_map(|e| e["hooks"][0]["command"].as_str())
-        .filter(|c| c.starts_with("ailoom hooks exec --id"))
+        .filter(|c| c.starts_with("ailoom hooks --action exec --id"))
         .map(str::to_string)
         .collect()
 }
@@ -1281,4 +1281,179 @@ fn team_hook_exec_timeout_covers_detached_pipe_holders() {
     let (code, _, stderr) = exec("team/hook/missing");
     assert_ne!(code, 0, "启动失败应有诊断");
     assert!(stderr.contains("hook 启动失败"), "{stderr}");
+}
+
+/// AIL-033 缺口：安装失败不标资源可用——npm 失败报 E4004（而不是 PR 类错误码）；
+/// npm 报告成功但包仍缺失时同样失败，结果中该包保持 missing。
+#[test]
+fn packages_install_failures_are_reported_and_not_marked_available() {
+    let c = Ctx::new();
+    let (bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_package(&src, "broken.toml", "broken-pkg", "1.0.0");
+    common::commit_only(&src, "add pkg");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    let dr = c.dr();
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            bare.to_str().unwrap(),
+            "--refresh",
+            "--project",
+            "a",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let fake_bin = c.tmp.path().join("fake-npm");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let install = |script: &str| {
+        let fake = fake_bin.join("npm");
+        std::fs::write(&fake, script).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                dr.as_str(),
+                "packages",
+                "--action",
+                "install",
+                "--yes",
+            ])
+            .current_dir(ws.as_path())
+            .env(
+                "PATH",
+                format!("{}:{}", fake_bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        (out.status.code(), stderr)
+    };
+    // 1) npm 失败
+    let (code, stderr) = install("#!/bin/sh\necho 'E404 not found' >&2\nexit 1\n");
+    assert_eq!(code, Some(13), "{stderr}");
+    let e: serde_json::Value = serde_json::from_str(stderr.trim().lines().last().unwrap()).unwrap();
+    assert_eq!(e["code"], "E4004", "{e}");
+    // 2) npm 声称成功但什么都没装
+    let (code, stderr) = install("#!/bin/sh\nexit 0\n");
+    assert_eq!(code, Some(13), "{stderr}");
+    let e: serde_json::Value = serde_json::from_str(stderr.trim().lines().last().unwrap()).unwrap();
+    assert_eq!(e["code"], "E4004", "{e}");
+    assert!(e["message"].as_str().unwrap().contains("broken-pkg"), "{e}");
+    let rows = e["context"]["packages"].as_array().unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r["package"] == "broken-pkg" && r["state"] == "missing"),
+        "{e}"
+    );
+}
+
+/// 盲测回归：settings.json 里注册的团队 Hook 命令必须能被 CLI 真正执行；
+/// 旧版本写下的 `ailoom hooks exec --id …`（CLI 不接受）在下次同步时被替换，用户 hook 保留。
+#[test]
+fn deployed_team_hook_command_actually_runs_and_legacy_entries_migrate() {
+    let c = Ctx::new();
+    let (_bare, ws) = c.setup();
+    let src = c.tmp.path().join("team-src");
+    add_team_hook(&src, "hook-alpha", 3000);
+    common::commit_only(&src, "add hook");
+    ailoom::gitx::git(&src, &["push", "-q", "origin", "main"]).unwrap();
+    std::fs::create_dir_all(ws.join(".claude")).unwrap();
+    std::fs::write(
+        ws.join(".claude/settings.json"),
+        r#"{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"user-own"}]}]}}"#,
+    )
+    .unwrap();
+    let (code, _, stderr) = c.run(&ws, &["--data-root", c.dr().as_str(), "sync", "--refresh"]);
+    assert_eq!(code, 0, "{stderr}");
+    let settings_path = ws.join(".claude/settings.json");
+    let read = || -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap()
+    };
+    let command = managed_stop_entries(&read())
+        .pop()
+        .expect("团队 hook 已注册");
+
+    // 按宿主的方式执行注册的命令（把 `ailoom` 换成被测二进制）
+    let mut args: Vec<&str> = command.split_whitespace().skip(1).collect();
+    args.insert(0, "--json");
+    let (code, out, stderr) = c.run(&ws, &args);
+    assert_eq!(code, 0, "注册的命令必须可执行: {command}\n{stderr}");
+    let v: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|_| panic!("{out}{stderr}"));
+    assert_eq!(v["result"]["executed"], true, "团队 hook 真正执行成功: {v}");
+
+    // 模拟旧版本的部署：条目与托管清单里的签名都是旧写法
+    let legacy = |s: &str| {
+        s.replace(
+            "ailoom hooks --action exec --id ",
+            "ailoom hooks exec --id ",
+        )
+    };
+    std::fs::write(
+        &settings_path,
+        legacy(&std::fs::read_to_string(&settings_path).unwrap()),
+    )
+    .unwrap();
+    let old_entry = read()["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| {
+            e["hooks"][0]["command"]
+                .as_str()
+                .unwrap()
+                .starts_with("ailoom hooks exec")
+        })
+        .cloned()
+        .unwrap();
+    let old_hash = format!(
+        "sha256:{}",
+        ailoom::ids::sha256_hex(&serde_json::to_vec(&old_entry).unwrap())
+    );
+    let manifest_path = walkdir::WalkDir::new(c.tmp.path().join("data"))
+        .into_iter()
+        .flatten()
+        .find(|e| e.file_name() == "managed-manifest.json")
+        .unwrap()
+        .into_path();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let items = manifest["items"].as_object_mut().unwrap();
+    let key = items
+        .keys()
+        .find(|k| k.contains("hooks --action exec"))
+        .unwrap()
+        .clone();
+    let mut item = items.remove(&key).unwrap();
+    item["content_hash"] = serde_json::json!(old_hash);
+    items.insert(legacy(&key), item);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let (code, _, stderr) = c.sync(&ws);
+    assert_eq!(code, 0, "{stderr}");
+    let commands: Vec<String> = read()["hooks"]["Stop"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["hooks"][0]["command"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        !commands.iter().any(|c| c.starts_with("ailoom hooks exec")),
+        "旧条目被清理: {commands:?}"
+    );
+    assert_eq!(managed_stop_entries(&read()).len(), 1, "{commands:?}");
+    assert!(
+        commands.iter().any(|c| c == "user-own"),
+        "用户 hook 保留: {commands:?}"
+    );
 }

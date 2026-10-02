@@ -41,7 +41,12 @@ pub struct SourceLock {
     #[serde(rename = "type")]
     pub kind: String,
     pub identity: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// 契约 §4.5 字段名是 `ref`；早期版本写成 `ref_`，读取时兼容
+    #[serde(
+        rename = "ref",
+        alias = "ref_",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ref_: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_commit: Option<String>,

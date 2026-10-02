@@ -69,6 +69,22 @@ pub(super) struct LibraryTarget {
     pub(super) name: String,
 }
 
+fn kind_of(kind: &str) -> Option<crate::resource::ResourceKind> {
+    use crate::resource::ResourceKind as K;
+    Some(match kind {
+        "skill" => K::Skill,
+        "rule" => K::Rule,
+        "doc" => K::Doc,
+        "agent" => K::Agent,
+        "mcp" => K::Mcp,
+        "env" => K::Env,
+        "hook" => K::Hook,
+        "package" => K::Package,
+        "learning" => K::Learning,
+        _ => return None,
+    })
+}
+
 pub(super) fn find_library_target(
     state: &ServerState,
     id: &str,
@@ -76,17 +92,7 @@ pub(super) fn find_library_target(
     let lib = crate::personal_library::library_root(&state.data_root);
     let (entries, issues) = crate::personal_library::list_tolerant(&state.data_root);
     if let Some(e) = entries.iter().find(|e| e.id == id) {
-        let kind = match e.kind.as_str() {
-            "skill" => crate::resource::ResourceKind::Skill,
-            "rule" => crate::resource::ResourceKind::Rule,
-            "doc" => crate::resource::ResourceKind::Doc,
-            "agent" => crate::resource::ResourceKind::Agent,
-            "mcp" => crate::resource::ResourceKind::Mcp,
-            "env" => crate::resource::ResourceKind::Env,
-            "hook" => crate::resource::ResourceKind::Hook,
-            "package" => crate::resource::ResourceKind::Package,
-            _ => crate::resource::ResourceKind::Learning,
-        };
+        let kind = kind_of(&e.kind).unwrap_or(crate::resource::ResourceKind::Learning);
         let file = if e.kind == "skill" {
             lib.join(&e.path).join("SKILL.md")
         } else {
@@ -98,21 +104,29 @@ pub(super) fn find_library_target(
             name: e.name.clone(),
         });
     }
-    for issue in &issues {
-        let name = std::path::Path::new(&issue.path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let stem = name.trim_end_matches(".md").trim_end_matches(".toml");
-        if id.ends_with(stem) {
-            return Err(Response::json(
-                422,
-                json!({
-                    "error": format!("资源存在但无法解析：{}（{}）。修复该文件后即可继续编辑", issue.path, issue.error),
-                    "issue_path": issue.path,
-                }),
-            ));
+    // 定义无效的条目也允许打开：网页编辑是修复它的主要入口，保存前仍会完整校验。
+    if let Some(issue) = issues.iter().find(|i| i.resource_id.as_deref() == Some(id)) {
+        let mut parts = id.split('/');
+        let kind = parts.nth(1).and_then(kind_of);
+        let name = id.rsplit('/').next().unwrap_or_default().to_string();
+        if let Some(kind) = kind {
+            let base = lib.join(&issue.path);
+            let file = if kind == crate::resource::ResourceKind::Skill {
+                base.join("SKILL.md")
+            } else {
+                base
+            };
+            if file.is_file() {
+                return Ok(LibraryTarget { file, kind, name });
+            }
         }
+        return Err(Response::json(
+            422,
+            json!({
+                "error": format!("资源存在但无法解析：{}（{}）", issue.path, issue.error),
+                "issue_path": issue.path,
+            }),
+        ));
     }
     Err(Response::json(404, json!({ "error": "资源不存在" })))
 }

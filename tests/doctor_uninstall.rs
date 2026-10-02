@@ -120,24 +120,58 @@ fn doctor_checks_pass_and_modify_nothing() {
 }
 
 #[test]
-fn doctor_reports_issues_without_source_lock() {
+fn doctor_treats_personal_only_repo_as_healthy() {
+    // 盲测回归：没有团队声明是纯个人模式的正常状态，不应判为问题、也不应要求 init
     let c = common_test::Ctx::new();
     let ws = common::make_business_repo(c.tmp.path(), "biz");
     let (code, stdout, stderr) = run(&c, &ws, &["--json", "--data-root", &c.dr(), "doctor"]);
-    // 工作区能发现（git 根），但无声明/绑定/锁 → 检查项失败但命令本身成功
-    if code == 0 {
-        let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-        assert_eq!(v["result"]["ok"], false);
-        // 每个失败项都有可执行的修复建议
-        for check in v["result"]["checks"].as_array().unwrap() {
-            if check["ok"] == false {
-                assert!(check["fix"].is_string(), "{check}");
-            }
-        }
-    } else {
-        // 未找到根也是一种合法结果（E1001）
-        assert!(stderr.contains("E1001"));
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["ok"], true, "{v}");
+    let checks = v["result"]["checks"].as_array().unwrap();
+    let decl = checks.iter().find(|c| c["check"] == "declaration").unwrap();
+    assert_eq!(decl["detail"]["mode"], "personal", "{decl}");
+    assert!(
+        !checks
+            .iter()
+            .any(|c| c["check"] == "binding" || c["check"] == "source-lock"),
+        "个人模式不报团队绑定/源锁: {v}"
+    );
+}
+
+#[test]
+fn doctor_reports_corrupt_files_instead_of_failing() {
+    let c = common_test::Ctx::new();
+    let ws = setup_ws(&c);
+    let lock = ws.join(".ailoom/machine/sources.lock.json");
+    std::fs::write(&lock, "{broken").unwrap();
+    let managed = walkdir::WalkDir::new(c.tmp.path().join("data"))
+        .into_iter()
+        .flatten()
+        .find(|e| e.file_name() == "managed-manifest.json")
+        .unwrap()
+        .into_path();
+    std::fs::write(&managed, "{broken").unwrap();
+    let (code, stdout, stderr) = run(&c, &ws, &["--json", "--data-root", &c.dr(), "doctor"]);
+    assert_eq!(code, 0, "体检本身不因损坏文件退出: {stderr}");
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(v["result"]["ok"], false);
+    for name in ["source-lock", "managed-manifest"] {
+        let check = v["result"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["check"] == name)
+            .unwrap_or_else(|| panic!("缺少 {name}: {v}"));
+        assert_eq!(check["ok"], false, "{check}");
+        assert!(check["fix"].is_string(), "{check}");
     }
+    let (code, _, _) = run(
+        &c,
+        &ws,
+        &["--json", "--data-root", &c.dr(), "doctor", "--strict"],
+    );
+    assert_ne!(code, 0, "--strict 按问题项返回非 0");
 }
 
 #[test]

@@ -22,7 +22,12 @@ pub struct SkillSourceMeta {
     /// 仓库内 skill 相对路径（skill 根，含 SKILL.md）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ref",
+        alias = "ref_",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ref_: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_commit: Option<String>,
@@ -46,7 +51,18 @@ impl SkillSourceMeta {
     }
 
     pub fn updatable(&self) -> bool {
-        self.source_kind == "git" || self.source_kind.starts_with("provider:")
+        self.source_kind == "git"
+            || self.source_kind.starts_with("provider:")
+            || self.local_dir().is_some()
+    }
+
+    /// 本地文件夹来源的源目录：源目录改动后可经 check-update / update 同步进库
+    /// （否则重新导入报同名冲突、删除又因仍被启用被拒，用户无路可走）。
+    pub fn local_dir(&self) -> Option<std::path::PathBuf> {
+        (self.source_kind == "local")
+            .then(|| self.discovery_entry.strip_prefix("local-dir:"))
+            .flatten()
+            .map(std::path::PathBuf::from)
     }
 }
 

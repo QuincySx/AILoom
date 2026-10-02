@@ -202,11 +202,14 @@ pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>)
                     .args(["install", "--no-audit", "--no-fund", "--prefix"])
                     .arg(&dir)
                     .output()
-                    .map_err(|e| Error::new(code::PR_CREATE_FAILED, format!("npm 不可用: {e}")))?;
+                    .map_err(|e| {
+                        Error::new(code::WRITE_FAILED, format!("npm 不可用: {e}"))
+                            .fix("安装 Node.js / npm 并确认在 PATH 中，然后重试")
+                    })?;
                 if !output.status.success() {
                     // 安装失败不标资源可用
                     return Err(Error::new(
-                        code::PR_CREATE_FAILED,
+                        code::WRITE_FAILED,
                         format!(
                             "npm install 失败：{}",
                             String::from_utf8_lossy(&output.stderr).trim()
@@ -242,6 +245,20 @@ pub fn run(args: &PackagesArgs, json: bool, data_root: Option<&std::path::Path>)
                 "npm_ran": npm_ran,
                 "packages": after_rows,
             });
+            // npm 报告成功但依赖仍不满足（版本不符 / 未写入）：不能当作安装完成
+            let still_missing: Vec<&str> = after_rows
+                .iter()
+                .filter(|r| r["state"] == "missing")
+                .filter_map(|r| r["package"].as_str())
+                .collect();
+            if !still_missing.is_empty() {
+                return Err(Error::new(
+                    code::WRITE_FAILED,
+                    format!("安装后依赖仍不满足：{}", still_missing.join(", ")),
+                )
+                .context(value.clone())
+                .fix("检查 registry 中是否有对应的精确版本；失败不标记依赖可用"));
+            }
             if !json {
                 crate::logging::info(format!(
                     "依赖安装完成：{installed_count} 项满足{}",

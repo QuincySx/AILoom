@@ -380,8 +380,8 @@ fn ail064_git_import_preview_execute_and_multi_skill() {
         alpha["source"]["discovery_entry"]
             .as_str()
             .unwrap()
-            .starts_with("github:"),
-        "保留发现入口: {alpha}"
+            .starts_with("git:file://"),
+        "发现入口按实际主机标注（本地夹具不是 GitHub）: {alpha}"
     );
 }
 
@@ -1006,8 +1006,14 @@ fn failed_skill_validation_restores_entire_old_directory() {
     let target = c.tmp.path().join("data/library/resources/skills/solo");
     let before = std::fs::read(target.join("SKILL.md")).unwrap();
     let meta = std::fs::read(target.join(".ailoom-import.json")).unwrap();
-    // A valid checkout with an invalid Skill name reaches the replacement validation.
-    skill_version(&upstream, "wrong-name", "broken-update");
+    // A valid checkout whose normalized Skill still fails replacement validation
+    // (personal library has no project `nope`). A renamed upstream is no longer invalid:
+    // updates normalize the name like imports do.
+    std::fs::write(
+        upstream.join("skills/solo/SKILL.md"),
+        "---\nname: solo\ndescription: solo\nprojects: [nope]\n---\n\nbroken-update\n",
+    )
+    .unwrap();
     upstream_commit(&c, &upstream, "invalid");
     c.run_json(
         &cwd,
@@ -1252,4 +1258,615 @@ fn corrupt_check_is_visible_without_hiding_a_valid_skill() {
     assert!(issues
         .iter()
         .any(|i| i.error.contains("更新检查记录不可用")));
+}
+
+/// AIL-064：仓库内路径不能经 `..` 或符号链接逃出仓库；导入与上游更新都不能把仓库外的本机文件复制进资源库。
+#[cfg(unix)]
+#[test]
+fn git_import_and_update_reject_paths_escaping_the_repository() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let outside = c.tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(
+        outside.join("SKILL.md"),
+        "---\nname: outside\ndescription: d\n---\n\nPRIVATE\n",
+    )
+    .unwrap();
+    let upstream = make_upstream(&c, &[("solo", "solo v1")]);
+    std::os::unix::fs::symlink(&outside, upstream.join("skills/dirlink")).unwrap();
+    upstream_commit(&c, &upstream, "link");
+    let url = format!("file://{}", upstream.display());
+    let import = |path: &str| {
+        c.run(
+            &dir,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "library",
+                "--action",
+                "import-git",
+                "--url",
+                &url,
+                "--path",
+                path,
+                "--execute",
+            ],
+        )
+    };
+    for path in ["skills/dirlink", "../..", "skills/../../outside"] {
+        let (code, _, stderr) = import(path);
+        assert_eq!(code, 12, "{path}: {stderr}");
+        assert!(stderr.contains("E3003"), "{path}: {stderr}");
+        assert!(
+            !stderr.contains("snapshots"),
+            "报错不暴露内部缓存路径: {stderr}"
+        );
+    }
+    let lib = c.tmp.path().join("data/library/resources/skills");
+    assert!(!lib.join("outside").exists());
+    // 下载失败：不可达的仓库不创建任何库内容
+    let missing = format!("file://{}", c.tmp.path().join("no-such-repo").display());
+    let (code, _, stderr) = c.run(
+        &dir,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "library",
+            "--action",
+            "import-git",
+            "--url",
+            &missing,
+            "--execute",
+        ],
+    );
+    assert_ne!(code, 0, "{stderr}");
+    assert!(stderr.contains("E2002"), "{stderr}");
+    assert!(!lib.exists() || std::fs::read_dir(&lib).unwrap().next().is_none());
+
+    // 先导入正常 skill，上游再把它换成指向仓库外的链接：检查更新必须拒绝
+    let (code, _, stderr) = import("skills/solo");
+    assert_eq!(code, 0, "{stderr}");
+    std::fs::remove_dir_all(upstream.join("skills/solo")).unwrap();
+    std::os::unix::fs::symlink(&outside, upstream.join("skills/solo")).unwrap();
+    upstream_commit(&c, &upstream, "swap");
+    let (code, _, stderr) = c.run(
+        &dir,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "library",
+            "--action",
+            "check-update",
+            "--skill",
+            "solo",
+        ],
+    );
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("E3003") && stderr.contains("指向仓库外"),
+        "{stderr}"
+    );
+    let body = std::fs::read_to_string(lib.join("solo/SKILL.md")).unwrap();
+    assert!(body.contains("solo v1") && !body.contains("PRIVATE"));
+}
+
+/// AIL-064：导入中途失败（源文件不可读）时库保持原状，暂存区不留残留。
+#[cfg(unix)]
+#[test]
+fn import_failure_midway_leaves_library_and_staging_clean() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let src = c.tmp.path().join("src/broken");
+    std::fs::create_dir_all(src.join("references")).unwrap();
+    std::fs::write(
+        src.join("SKILL.md"),
+        "---\nname: broken\ndescription: d\n---\n\nbody\n",
+    )
+    .unwrap();
+    let locked = src.join("references/locked.md");
+    std::fs::write(&locked, "x").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&locked).is_ok() {
+        return; // 以 root 运行时权限不生效，无法模拟
+    }
+    let src_arg = src.to_string_lossy().to_string();
+    let (code, _, stderr) = c.run(
+        &dir,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            &src_arg,
+            "--execute",
+        ],
+    );
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_ne!(code, 0, "{stderr}");
+    let lib = c.tmp.path().join("data/library");
+    assert!(!lib.join("resources/skills/broken").exists());
+    let staging = lib.join(".staging");
+    assert!(
+        !staging.exists() || std::fs::read_dir(&staging).unwrap().next().is_none(),
+        "暂存区残留"
+    );
+}
+
+/// AIL-062：普通 frontmatter（含 BOM / CRLF / 多行值）导入后元数据完整；
+/// assets/scripts/references 逐字节复制，原目录不变，脚本不执行。
+#[cfg(unix)]
+#[test]
+fn import_keeps_frontmatter_and_copies_all_files_without_running_scripts() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let marker = c.tmp.path().join("SCRIPT_RAN");
+    let cases = [
+        (
+            "crlf",
+            "---\r\nname: crlf\r\ndescription: Win line endings\r\n---\r\n\r\n# Body\r\n",
+        ),
+        (
+            "bom",
+            "\u{feff}---\nname: bom\ndescription: has bom\n---\nbody\n",
+        ),
+        (
+            "multi",
+            "---\nname: multi\ndescription: |\n  line one\n  line two\n---\nbody\n",
+        ),
+    ];
+    for (name, skill_md) in cases {
+        let src = c.tmp.path().join("src").join(name);
+        for sub in ["assets", "scripts", "references/deep"] {
+            std::fs::create_dir_all(src.join(sub)).unwrap();
+        }
+        std::fs::write(src.join("SKILL.md"), skill_md).unwrap();
+        std::fs::write(src.join("assets/logo.bin"), [0u8, 159, 146, 150, 255]).unwrap();
+        std::fs::write(src.join("references/deep/notes.md"), "参考\n").unwrap();
+        std::fs::write(
+            src.join("scripts/setup.sh"),
+            format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
+        )
+        .unwrap();
+        let snapshot = |root: &Path| -> Vec<(String, Vec<u8>)> {
+            let mut out: Vec<_> = walkdir::WalkDir::new(root)
+                .into_iter()
+                .flatten()
+                .filter(|e| e.file_type().is_file())
+                .map(|e| {
+                    let rel = e
+                        .path()
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string();
+                    (rel, std::fs::read(e.path()).unwrap())
+                })
+                .collect();
+            out.sort();
+            out
+        };
+        let before = snapshot(&src);
+        let src_arg = src.to_string_lossy().to_string();
+        let v = c.run_json(
+            &dir,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "library",
+                "--action",
+                "import",
+                "--dir",
+                &src_arg,
+                "--execute",
+            ],
+        );
+        assert_eq!(v["scripts_executed"], serde_json::json!(false), "{v}");
+        assert_eq!(snapshot(&src), before, "{name}: 原目录不变");
+        let target = c
+            .tmp
+            .path()
+            .join("data/library/resources/skills")
+            .join(name);
+        for (rel, bytes) in before.iter().filter(|(rel, _)| rel != "SKILL.md") {
+            assert_eq!(
+                &std::fs::read(target.join(rel)).unwrap(),
+                bytes,
+                "{name}: {rel} 逐字节复制"
+            );
+        }
+        let imported = std::fs::read_to_string(target.join("SKILL.md")).unwrap();
+        assert!(!imported.starts_with('\u{feff}'), "{name}: {imported:?}");
+        assert!(
+            !imported.contains("\n\n---"),
+            "{name}: 结束标记前无多余空行 {imported:?}"
+        );
+        if name == "crlf" {
+            assert!(
+                !imported.replace("\r\n", "").contains('\n'),
+                "CRLF 文件不混用换行: {imported:?}"
+            );
+        }
+    }
+    assert!(!marker.exists(), "导入不执行脚本");
+    let v = c.run_json(
+        &dir,
+        &["--json", "--data-root", &dr, "library", "--action", "list"],
+    );
+    assert_eq!(v["issues"], serde_json::json!([]), "{v}");
+    let desc = |n: &str| {
+        v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["name"] == n)
+            .unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(desc("bom"), "has bom", "BOM 文件的原 frontmatter 不丢");
+    assert_eq!(desc("crlf"), "Win line endings");
+    assert_eq!(desc("multi"), "line one\nline two\n");
+}
+
+/// AIL-062：各种校验失败的导入都不发布任何内容，原库保持可用，错误带修复提示。
+#[test]
+fn rejected_imports_leave_existing_library_usable() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let make = |name: &str, body: &str| {
+        let src = c.tmp.path().join("src").join(name);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("SKILL.md"), body).unwrap();
+        src.to_string_lossy().to_string()
+    };
+    let keep = make("keep", "---\nname: keep\ndescription: d\n---\nbody\n");
+    let import = |src: &str| {
+        c.run(
+            &dir,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "library",
+                "--action",
+                "import",
+                "--dir",
+                src,
+                "--execute",
+            ],
+        )
+    };
+    assert_eq!(import(&keep).0, 0);
+    let lib = c.tmp.path().join("data/library");
+    let keep_md = std::fs::read(lib.join("resources/skills/keep/SKILL.md")).unwrap();
+    let rejected = [
+        (
+            "badyaml",
+            "---\nname: badyaml\ndescription: [x\n---\nbody\n",
+            "E3002",
+        ),
+        (
+            "unclosed",
+            "---\nname: unclosed\ndescription: d\nbody\n",
+            "E3002",
+        ),
+        (
+            "badname",
+            "---\nname: Bad Name\ndescription: d\n---\nbody\n",
+            "E3002",
+        ),
+        (
+            "linkesc",
+            "---\nname: linkesc\ndescription: d\n---\n[x](../../etc/passwd)\n",
+            "E3003",
+        ),
+        (
+            "wrongtype",
+            "---\nname: wrongtype\ndescription: d\nshared: \"yes\"\n---\nbody\n",
+            "E3002",
+        ),
+        (
+            "projs",
+            "---\nname: projs\ndescription: d\nprojects: [nope]\n---\nbody\n",
+            "E3004",
+        ),
+        (
+            "dupe",
+            "---\nname: keep\ndescription: other\n---\nbody\n",
+            "E2006",
+        ),
+    ];
+    for (name, body, code) in rejected {
+        let src = make(name, body);
+        let (exit, _, stderr) = import(&src);
+        assert_ne!(exit, 0, "{name}");
+        let err: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+        assert_eq!(err["code"], code, "{name}: {stderr}");
+        assert!(err["fix"].is_string(), "{name}: 错误带修复提示 {stderr}");
+    }
+    let skills: Vec<String> = std::fs::read_dir(lib.join("resources/skills"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(skills, vec!["keep".to_string()], "没有任何失败导入被发布");
+    assert_eq!(
+        std::fs::read(lib.join("resources/skills/keep/SKILL.md")).unwrap(),
+        keep_md
+    );
+    let staging = lib.join(".staging");
+    assert!(!staging.exists() || std::fs::read_dir(&staging).unwrap().next().is_none());
+    let v = c.run_json(
+        &dir,
+        &["--json", "--data-root", &dr, "library", "--action", "list"],
+    );
+    assert_eq!(v["issues"], serde_json::json!([]), "{v}");
+}
+
+/// AIL-062：导入中途被终止留下的暂存残留，在下次导入时清理；新近的暂存（可能属于并发导入）保留。
+#[cfg(unix)]
+#[test]
+fn stale_staging_left_by_interrupted_import_is_pruned() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let src = c.tmp.path().join("src/ok");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("SKILL.md"),
+        "---\nname: ok\ndescription: d\n---\nbody\n",
+    )
+    .unwrap();
+    let staging = c.tmp.path().join("data/library/.staging");
+    for name in ["crashed-1", "inflight-2"] {
+        std::fs::create_dir_all(staging.join(name)).unwrap();
+        std::fs::write(staging.join(name).join("SKILL.md"), "partial").unwrap();
+    }
+    // 模拟两小时前中断的导入
+    assert!(Command::new("touch")
+        .args(["-t", "200001010000"])
+        .arg(staging.join("crashed-1"))
+        .status()
+        .unwrap()
+        .success());
+    let src_arg = src.to_string_lossy().to_string();
+    let _ = c.run_json(
+        &dir,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "library",
+            "--action",
+            "import",
+            "--dir",
+            &src_arg,
+            "--execute",
+        ],
+    );
+    assert!(!staging.join("crashed-1").exists(), "过期残留被清理");
+    assert!(staging.join("inflight-2").exists(), "新近暂存不动");
+    let v = c.run_json(
+        &dir,
+        &["--json", "--data-root", &dr, "library", "--action", "list"],
+    );
+    assert_eq!(v["issues"], serde_json::json!([]), "{v}");
+}
+
+/// 盲测回归：上游是标准 skill（不带 AILoom 专有的 namespace/shared）时，
+/// 导入后应为 up-to-date；按提示 预览 → 带同一 preview_id 执行 能完成更新，之后再次 up-to-date。
+#[test]
+fn standard_upstream_skill_checks_and_updates_with_the_previewed_id() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let upstream = c.tmp.path().join("upstream");
+    std::fs::create_dir_all(upstream.join("skills/beta")).unwrap();
+    let write = |body: &str| {
+        std::fs::write(
+            upstream.join("skills/beta/SKILL.md"),
+            format!("---\nname: beta\ndescription: beta skill\n---\n{body}\n"),
+        )
+        .unwrap()
+    };
+    write("v1");
+    assert!(c.git(&upstream, &["init", "-q"]));
+    upstream_commit(&c, &upstream, "v1");
+    let url = format!("file://{}", upstream.display());
+    let lib = |args: &[&str]| {
+        let mut full = vec!["--json", "--data-root", dr.as_str(), "library"];
+        full.extend_from_slice(args);
+        c.run_json(&dir, &full)
+    };
+    lib(&[
+        "--action",
+        "import-git",
+        "--url",
+        &url,
+        "--path",
+        "skills/beta",
+        "--execute",
+    ]);
+    let v = lib(&["--action", "check-update", "--skill", "beta"]);
+    assert_eq!(
+        v["status"]["state"], "up-to-date",
+        "刚导入不应报上游有更新: {v}"
+    );
+
+    write("v2");
+    upstream_commit(&c, &upstream, "v2");
+    let v = lib(&["--action", "check-update", "--skill", "beta"]);
+    assert_eq!(v["status"]["state"], "upstream-new", "{v}");
+    let id = v["status"]["preview_id"].as_str().unwrap().to_string();
+    // 预览不换 ID
+    let v = lib(&["--action", "update", "--skill", "beta", "--preview-id", &id]);
+    assert_eq!(v["status"]["preview_id"], id.as_str(), "{v}");
+    assert!(
+        v["note"].as_str().unwrap().contains(&id),
+        "提示给出完整命令: {v}"
+    );
+    let v = lib(&[
+        "--action",
+        "update",
+        "--skill",
+        "beta",
+        "--preview-id",
+        &id,
+        "--execute",
+    ]);
+    assert_eq!(v["result"]["updated"], true, "{v}");
+    let md = std::fs::read_to_string(
+        c.tmp
+            .path()
+            .join("data/library/resources/skills/beta/SKILL.md"),
+    )
+    .unwrap();
+    assert!(
+        md.contains("v2") && md.contains("namespace: personal"),
+        "{md}"
+    );
+    let v = lib(&["--action", "check-update", "--skill", "beta"]);
+    assert_eq!(v["status"]["state"], "up-to-date", "更新后再次一致: {v}");
+    let v = lib(&["--action", "list"]);
+    assert_eq!(v["issues"], serde_json::json!([]), "{v}");
+}
+
+/// 盲测回归：契约里的资源示例照抄必须能用（曾把 shared/namespace 写在 [mcp.env] 表头之后，
+/// TOML 会把它们归进 env 表，照抄即报「缺少 namespace」）。
+#[test]
+fn contract_mcp_example_is_a_valid_resource() {
+    let doc =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/CONTRACTS.md")).unwrap();
+    let start = doc.find("**mcp**").expect("契约含 mcp 示例");
+    let body_start = doc[start..].find("```toml").unwrap() + start + "```toml".len();
+    let body_end = doc[body_start..].find("```").unwrap() + body_start;
+    let example = &doc[body_start..body_end];
+    let c = Ctx::new();
+    let data = c.tmp.path().join("data");
+    ailoom::personal_library::ensure_library(&data).unwrap();
+    std::fs::write(
+        data.join("library/resources/mcp/files.toml"),
+        example.replace("namespace = \"common\"", "namespace = \"personal\""),
+    )
+    .unwrap();
+    let (entries, issues) = ailoom::personal_library::list_tolerant(&data);
+    assert!(
+        issues.is_empty(),
+        "契约示例无效: {:?}",
+        issues.iter().map(|i| &i.error).collect::<Vec<_>>()
+    );
+    assert!(entries
+        .iter()
+        .any(|e| e.id == "personal/mcp/personal/files"));
+}
+
+/// 盲测回归：本地文件夹导入的 Skill 在源目录改动后可以检查并应用更新
+/// （此前重新导入报同名冲突、删除又因仍被启用被拒，无路可走）。
+#[test]
+fn local_folder_skill_can_check_and_apply_updates() {
+    let c = Ctx::new();
+    let dir = c.tmp.path().join("plain");
+    std::fs::create_dir_all(&dir).unwrap();
+    let dr = c.dr();
+    let src = c.tmp.path().join("my-skills/loc");
+    std::fs::create_dir_all(&src).unwrap();
+    let write = |body: &str| {
+        std::fs::write(
+            src.join("SKILL.md"),
+            format!("---\nname: loc\ndescription: d\n---\n{body}\n"),
+        )
+        .unwrap()
+    };
+    write("v1");
+    let lib = |args: &[&str]| {
+        let mut full = vec!["--json", "--data-root", dr.as_str(), "library"];
+        full.extend_from_slice(args);
+        c.run(&dir, &full)
+    };
+    let json = |r: (i32, String, String)| -> serde_json::Value {
+        assert_eq!(r.0, 0, "{}", r.2);
+        serde_json::from_str::<serde_json::Value>(&r.1).unwrap()["result"].clone()
+    };
+    let src_arg = src.to_string_lossy().to_string();
+    json(lib(&["--action", "import", "--dir", &src_arg, "--execute"]));
+    let v = json(lib(&["--action", "list"]));
+    assert_eq!(v["entries"][0]["can_check_update"], true, "{v}");
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    assert_eq!(v["status"]["state"], "up-to-date", "{v}");
+
+    write("v2");
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    assert_eq!(v["status"]["state"], "upstream-new", "{v}");
+    let id = v["status"]["preview_id"].as_str().unwrap().to_string();
+    let v = json(lib(&[
+        "--action",
+        "update",
+        "--skill",
+        "loc",
+        "--preview-id",
+        &id,
+        "--execute",
+    ]));
+    assert_eq!(v["result"]["updated"], true, "{v}");
+    let target = c
+        .tmp
+        .path()
+        .join("data/library/resources/skills/loc/SKILL.md");
+    let md = std::fs::read_to_string(&target).unwrap();
+    assert!(
+        md.contains("v2") && md.contains("namespace: personal"),
+        "{md}"
+    );
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    assert_eq!(v["status"]["state"], "up-to-date", "{v}");
+
+    // 检查之后源目录又变了：按检查时的内容固定，拒绝应用
+    write("v3");
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    let id = v["status"]["preview_id"].as_str().unwrap().to_string();
+    write("v4");
+    let (code, _, stderr) = lib(&[
+        "--action",
+        "update",
+        "--skill",
+        "loc",
+        "--preview-id",
+        &id,
+        "--execute",
+    ]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        std::fs::read_to_string(&target).unwrap().contains("v2"),
+        "库内容不变"
+    );
+
+    // 库内副本被本地修改过：不覆盖
+    std::fs::write(&target, md.replace("v2", "local edit")).unwrap();
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    assert_eq!(v["status"]["state"], "conflict", "{v}");
+
+    // 源目录不存在：明确报上游缺失
+    std::fs::remove_dir_all(&src).unwrap();
+    let v = json(lib(&["--action", "check-update", "--skill", "loc"]));
+    assert_eq!(v["status"]["state"], "upstream-missing", "{v}");
 }

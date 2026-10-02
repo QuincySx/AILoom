@@ -37,10 +37,13 @@ export function mount(container, ctx) {
     try {
       const v = await api.libraryList();
       const issues = v.issues ?? [];
+      // 坏条目只影响它自己；给出就地修复与删除入口（AIL-062）
       issuesSlot.innerHTML = issues.length
-        ? `<p class="badge warn">以下能力无法读取：</p><ul>` +
-          issues.map((i) => `<li class="muted">${esc(i.path)}：${esc(i.error)}</li>`).join('') + `</ul>`
+        ? `<p class="badge warn">以下能力无法读取，同步时会跳过：</p><ul>` +
+          issues.map((i) => `<li class="muted">${esc(i.path)}：${esc(i.error)}${i.resource_id ? ` <button data-issue-open="${esc(i.resource_id)}">打开修复</button> <button class="danger" data-issue-delete="${esc(i.resource_id)}">删除…</button>` : ''}</li>`).join('') + `</ul>`
         : '';
+      issuesSlot.querySelectorAll('[data-issue-open]').forEach((b) => { b.onclick = () => openResource(b.dataset.issueOpen); });
+      issuesSlot.querySelectorAll('[data-issue-delete]').forEach((b) => { b.onclick = () => deleteResource(b.dataset.issueDelete); });
     } catch (e) {
       issuesSlot.textContent = '无法读取本地能力：' + e.message;
     }
@@ -76,6 +79,7 @@ export function mount(container, ctx) {
       editor.markSaved(content);
       editMsg.textContent = '已保存。到项目中应用更新。';
       currentFp = v.fingerprint;
+      await refresh();
     } catch (e) {
       editMsg.textContent = (e.kind === 'conflict' ? '文件已被外部修改：' : '校验未通过：') + e.message;
     } finally {
@@ -84,9 +88,8 @@ export function mount(container, ctx) {
   };
 
   // 删除走影响预览确认
-  root.querySelector('[data-delete]').onclick = async () => {
-    if (!currentId) return;
-    const id = currentId;
+  root.querySelector('[data-delete]').onclick = () => currentId && deleteResource(currentId);
+  async function deleteResource(id) {
     try {
       const p = await api.libraryDelete(id, false);
       const preview = p.preview ?? p;
@@ -95,7 +98,7 @@ export function mount(container, ctx) {
       if (currentId === id) { currentId = null; editor.setValue(''); editorBox.classList.add('hidden'); }
       editorDialog.close();notify('已删除，可从归档恢复。'); await refresh();await collections.refresh?.();
     } catch (e) { notify(e.message); }
-  };
+  }
   // 导入区（AIL-126：搜索上下文跨页保留）
   const collections = CollectionsPanel(root.querySelector('[data-collections]'), {
     title: '资源库',

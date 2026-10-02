@@ -1,5 +1,5 @@
 //! 团队自定义 Hook 适配（AIL-032）：源仓库 hooks/*.toml → Claude settings 托管注册。
-//! 与 AIL-018 内置观测 Hook 分开归属；执行经 `ailoom hooks exec` 包装（结构化参数、无 shell、超时回收）。
+//! 与 AIL-018 内置观测 Hook 分开归属；执行经 `ailoom hooks --action exec` 包装（结构化参数、无 shell、超时回收）。
 
 use super::common::{Artifact, ArtifactBody};
 use super::{Tool, UnsupportedItem};
@@ -7,7 +7,9 @@ use crate::error::{code, Error, Result};
 use crate::resource::ResourceEntry;
 use std::path::{Path, PathBuf};
 
-pub const TEAM_HOOK_EXEC_PREFIX: &str = "ailoom hooks exec --id ";
+/// 必须是 CLI 真正接受的写法：早期写成 `ailoom hooks exec --id`，解析器拒绝，
+/// 部署出去的团队 Hook 每次触发都失败。旧条目的托管 key 带旧签名，下次同步按旧签名清理。
+pub const TEAM_HOOK_EXEC_PREFIX: &str = "ailoom hooks --action exec --id ";
 
 #[derive(Debug, Clone)]
 pub struct TeamHookSpec {
@@ -79,7 +81,7 @@ pub fn parse_spec(entry: &ResourceEntry) -> Result<TeamHookSpec> {
     })
 }
 
-/// 渲染注册条目：command = `ailoom hooks exec --id <resource_id>`（结构化参数存储在 hook-specs，
+/// 渲染注册条目：command = `ailoom hooks --action exec --id <resource_id>`（结构化参数存储在 hook-specs，
 /// 执行时无 shell 解释）；注册条目以 exec 前缀作为托管签名，与用户 Hook 分离。
 pub fn render(
     entry: &ResourceEntry,

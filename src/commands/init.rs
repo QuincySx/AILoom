@@ -117,8 +117,9 @@ pub fn run(
                             }
                         }
                     } else {
+                        // 与 personal select 的未知宿主同一错误码
                         return Err(Error::new(
-                            code::USAGE,
+                            code::UNKNOWN_REFERENCE,
                             format!(
                                 "未知 target: {other}（支持 claude/codex/grok/pi/opencode/cursor/alva/antigravity）"
                             ),
@@ -325,8 +326,17 @@ pub fn run(
         println!(
             "已绑定工作区 {}（项目 {}，角色 {}）；声明{}、锁{}",
             ctx.workspace.workspace_root.display(),
-            decl.projects.join(", "),
-            decl.roles.join(", "),
+            // 零项目合法（只取 shared 资源），显示为「无」而不是空白
+            if decl.projects.is_empty() {
+                "无（仅共享资源）".to_string()
+            } else {
+                decl.projects.join(", ")
+            },
+            if decl.roles.is_empty() {
+                "无".to_string()
+            } else {
+                decl.roles.join(", ")
+            },
             if declaration_changed {
                 "已写入"
             } else {

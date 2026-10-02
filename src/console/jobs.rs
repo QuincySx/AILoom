@@ -46,7 +46,13 @@ pub struct UndoEntry {
     /// 用户事后修改过则冲突保留，绝不覆盖。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after_hash: Option<String>,
+    /// 应用前是符号链接（previous 为链接目标）：删除后撤销需要重建链接而不是写文件
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub was_link: bool,
 }
+
+/// 应用后路径不存在（删除动作）时记录的指纹：撤销只在路径仍不存在时重建。
+const ABSENT: &str = "absent";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
@@ -446,7 +452,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
     }
     // 记录撤销前像：仅本任务将写入的目标（AIL-120：捕获逻辑抽为共用函数）
     let mut undo = capture_undo_entries(&root, &prepared.plan);
-    // 应用：复用 personal::sync（相同 lock/journal 管道），但要捕获其结果——
+    // 应用：复用 personal::apply_prepared_personal（相同 lock/journal 管道），但要捕获其结果——
     // 这里直接调用库路径以保证 undo 语义
     set_status(state, id, JobStatus::Running, "应用计划");
     if is_cancelled(state, id) {
@@ -465,7 +471,8 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
     // 本次写入——用户事后修改过的项必须冲突保留，绝不以旧前像覆盖。
     if report.ok {
         for entry in &mut undo {
-            entry.after_hash = current_fingerprint(&root.join(&entry.path));
+            entry.after_hash =
+                Some(current_fingerprint(&root.join(&entry.path)).unwrap_or_else(|| ABSENT.into()));
         }
     }
     // 宿主验证（静态：部署存在性 + 能力矩阵状态；不宣称宿主已加载）
@@ -492,6 +499,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
                 "skipped_unsupported": report.skipped_unsupported,
                 "failed": report.failed,
                 "pending_journal": report.pending_journal,
+                "skipped_company_files": prepared.skipped,
                 "verification": verification,
                 "notes": prepared.notes,
                 "next": if report.ok {
@@ -534,7 +542,7 @@ fn apply_prepared(
     _root: &Path,
     _undo: &[UndoEntry],
 ) -> Result<crate::sync::apply::ApplyReport> {
-    // 与 personal::sync 相同的 apply 管道（lock/journal/managed save + 公司文件复核）
+    // 与 CLI sync 相同的 apply 管道（lock/journal/managed save + 公司文件复核）
     let _ = state;
     crate::commands::personal::apply_prepared_personal(prepared)
 }
@@ -609,11 +617,15 @@ fn capture_undo_entries(root: &Path, plan: &crate::sync::plan::SyncPlan) -> Vec<
             crate::sync::plan::ActionKind::Create
                 | crate::sync::plan::ActionKind::Update
                 | crate::sync::plan::ActionKind::Restore
+                | crate::sync::plan::ActionKind::Delete
         ) {
             continue;
         }
         let target = root.join(&a.path);
         let existed = target.symlink_metadata().is_ok();
+        let was_link = target
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink());
         let previous = if existed {
             let meta = std::fs::symlink_metadata(&target).ok();
             if meta.map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -631,6 +643,7 @@ fn capture_undo_entries(root: &Path, plan: &crate::sync::plan::SyncPlan) -> Vec<
             existed,
             previous,
             after_hash: None,
+            was_link,
         });
     }
     undo
@@ -727,7 +740,8 @@ pub fn cli_sync(
     let report = crate::commands::personal::apply_prepared_personal(&prepared)?;
     if report.ok {
         for entry in &mut undo {
-            entry.after_hash = current_fingerprint(&root.join(&entry.path));
+            entry.after_hash =
+                Some(current_fingerprint(&root.join(&entry.path)).unwrap_or_else(|| ABSENT.into()));
         }
     }
     let verification = verify_deployment(&prepared, root);
@@ -744,13 +758,23 @@ pub fn cli_sync(
         "skipped_unsupported": report.skipped_unsupported,
         "failed": report.failed,
         "pending_journal": report.pending_journal,
+        "skipped_company_files": prepared.skipped,
         "verification": verification,
         "notes": prepared.notes,
         "next": "在宿主新会话中真实调用一次以确认加载（文件落盘不等于宿主已加载）",
     });
     let stamp = nowstamp();
+    let job_id = new_id();
+    let mut result = result;
+    // 撤销需要任务 ID：CLI 之前不输出，用户只能去数据目录里翻（盲测发现）
+    result["job_id"] = json!(job_id);
+    if report.ok && !undo.is_empty() {
+        result["undo_hint"] = json!(format!(
+            "撤销本次同步：ailoom personal --action undo --id {job_id}"
+        ));
+    }
     let job = Job {
-        id: new_id(),
+        id: job_id,
         kind: JobKind::Apply,
         status,
         created_at: stamp.clone(),
@@ -829,6 +853,13 @@ fn undo_single(root: &Path, entry: &UndoEntry) -> std::result::Result<(), String
     }
     // 守卫二（S01）：当前内容与本任务应用后的指纹不一致 → 用户后改，冲突保留
     match (&entry.after_hash, current_fingerprint(&target)) {
+        (Some(expected), None) if expected == ABSENT => {}
+        (Some(expected), Some(_)) if expected == ABSENT => {
+            return Err(format!(
+                "{}（删除后该路径又被重新创建，冲突保留不覆盖）",
+                entry.path
+            ));
+        }
         (Some(expected), Some(current)) if expected == &current => {}
         (Some(_), None) => {
             return Err(format!("{}（目标已被删除，不重建旧内容）", entry.path));
@@ -849,10 +880,34 @@ fn undo_single(root: &Path, entry: &UndoEntry) -> std::result::Result<(), String
     }
     let current_exists = target.symlink_metadata().is_ok();
     match (&entry.previous, entry.existed) {
-        (Some(prev), true) => {
-            if !current_exists {
+        (Some(prev), true) if !current_exists => {
+            // 本任务删除的条目：按原样重建（守卫二已确认删除后没人再放内容）
+            if entry.after_hash.as_deref() != Some(ABSENT) {
                 return Err(format!("{}（目标已消失）", entry.path));
             }
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let ok = if entry.was_link {
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::symlink(String::from_utf8_lossy(prev).as_ref(), &target)
+                        .is_ok()
+                }
+                #[cfg(not(unix))]
+                {
+                    false
+                }
+            } else {
+                std::fs::write(&target, prev).is_ok()
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(entry.path.clone())
+            }
+        }
+        (Some(prev), true) => {
             if let Some(parent) = target.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -920,6 +975,7 @@ pub fn test_support_undo_entry(
         existed,
         previous,
         after_hash,
+        was_link: false,
     }
 }
 

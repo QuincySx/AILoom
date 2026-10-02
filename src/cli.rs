@@ -426,7 +426,7 @@ pub enum Command {
         /// import-git 的 ref（分支/标签/commit）
         #[arg(long)]
         git_ref: Option<String>,
-        /// check-update / update 的 skill 名
+        /// check-update / update / delete 的 skill 名（delete 也可写完整资源 ID）
         #[arg(long)]
         skill: Option<String>,
         /// update：只应用这次检查的候选版本
@@ -444,7 +444,7 @@ pub enum Command {
     },
     /// 个人模式：effective | select | instructions | plan | sync | recover | deploy-status | undo | scan-skills | migrate-nongit
     Personal {
-        /// 动作：effective | select | instructions | plan | sync | deploy-status | undo | scan-skills | migrate-nongit
+        /// 动作：effective | select | instructions | plan | sync | recover | deploy-status | undo | scan-skills | migrate-nongit
         #[arg(long, value_parser = ["effective", "select", "instructions", "plan", "sync", "recover", "deploy-status", "undo", "scan-skills", "migrate-nongit"])]
         action: String,
         /// undo 的任务 ID（apply/sync 任务持久化后的 id）
@@ -488,10 +488,13 @@ pub enum Command {
     Collection {
         #[arg(long, default_value = "list", value_parser = ["list", "preview", "apply", "check", "remove"])]
         action: String,
+        /// preview：合集显示名（带 --source 更新时可省略，沿用登记值）
         #[arg(long)]
         name: Option<String>,
+        /// preview：合集仓库地址（带 --source 更新时可省略，沿用登记值）
         #[arg(long)]
         url: Option<String>,
+        /// preview：分支或标签，默认远端默认分支
         #[arg(long = "ref")]
         ref_: Option<String>,
         /// 更新已有合集的 source ID

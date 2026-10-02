@@ -62,12 +62,13 @@ fn results_on_stdout_and_doctor_strict() {
     let dr = tmp.path().join("data");
     let dr = dr.to_str().unwrap();
 
-    // 未绑定工作区：doctor 默认退出 0，--strict 退出 10；输出不含 Debug 引号
+    // 未绑定团队源 = 纯个人模式，是健康状态：--strict 也退出 0；输出不含 Debug 引号。
+    // （--strict 遇到问题项返回非 0 见 doctor_uninstall::doctor_reports_corrupt_files_instead_of_failing）
     let (code, out, _) = run(tmp.path(), &ws, &["--data-root", dr, "doctor"]);
     assert_eq!(code, 0);
     assert!(!out.contains("OK \"") && !out.contains("!! \""), "{out}");
     let (code, _, _) = run(tmp.path(), &ws, &["--data-root", dr, "doctor", "--strict"]);
-    assert_eq!(code, 10);
+    assert_eq!(code, 0);
 
     let url = common::file_url(&common::make_team_source(&tmp.path().join("src")));
     let (code, out, err) = run(

@@ -146,6 +146,7 @@ pub fn split_frontmatter(text: &str) -> Result<Option<(String, String)>> {
 
 /// 解析 Markdown frontmatter（`---\n…\n---\n`），返回 (元数据YAML, 正文)。
 pub fn parse_frontmatter(text: &str) -> Result<(Option<RawMeta>, String)> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let rest = text
         .strip_prefix("---\n")
         .or_else(|| text.strip_prefix("---\r\n"));
@@ -372,15 +373,78 @@ fn reject_symlinks(dir: &Path, context: &str, root: &Path, warnings: &mut Vec<St
     true
 }
 
+/// 枚举中被隔离的无效条目：快照内相对路径 + 解析错误。
+#[derive(Debug)]
+pub struct InvalidEntry {
+    pub kind: ResourceKind,
+    /// 条目名（技能目录名 / 去扩展名的文件名），用于把错误对应回资源 ID
+    pub name: String,
+    pub path: String,
+    pub error: Error,
+}
+
 /// 枚举快照内全部资源（先 schema 校验再逐项解析；结果按 ResourceId 排序）。
+/// 任一条目无效即整体失败：团队源的契约是「源必须完整有效」。
 pub fn enumerate(
     snapshot_root: &Path,
     manifest: &TeamManifest,
     source: &str,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<ResourceEntry>> {
+    enumerate_inner(snapshot_root, manifest, source, warnings, None)
+}
+
+/// 同 [`enumerate`]，但单个条目无效时隔离到返回的列表中，其余条目照常返回。
+/// 个人资源库由用户手工维护，一个坏条目不能让全部项目的计划、导入和删除失效。
+pub fn enumerate_isolating(
+    snapshot_root: &Path,
+    manifest: &TeamManifest,
+    source: &str,
+    warnings: &mut Vec<String>,
+) -> Result<(Vec<ResourceEntry>, Vec<InvalidEntry>)> {
+    let mut invalid = Vec::new();
+    let entries = enumerate_inner(
+        snapshot_root,
+        manifest,
+        source,
+        warnings,
+        Some(&mut invalid),
+    )?;
+    Ok((entries, invalid))
+}
+
+fn enumerate_inner(
+    snapshot_root: &Path,
+    manifest: &TeamManifest,
+    source: &str,
+    warnings: &mut Vec<String>,
+    mut invalid: Option<&mut Vec<InvalidEntry>>,
+) -> Result<Vec<ResourceEntry>> {
     let paths = manifest.effective_paths();
     let mut entries = Vec::new();
+    let rel_of = |p: &Path| {
+        p.strip_prefix(snapshot_root)
+            .map(|r| r.to_string_lossy().to_string())
+            .unwrap_or_else(|_| p.display().to_string())
+    };
+    let mut accept = |kind: ResourceKind,
+                      name: String,
+                      path: String,
+                      parsed: Result<ResourceEntry>,
+                      entries: &mut Vec<ResourceEntry>|
+     -> Result<()> {
+        match (parsed, invalid.as_deref_mut()) {
+            (Ok(entry), _) => entries.push(entry),
+            (Err(error), Some(list)) => list.push(InvalidEntry {
+                kind,
+                name,
+                path,
+                error,
+            }),
+            (Err(error), None) => return Err(error),
+        }
+        Ok(())
+    };
 
     // skills：目录含 SKILL.md
     let skills_dir = snapshot_root.join(&paths.skills);
@@ -398,51 +462,48 @@ pub fn enumerate(
             ) {
                 continue;
             }
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.is_file() {
-                return Err(Error::new(
-                    code::MANIFEST_MISSING_FIELD,
-                    format!(
-                        "技能目录缺少 SKILL.md: {}",
-                        dir.file_name().to_string_lossy()
-                    ),
-                )
-                .context(serde_json::json!({ "dir": path.display().to_string() })));
-            }
             let dir_name = dir.file_name().to_string_lossy().to_string();
-            let raw = std::fs::read_to_string(&skill_md)?;
-            let (meta, _) = parse_frontmatter(&raw)?;
-            let meta = meta.unwrap_or(RawMeta {
-                name: None,
-                description: None,
-                shared: None,
-                projects: None,
-                roles: None,
-                namespace: None,
-                project: None,
-                tags: None,
-            });
-            if let Some(n) = &meta.name {
-                if *n != dir_name {
+            let rel = rel_of(&path);
+            let parsed = (|| -> Result<ResourceEntry> {
+                let skill_md = path.join("SKILL.md");
+                if !skill_md.is_file() {
                     return Err(Error::new(
                         code::MANIFEST_MISSING_FIELD,
-                        format!("SKILL.md name `{n}` 与目录名 `{dir_name}` 不一致"),
-                    ));
+                        format!("技能目录缺少 SKILL.md: {dir_name}"),
+                    )
+                    .context(serde_json::json!({ "dir": path.display().to_string() })));
                 }
-            }
-            let rel = path
-                .strip_prefix(snapshot_root)?
-                .to_string_lossy()
-                .to_string();
-            entries.push(build_entry(
-                source,
-                ResourceKind::Skill,
-                manifest,
-                meta,
-                &dir_name,
-                rel,
-                Some(raw),
-            )?);
+                let raw = std::fs::read_to_string(&skill_md)?;
+                let (meta, _) = parse_frontmatter(&raw)?;
+                let meta = meta.unwrap_or(RawMeta {
+                    name: None,
+                    description: None,
+                    shared: None,
+                    projects: None,
+                    roles: None,
+                    namespace: None,
+                    project: None,
+                    tags: None,
+                });
+                if let Some(n) = &meta.name {
+                    if *n != dir_name {
+                        return Err(Error::new(
+                            code::MANIFEST_MISSING_FIELD,
+                            format!("SKILL.md name `{n}` 与目录名 `{dir_name}` 不一致"),
+                        ));
+                    }
+                }
+                build_entry(
+                    source,
+                    ResourceKind::Skill,
+                    manifest,
+                    meta,
+                    &dir_name,
+                    rel.clone(),
+                    Some(raw),
+                )
+            })();
+            accept(ResourceKind::Skill, dir_name, rel, parsed, &mut entries)?;
         }
     }
 
@@ -468,23 +529,14 @@ pub fn enumerate(
             if fname.starts_with('.') || !fname.ends_with(".md") {
                 continue;
             }
-            let raw = std::fs::read_to_string(file.path())?;
-            let meta = parse_meta_block(&raw, true, &fname)?;
             let stem = fname.trim_end_matches(".md").to_string();
-            let rel = file
-                .path()
-                .strip_prefix(snapshot_root)?
-                .to_string_lossy()
-                .to_string();
-            entries.push(build_entry(
-                source,
-                kind,
-                manifest,
-                meta,
-                &stem,
-                rel,
-                Some(raw),
-            )?);
+            let rel = rel_of(file.path());
+            let parsed = (|| -> Result<ResourceEntry> {
+                let raw = std::fs::read_to_string(file.path())?;
+                let meta = parse_meta_block(&raw, true, &fname)?;
+                build_entry(source, kind, manifest, meta, &stem, rel.clone(), Some(raw))
+            })();
+            accept(kind, stem, rel, parsed, &mut entries)?;
         }
     }
 
@@ -509,22 +561,18 @@ pub fn enumerate(
             if fname.starts_with('.') || !fname.ends_with(".toml") {
                 continue;
             }
-            let raw = std::fs::read_to_string(&fp)?;
-            let meta = parse_meta_block(&raw, false, &fname)?;
+            // is_file() 会跟随链接：指向快照外的 toml（例如本机配置）不能被读入并渲染。
+            if !reject_symlinks(&fp, &fname, snapshot_root, warnings) {
+                continue;
+            }
             let stem = fname.trim_end_matches(".toml").to_string();
-            let rel = fp
-                .strip_prefix(snapshot_root)?
-                .to_string_lossy()
-                .to_string();
-            entries.push(build_entry(
-                source,
-                kind,
-                manifest,
-                meta,
-                &stem,
-                rel,
-                Some(raw),
-            )?);
+            let rel = rel_of(&fp);
+            let parsed = (|| -> Result<ResourceEntry> {
+                let raw = std::fs::read_to_string(&fp)?;
+                let meta = parse_meta_block(&raw, false, &fname)?;
+                build_entry(source, kind, manifest, meta, &stem, rel.clone(), Some(raw))
+            })();
+            accept(kind, stem, rel, parsed, &mut entries)?;
         }
     }
 
@@ -545,6 +593,40 @@ mod tests {
         assert_eq!(m.name.as_deref(), Some("x"));
         assert_eq!(m.projects.as_ref().unwrap(), &vec!["a".to_string()]);
         assert!(body.contains("正文第一行"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_resource_pointing_outside_snapshot_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("SKILL.md"),
+            "---\nname: out\ndescription: d\n---\nPRIVATE\n",
+        )
+        .unwrap();
+        let root = tmp.path().join("snap");
+        std::fs::create_dir_all(root.join("skills")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("skills/out")).unwrap();
+        let mut warnings = Vec::new();
+        assert!(!reject_symlinks(
+            &root.join("skills/out"),
+            "out",
+            &root,
+            &mut warnings
+        ));
+        std::fs::write(tmp.path().join("secret.toml"), "x = 1\n").unwrap();
+        std::fs::create_dir_all(root.join("mcp")).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("secret.toml"), root.join("mcp/s.toml"))
+            .unwrap();
+        assert!(!reject_symlinks(
+            &root.join("mcp/s.toml"),
+            "s.toml",
+            &root,
+            &mut warnings
+        ));
+        assert_eq!(warnings.len(), 2);
     }
 
     #[test]

@@ -38,12 +38,14 @@ pub fn run(
         }
         // AIL-120：CLI 对齐 Web 的个人副本删除（预览默认，--execute 才移入归档）
         "delete" => {
-            let Some(id) = skill else {
+            let Some(skill) = skill else {
                 return Err(crate::error::Error::new(
                     crate::error::code::USAGE,
-                    "delete 需要 --skill <资源ID>",
+                    "delete 需要 --skill <skill 名或资源ID>",
                 ));
             };
+            let resolved = personal_library::resolve_skill_ref(&data_root, skill)?;
+            let id = resolved.as_str();
             if execute {
                 personal_library::delete_execute(&data_root, id)?;
                 Ok(json!({
@@ -160,12 +162,32 @@ pub fn run(
             // AIL-066：应用更新（本地未改才允许；更新前备份旧版）
             let skill = skill.ok_or_else(|| Error::new(code::USAGE, "update 需要 --skill <名称>"))?;
             if !execute {
-                let st = personal_library::check_update(&data_root, skill)?;
+                // 带 preview_id 时只展示那次检查的结果：重新检查会换新 ID，让用户手里的 ID 立刻失效。
+                let st = match preview_id {
+                    Some(id) => {
+                        let st = personal_library::cached_update(&data_root, skill)?
+                            .filter(|st| st.preview_id.as_deref() == Some(id))
+                            .ok_or_else(|| {
+                                Error::new(code::PRECONDITION_FAILED, "更新预览已变化，请重新检查")
+                                    .fix(format!(
+                                        "运行 ailoom library --action check-update --skill {skill} 获取新的 preview_id"
+                                    ))
+                            })?;
+                        st
+                    }
+                    None => personal_library::check_update(&data_root, skill)?,
+                };
+                let note = match st.preview_id.as_deref() {
+                    Some(id) => format!(
+                        "预览模式：确认后运行 ailoom library --action update --skill {skill} --preview-id {id} --execute"
+                    ),
+                    None => "当前没有可应用的更新".to_string(),
+                };
                 return Ok(json!({
                     "action": "update",
                     "executed": false,
                     "status": st,
-                    "note": "预览模式：加 --execute 应用更新",
+                    "note": note,
                 }));
             }
             let r = match preview_id {

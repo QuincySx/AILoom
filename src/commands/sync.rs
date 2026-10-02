@@ -150,6 +150,12 @@ pub fn run(args: &SyncArgs, json: bool, data_root: Option<&std::path::Path>) -> 
                 report.noop,
                 report.skipped_conflicts.len()
             );
+            for path in &report.skipped_conflicts {
+                println!("  冲突 {path}");
+            }
+            if !report.skipped_conflicts.is_empty() {
+                println!("{}", crate::sync::plan::CONFLICT_HELP);
+            }
         } else {
             crate::logging::error(format!(
                 "同步失败：{}；恢复点 {}",

@@ -972,3 +972,67 @@ fn removing_reference_in_one_project_keeps_other_project_deployed() {
     let list = f.ok(f.tmp.path(), &["collection", "--action", "list"]);
     assert_eq!(list["sources"].as_array().unwrap().len(), 1, "来源仍登记");
 }
+
+/// 盲测回归：不加 --json 也能走完快速上手的合集流程——preview 给出 apply 命令，
+/// list 给出可直接用于 select 的完整资源 ID；更新已登记的合集只需 --source。
+#[test]
+fn collection_flow_works_without_json_and_update_needs_only_source() {
+    let f = Fixture::new();
+    let repo = f.source("human", "v1", false);
+    let human = |args: &[&str]| -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_ailoom"))
+            .args(args)
+            .current_dir(f.tmp.path())
+            .envs(common::isolated_child_env(f.tmp.path()))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let url = repo.to_str().unwrap();
+    let out = human(&[
+        "collection",
+        "--action",
+        "preview",
+        "--name",
+        "human",
+        "--url",
+        url,
+    ]);
+    let apply_line = out
+        .lines()
+        .find(|l| l.contains("--action apply --preview-id"))
+        .unwrap_or_else(|| panic!("preview 普通输出要给出 apply 命令: {out}"));
+    let preview_id = apply_line.rsplit(' ').next().unwrap();
+    human(&[
+        "collection",
+        "--action",
+        "apply",
+        "--preview-id",
+        preview_id,
+    ]);
+    let out = human(&["collection", "--action", "list"]);
+    let id = out
+        .split_whitespace()
+        .find(|w| w.ends_with("/skill/common/chosen"))
+        .unwrap_or_else(|| panic!("list 普通输出要列出资源 ID: {out}"))
+        .to_string();
+    let source_id = id.split('/').next().unwrap().to_string();
+
+    std::fs::write(
+        repo.join("skills/chosen/SKILL.md"),
+        "---\nname: chosen\ndescription: fixture\nnamespace: common\nshared: true\n---\nv2\n",
+    )
+    .unwrap();
+    f.commit(&repo);
+    let p = f.ok(
+        f.tmp.path(),
+        &["collection", "--action", "preview", "--source", &source_id],
+    );
+    assert_eq!(p["source"]["id"], source_id.as_str(), "{p}");
+    assert_eq!(p["source"]["name"], "human", "沿用登记的名称: {p}");
+}

@@ -2,6 +2,8 @@
 //! 无团队源、无网络、无现成声明、零 TOML：选目录 → 确认仓库/worktree → 选宿主
 //! 与能力（导入 skill）→ 预览 → 应用 → 得到真实调用验证动作；公司跟踪文件不变。
 
+mod common;
+
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -11,6 +13,7 @@ use std::time::Duration;
 use ailoom::console::{ConsoleOptions, ConsoleServer, SESSION_HEADER};
 
 fn opts(tmp: &std::path::Path, port: u16) -> ConsoleOptions {
+    common::isolate_in_process_roots();
     ConsoleOptions {
         port,
         data_root: tmp.join("data"),

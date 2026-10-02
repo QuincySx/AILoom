@@ -4,6 +4,18 @@
 use ailoom::gitx::{git_commit_all, git_init};
 use std::path::{Path, PathBuf};
 
+/// 进程内调用（例如在测试进程里启动的 ConsoleServer）不经过 [`isolated_child_env`]，
+/// 会直接继承开发者 shell 的 `XDG_DATA_HOME` / `XDG_STATE_HOME`，把 Skill 实体写进
+/// 真实的 SkillStore。在启动进程内服务前调用：整个测试进程共用一个专属临时根。
+pub fn isolate_in_process_roots() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let root = std::env::temp_dir().join(format!("ailoom-test-{}", std::process::id()));
+        std::env::set_var("XDG_DATA_HOME", root.join("xdg-data"));
+        std::env::set_var("XDG_STATE_HOME", root.join("xdg-state"));
+    });
+}
+
 /// AIL-002：子进程测试环境的统一路径隔离。
 ///
 /// 覆盖全部机器根来源：HOME/USERPROFILE、XDG_DATA_HOME、XDG_STATE_HOME、

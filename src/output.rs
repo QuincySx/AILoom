@@ -120,6 +120,9 @@ pub fn emit_personal(action: &str, v: &Value) {
             );
             print_notes(v);
         }
+        "instructions" if v["cleared"] == true => {
+            println!("已清除个人指令；运行 ailoom personal --action sync 从项目中移除");
+        }
         "select" => {
             let target = v["resource"].as_str().or(v["host"].as_str()).unwrap_or("?");
             println!(
@@ -148,10 +151,137 @@ pub fn emit_personal(action: &str, v: &Value) {
                     String::new()
                 }
             );
+            for path in v["skipped_conflicts"].as_array().into_iter().flatten() {
+                println!("  冲突 {}", path.as_str().unwrap_or("?"));
+            }
+            if len("skipped_conflicts") > 0 {
+                println!("{}", crate::sync::plan::CONFLICT_HELP);
+            }
             if let Some(next) = v["next"].as_str() {
                 println!("{next}");
             }
+            if let Some(hint) = v["undo_hint"].as_str() {
+                println!("{hint}");
+            }
             print_notes(v);
+        }
+        _ => emit_human(v),
+    }
+}
+
+/// `library` 的人类可读输出；没有专门格式的动作回落到 [`emit_human`]。
+pub fn emit_library(action: &str, v: &Value) {
+    let list = |k: &str| v[k].as_array().cloned().unwrap_or_default();
+    match action {
+        "list" => {
+            let entries = list("entries");
+            println!("资源库 {} 项", entries.len());
+            for e in &entries {
+                println!(
+                    "  {}  {}",
+                    e["id"].as_str().unwrap_or("?"),
+                    e["description"].as_str().unwrap_or("")
+                );
+            }
+            let issues = list("issues");
+            if !issues.is_empty() {
+                println!("无法读取 {} 项（同步时跳过）：", issues.len());
+                for i in &issues {
+                    println!(
+                        "  {}：{}",
+                        i["path"].as_str().unwrap_or("?"),
+                        i["error"].as_str().unwrap_or("")
+                    );
+                }
+            }
+        }
+        "import" | "import-git" | "import-entry" if v["executed"] == true => {
+            println!(
+                "已导入 {}（复制 {} 个文件；脚本只复制、未执行）",
+                v["skill_id"].as_str().unwrap_or("?"),
+                v["files_copied"].as_u64().unwrap_or(0)
+            );
+        }
+        "import" | "import-git" | "import-entry" => {
+            let p = &v["preview"];
+            let candidates = p["candidates"].as_array().cloned().unwrap_or_default();
+            if !candidates.is_empty() {
+                println!("仓库内有多个 Skill，用 --path 选择其一：");
+                for c in &candidates {
+                    println!("  {}", c.as_str().unwrap_or("?"));
+                }
+                return;
+            }
+            println!(
+                "预览：{} · {} 个文件",
+                p["skill_name"].as_str().unwrap_or("?"),
+                p["files"].as_array().map_or(0, Vec::len)
+            );
+            if let Some(commit) = p["resolved_commit"].as_str() {
+                println!("  版本 {}", commit.chars().take(12).collect::<String>());
+            }
+            let scripts = p["scripts"].as_array().cloned().unwrap_or_default();
+            if !scripts.is_empty() {
+                println!("  含 {} 个脚本（只复制，不执行）", scripts.len());
+            }
+            for c in p["conflicts"].as_array().into_iter().flatten() {
+                println!("  冲突：{}", c.as_str().unwrap_or("?"));
+            }
+            println!("确认后加 --execute 执行导入");
+        }
+        "check-update" => {
+            let st = &v["status"];
+            println!(
+                "{}：{}",
+                st["skill"].as_str().unwrap_or("?"),
+                st["state"].as_str().unwrap_or("?")
+            );
+            if let Some(id) = st["preview_id"].as_str() {
+                println!(
+                    "应用更新：ailoom library --action update --skill {} --preview-id {id} --execute",
+                    st["skill"].as_str().unwrap_or("?")
+                );
+            } else if let Some(note) = st["note"].as_str() {
+                println!("{note}");
+            }
+        }
+        "update" if v["executed"] == true => {
+            let r = &v["result"];
+            println!(
+                "已更新 {}；{}",
+                r["skill"].as_str().unwrap_or("?"),
+                r["note"].as_str().unwrap_or("")
+            );
+        }
+        "update" => {
+            println!(
+                "{}：{}",
+                v["status"]["skill"].as_str().unwrap_or("?"),
+                v["status"]["state"].as_str().unwrap_or("?")
+            );
+            if let Some(note) = v["note"].as_str() {
+                println!("{note}");
+            }
+        }
+        "delete" if v["executed"] == false => {
+            let p = &v["preview"];
+            if p["exists"] != true {
+                println!("资源不存在：{}", p["resource_id"].as_str().unwrap_or("?"));
+                return;
+            }
+            let scopes = p["affected_scopes"].as_array().cloned().unwrap_or_default();
+            if scopes.is_empty() {
+                println!("{}：没有项目在用", p["resource_id"].as_str().unwrap_or("?"));
+            } else {
+                println!(
+                    "{} 仍被这些作用域启用：",
+                    p["resource_id"].as_str().unwrap_or("?")
+                );
+                for s in &scopes {
+                    println!("  {}", s.as_str().unwrap_or("?"));
+                }
+            }
+            println!("{}；确认后加 --execute", p["note"].as_str().unwrap_or(""));
         }
         _ => emit_human(v),
     }
@@ -176,6 +306,38 @@ pub fn emit_collection(action: &str, v: &Value) {
                     s["resources"].as_array().map_or(0, Vec::len),
                     short(&s["lock"]["resolved_commit"])
                 );
+                // 启用资源需要完整 ID（personal --action select --resource），普通输出也要给出
+                for r in s["resources"].as_array().into_iter().flatten() {
+                    println!(
+                        "    {}  {}",
+                        r["id"].as_str().unwrap_or("?"),
+                        r["description"].as_str().unwrap_or("")
+                    );
+                }
+            }
+        }
+        "preview" => {
+            let src = &v["source"];
+            let resources = v["resources"].as_array().cloned().unwrap_or_default();
+            println!(
+                "来源 {}（{}）· 版本 {} · {} 项资源",
+                src["name"].as_str().unwrap_or("?"),
+                src["id"].as_str().unwrap_or("?"),
+                short(&src["lock"]["resolved_commit"]),
+                resources.len()
+            );
+            for r in &resources {
+                println!("    {}", r["id"].as_str().unwrap_or("?"));
+            }
+            let removed = v["removed"].as_array().cloned().unwrap_or_default();
+            if !removed.is_empty() {
+                println!("上游已移除 {} 项：", removed.len());
+                for id in &removed {
+                    println!("    {}", id.as_str().unwrap_or("?"));
+                }
+            }
+            if let Some(id) = v["preview_id"].as_str() {
+                println!("确认登记：ailoom collection --action apply --preview-id {id}");
             }
         }
         "check" => {

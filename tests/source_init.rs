@@ -391,3 +391,76 @@ fn walk_files(dir: &Path) -> Vec<PathBuf> {
 fn lib_path_test(lib: &str, rel: &str) -> Option<PathBuf> {
     Some(PathBuf::from(lib).join(rel))
 }
+
+/// 盲测 T24 回归：脚手架打印的接入命令必须照抄即可成功（此前给出绝对 --local-path，init 以 E3007 拒绝）。
+#[test]
+fn scaffold_next_step_command_works_verbatim() {
+    let c = Ctx::new();
+    let dr = c.dr();
+    let ws = common::make_business_repo(c.tmp.path(), "biz");
+    // 取出「运行 ailoom init …」并在提示的目录里原样执行
+    let run_next = |next: &str, default_cwd: &Path| {
+        let cmd = next.split("运行 ").nth(1).unwrap();
+        let cmd = cmd.split(['（', '；']).next().unwrap().trim();
+        let cwd = next
+            .split("在 ")
+            .nth(1)
+            .and_then(|s| s.split(" 运行").next())
+            .filter(|p| p.starts_with('/'))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_cwd.to_path_buf());
+        let mut args: Vec<&str> = cmd.split_whitespace().skip(1).collect();
+        args.splice(0..0, ["--data-root", dr.as_str()]);
+        let (code, _, stderr) = c.run(&cwd, &args);
+        assert_eq!(
+            code,
+            0,
+            "照抄 `{cmd}`（在 {}）失败: {stderr}",
+            cwd.display()
+        );
+    };
+    let scaffold = |dir: &Path, extra: &[&str]| -> String {
+        let mut args = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "source",
+            "--dir",
+            dir.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        let (code, out, stderr) = c.run(c.tmp.path(), &args);
+        assert_eq!(code, 0, "{stderr}");
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        v["result"]["next"].as_str().unwrap().to_string()
+    };
+
+    // 同仓源：放在业务仓库内
+    let next = scaffold(&ws.join(".ailoom/team"), &[]);
+    assert!(!next.contains(" --local-path /"), "不给绝对路径: {next}");
+    run_next(&next, &ws);
+
+    // 独立 Git 仓库
+    let ws2 = common::make_business_repo(c.tmp.path(), "biz2");
+    let next = scaffold(&c.tmp.path().join("standalone"), &["--git"]);
+    assert!(next.contains("--url"), "{next}");
+    run_next(&next, &ws2);
+
+    // 普通目录：说明先 git init，不给照抄会失败的命令
+    let next = scaffold(&c.tmp.path().join("plain-src"), &[]);
+    assert!(next.contains("git init"), "{next}");
+
+    // 普通输出也要打印下一步
+    let (code, out, _) = c.run(
+        c.tmp.path(),
+        &[
+            "--data-root",
+            dr.as_str(),
+            "source",
+            "--dir",
+            c.tmp.path().join("human").to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(out.contains("成员接入"), "{out}");
+}

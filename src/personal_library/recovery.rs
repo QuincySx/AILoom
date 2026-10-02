@@ -255,7 +255,16 @@ pub(super) fn publish(
         std::fs::rename(&target, &backup)?;
         std::fs::rename(&staged, &target)?;
         let manifest = TeamManifest::load_from(&lib)?;
-        crate::resource::enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
+        // 只要求被更新的这个 Skill 有效；库内其他坏条目不阻止更新（AIL-062）。
+        let (_, invalid) = crate::resource::enumerate_isolating(
+            &lib,
+            &manifest,
+            LIBRARY_TEAM_ID,
+            &mut Vec::new(),
+        )?;
+        if let Some(bad) = invalid.into_iter().find(|e| lib.join(&e.path) == target) {
+            return Err(bad.error);
+        }
         sync_directory(target.parent().unwrap())?;
         sync_directory(backup.parent().unwrap())?;
         sync_directory(staged.parent().unwrap())?;

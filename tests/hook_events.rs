@@ -740,8 +740,8 @@ fn stop_prompt_uses_real_session_and_outputs_once() {
     );
     assert!(stdout.contains("fr-1"), "提示作用于真实 session: {stdout}");
     assert!(
-        stdout.contains("session summary"),
-        "提示给出可执行的总结命令: {stdout}"
+        stdout.contains("ailoom session --action summary --session fr-1"),
+        "提示给出 CLI 真正接受的总结命令: {stdout}"
     );
 
     // 进程重启后重复 Stop：不再提示

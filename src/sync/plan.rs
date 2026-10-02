@@ -24,6 +24,12 @@ pub enum ActionKind {
     Unsupported,
 }
 
+/// 计划含冲突时给用户的处理办法（冲突 = 目标被用户改过，或不是 AILoom 部署的文件）。
+pub const CONFLICT_HELP: &str =
+    "存在冲突：这些目标被你修改过或不是 AILoom 部署的，不会被覆盖。\n  \
+保留你的版本：无需操作，之后的同步会继续跳过它们。\n  \
+改用 AILoom 的版本：先把文件移走（片段类目标则删除其中的 AILoom 托管片段），再重新同步。";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanAction {
     pub action: ActionKind,
@@ -69,6 +75,14 @@ impl SyncPlan {
             };
             if tag == "noop" {
                 n += 1;
+                continue;
+            }
+            // 不支持项没有落盘路径：打印资源、宿主与原因（否则只剩一个空标签）
+            if a.action == ActionKind::Unsupported {
+                c.push_str(&format!(
+                    "{tag:8} {} [{}] {}\n",
+                    a.resource_id, a.target_tool, a.reason
+                ));
                 continue;
             }
             // 同一文件的多个受管片段 / 键：附上 item_key 的 `#` 后缀以区分（C-17）

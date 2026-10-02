@@ -22,7 +22,7 @@ use crate::profile::{
     SelectScope, TriState,
 };
 use crate::repo_registry::{self, RepoDiscovery, RepoIdentity, RepoRegistry};
-use crate::resolver::{resolve, ResolveRequest};
+use crate::resolver::{resolve_isolating, ResolveRequest};
 use crate::source::LocalSource;
 use crate::sync::manifest::ManagedManifest;
 use crate::sync::plan::build_plan;
@@ -439,7 +439,7 @@ pub fn prepare_personal(
         let src = LocalSource::new(&lib.path)?;
         let snap = src.resolve()?;
         let manifest = crate::manifest::TeamManifest::load_from(&snap.root)?;
-        let desired = resolve(ResolveRequest {
+        let (desired, invalid_entries) = resolve_isolating(ResolveRequest {
             snapshot_root: &snap.root,
             manifest: &manifest,
             source: crate::personal_library::LIBRARY_TEAM_ID,
@@ -449,6 +449,17 @@ pub fn prepare_personal(
             active_projects: &[],
             active_roles: &[],
         })?;
+        if !invalid_entries.is_empty() {
+            notes.push(format!(
+                "资源库中有 {} 个条目无效，已跳过（不影响其他资源）：{}",
+                invalid_entries.len(),
+                invalid_entries
+                    .iter()
+                    .map(|e| e.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ));
+        }
         let targets = ToolTargets {
             claude: enabled_hosts.iter().any(|h| h == "claude"),
             codex: enabled_hosts.iter().any(|h| h == "codex"),
@@ -467,7 +478,20 @@ pub fn prepare_personal(
             .map(|s| s.id.clone())
             .collect();
         for id in &personal_enabled {
-            if !resolved_ids.contains(id) {
+            if resolved_ids.contains(id) {
+                continue;
+            }
+            if let Some(bad) = invalid_library_entry(&invalid_entries, id) {
+                unsupported.push(crate::adapters::UnsupportedItem {
+                    resource_id: id.clone(),
+                    tool: "-".into(),
+                    kind: bad.kind.as_str().into(),
+                    reason: format!(
+                        "资源定义无效，未部署：{}：{}（已部署的文件保留；修复后重新同步）",
+                        bad.path, bad.error.message
+                    ),
+                });
+            } else {
                 unsupported.push(crate::adapters::UnsupportedItem {
                     resource_id: id.clone(),
                     tool: "-".into(),
@@ -700,12 +724,23 @@ pub fn prepare_personal(
                     .collect()
             })
             .unwrap_or_default();
+        // 定义无效的资源只是「这次没法渲染」，不是「用户不要了」：已部署的文件保留到修复为止。
+        let invalid_ids: std::collections::BTreeSet<&str> = unsupported
+            .iter()
+            .filter(|u| u.tool == "-" && u.kind != "resource")
+            .map(|u| u.resource_id.as_str())
+            .collect();
+        let mut kept_invalid = 0usize;
         let mut removed = Vec::new();
         plan.actions.retain(|a| {
             if !is_cleanup(a) {
                 return true;
             }
             if team_only_keys.contains(&a.item_key) {
+                return false;
+            }
+            if invalid_ids.contains(a.resource_id.as_str()) {
+                kept_invalid += 1;
                 return false;
             }
             if a.path.is_empty() {
@@ -725,6 +760,11 @@ pub fn prepare_personal(
             }
             true
         });
+        if kept_invalid > 0 {
+            notes.push(format!(
+                "{kept_invalid} 个已部署文件属于定义无效的资源，本次不清理（修复资源后重新同步）"
+            ));
+        }
         if !removed.is_empty() {
             notes.push(format!(
                 "统一计划器：{} 个清理动作超出当前作用域或受公司文件保护，已从计划移除（不跨作用域互删）",
@@ -781,12 +821,30 @@ pub fn prepare_personal(
 }
 
 /// 资源库中可部署资源的完整 ID 集合（与 prepare_personal 的解析口径一致，含 MCP 等非 Skill 资源）。
-fn personal_library_ids(data_root: &Path) -> Result<std::collections::BTreeSet<String>> {
+/// 把资源 ID（source/kind/namespace/name）对应回枚举时被隔离的无效条目。
+/// 定义坏掉时 namespace 可能读不出来，只按 kind + name 匹配。
+fn invalid_library_entry<'a>(
+    invalid: &'a [crate::resource::InvalidEntry],
+    id: &str,
+) -> Option<&'a crate::resource::InvalidEntry> {
+    let parts: Vec<&str> = id.split('/').collect();
+    let (kind, name) = (parts.get(1)?, parts.get(3)?);
+    invalid
+        .iter()
+        .find(|e| e.kind.as_str() == *kind && e.name == *name)
+}
+
+fn personal_library_ids(
+    data_root: &Path,
+) -> Result<(
+    std::collections::BTreeSet<String>,
+    Vec<crate::resource::InvalidEntry>,
+)> {
     let lib = crate::personal_library::ensure_library(data_root)?;
     let src = LocalSource::new(&lib.path)?;
     let snap = src.resolve()?;
     let manifest = crate::manifest::TeamManifest::load_from(&snap.root)?;
-    let desired = resolve(ResolveRequest {
+    let (desired, invalid) = resolve_isolating(ResolveRequest {
         snapshot_root: &snap.root,
         manifest: &manifest,
         source: crate::personal_library::LIBRARY_TEAM_ID,
@@ -796,7 +854,10 @@ fn personal_library_ids(data_root: &Path) -> Result<std::collections::BTreeSet<S
         active_projects: &[],
         active_roles: &[],
     })?;
-    Ok(desired.selected.into_iter().map(|s| s.id).collect())
+    Ok((
+        desired.selected.into_iter().map(|s| s.id).collect(),
+        invalid,
+    ))
 }
 
 fn k_starts_personal(k: &str) -> bool {
@@ -875,6 +936,14 @@ pub fn select(args: &SelectArgs, data_root_resolved: &Path) -> Result<Value> {
             "需要 --resource <完整资源ID> 或 --host <宿主名>",
         ));
     }
+    // 一次只写一个键；之前同时给出时会静默丢掉 --host
+    if args.resource.is_some() && args.host.is_some() {
+        return Err(Error::new(
+            code::USAGE,
+            "--resource 与 --host 不能同时使用：一次只设置一项",
+        )
+        .fix("分两次执行：先 --host <宿主> --state …，再 --resource <资源ID> --state …"));
+    }
     // C-02：宿主名与资源 ID 形状在写盘前校验；非法值会污染 profile 并让之后所有写操作失败。
     // inherit 仍放行任意值——它只删除条目，是清理历史脏数据的恢复路径。
     if state != TriState::Inherit {
@@ -900,13 +969,24 @@ pub fn select(args: &SelectArgs, data_root_resolved: &Path) -> Result<Value> {
                     format!("资源 ID 格式无效: {resource}（应为 source/kind/namespace/name）"),
                 ));
             }
-            if parts[0] == crate::personal_library::LIBRARY_TEAM_ID
-                && !personal_library_ids(data_root_resolved)?.contains(resource)
-            {
-                return Err(Error::new(
-                    code::UNKNOWN_REFERENCE,
-                    format!("资源库中不存在: {resource}（请先导入，或检查资源 ID）"),
-                ));
+            if parts[0] == crate::personal_library::LIBRARY_TEAM_ID {
+                let (ids, invalid) = personal_library_ids(data_root_resolved)?;
+                if !ids.contains(resource) {
+                    if let Some(bad) = invalid_library_entry(&invalid, resource) {
+                        return Err(Error::new(
+                            code::MANIFEST_MISSING_FIELD,
+                            format!(
+                                "资源库条目无效，不能启用: {}：{}",
+                                bad.path, bad.error.message
+                            ),
+                        )
+                        .fix("修复该文件后重试；或在资源库删除这个条目"));
+                    }
+                    return Err(Error::new(
+                        code::UNKNOWN_REFERENCE,
+                        format!("资源库中不存在: {resource}（请先导入，或检查资源 ID）"),
+                    ));
+                }
             }
         }
     }
@@ -1305,6 +1385,20 @@ pub fn instructions(
     worktree_scoped: bool,
     data_root_resolved: &Path,
 ) -> Result<Value> {
+    // 先读输入文件：文件不存在时报出路径，且不留下仓库登记等副作用
+    let content = match (clear, file) {
+        (true, _) => None,
+        (false, Some(f)) => Some(std::fs::read_to_string(f).map_err(|e| {
+            Error::new(
+                code::USAGE,
+                format!("读取 --file 失败: {}: {e}", f.display()),
+            )
+            .fix("确认文件路径；指令文件是普通 Markdown")
+        })?),
+        (false, None) => {
+            return Err(Error::new(code::USAGE, "需要 --file <markdown> 或 --clear"));
+        }
+    };
     let cwd = std::env::current_dir()?;
     let repo = repo_registry::discover_repo(&cwd)?;
     let mut reg = RepoRegistry::resolve_or_create(data_root_resolved, &repo)?;
@@ -1331,14 +1425,13 @@ pub fn instructions(
             json!({ "cleared": true, "repo_id": repo_id, "worktree_scoped": worktree_scoped }),
         );
     }
-    let file = file.ok_or_else(|| Error::new(code::USAGE, "需要 --file <markdown> 或 --clear"))?;
-    let content = std::fs::read_to_string(file)?;
+    let content = content.unwrap_or_default();
     pi::save_entry(data_root_resolved, &repo_id, scope_wt, &content)?;
     Ok(json!({
         "saved": true,
         "repo_id": repo_id,
         "worktree_scoped": worktree_scoped,
-        "note": "已保存到机器数据区；运行 ailoom personal sync 应用到当前 Worktree",
+        "note": "已保存到机器数据区；运行 ailoom personal --action sync 应用到当前 Worktree",
     }))
 }
 
@@ -1385,65 +1478,6 @@ fn verify_no_tracked_targets(p: &PersonalPrepare) -> Result<()> {
     Ok(())
 }
 
-/// `personal sync`：应用个人模式部署（复用 sync 的 apply/journal/lock）。
-pub fn sync(
-    explicit_root: Option<&Path>,
-    scope_rel: Option<String>,
-    data_root: Option<&Path>,
-    data_root_resolved: &Path,
-) -> Result<Value> {
-    let mut p = prepare_personal(data_root, explicit_root, scope_rel, data_root_resolved)?;
-    verify_no_tracked_targets(&p)?;
-    crate::knowledge::location::checkpoint_project(data_root_resolved, &p.registry.repo_id)?;
-    let _run_id = format!("personal-{}", crate::ids::new_id());
-    let journal_root = &p.ctx.layout.journal_dir;
-    let lock_dir = p.ctx.layout.ws_dir.join("locks");
-    let mut managed = p.managed.clone();
-    let report = crate::sync::apply::apply(
-        &p.plan,
-        &p.artifacts,
-        &mut managed,
-        &p.ctx.workspace.workspace_root,
-        &lock_dir,
-        journal_root,
-        &p.ctx.device,
-    )?;
-    if report.ok {
-        managed.save(&p.managed_path)?;
-        // exclude 登记：仅 Git 仓库（nongit 无 info/exclude，不注册）
-        if !p.is_nongit {
-            let patterns = pi::exclude_patterns(&p.artifacts);
-            if !patterns.is_empty() {
-                crate::git_exclude::add_patterns(
-                    &p.repo.identity.common_dir,
-                    data_root_resolved,
-                    &p.registry.repo_id,
-                    &patterns,
-                )?;
-            }
-        } else {
-            p.notes
-                .push("非 Git 路径模式：无 Git exclude 可登记；产物为普通文件".into());
-        }
-    }
-    Ok(json!({
-        "ok": report.ok,
-        "applied": report.applied,
-        "noop": report.noop,
-        "skipped_conflicts": report.skipped_conflicts,
-        "skipped_unsupported": report.skipped_unsupported,
-        "failed": report.failed,
-        "pending_journal": report.pending_journal,
-        "skipped_company_files": p.skipped,
-        "notes": p.notes,
-        "repo_id": p.registry.repo_id,
-        "worktree_id": p.wt_id,
-        "active_rel": p.active_rel,
-        "scope_dir": p.scope_dir,
-        "effective_enabled": p.effective.enabled_resources(),
-    }))
-}
-
 /// 供 jobs.rs 的 apply 任务复用（相同保护与管道）。
 pub fn apply_prepared_personal(p: &PersonalPrepare) -> Result<crate::sync::apply::ApplyReport> {
     verify_no_tracked_targets(p)?;
@@ -1463,15 +1497,15 @@ pub fn apply_prepared_personal(p: &PersonalPrepare) -> Result<crate::sync::apply
     if report.ok {
         managed.save(&p.managed_path)?;
         if !p.is_nongit {
-            let patterns = pi::exclude_patterns(&p.artifacts);
-            if !patterns.is_empty() {
-                crate::git_exclude::add_patterns(
-                    &p.repo.identity.common_dir,
-                    &p.ctx.data_root,
-                    &p.registry.repo_id,
-                    &patterns,
-                )?;
-            }
+            // 每次都对账（包括本次一个都没部署）：关闭宿主/资源后旧条目要能移除
+            let owner = format!("{}:{}", p.wt_id, p.active_rel.as_deref().unwrap_or(""));
+            crate::git_exclude::sync_patterns(
+                &p.repo.identity.common_dir,
+                &p.ctx.data_root,
+                &p.registry.repo_id,
+                &owner,
+                &pi::exclude_patterns(&p.artifacts),
+            )?;
         }
     }
     Ok(report)

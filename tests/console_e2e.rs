@@ -3,6 +3,8 @@
 //! （HTTP API）下闭环；公司 AGENTS.md/CLAUDE.md/index 与 dirty/staged 内容全程不变；
 //! 多 Worktree 配置独立、事件与 journal 按 Worktree 隔离。
 
+mod common;
+
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -18,6 +20,7 @@ struct Ctx {
 
 impl Ctx {
     fn new(port: u16) -> Ctx {
+        common::isolate_in_process_roots();
         let tmp = tempfile::tempdir().unwrap();
         let server = ConsoleServer::start(&ConsoleOptions {
             port,

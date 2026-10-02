@@ -737,23 +737,26 @@ fn team_and_personal_sync_do_not_undo_each_other() {
     assert!(builtin.exists(), "团队 sync 部署内置召回 Agent");
 
     import_skill(&c, &ws, "hello");
-    let _ = c.run_json(
-        &ws,
-        &[
-            "--json",
-            "--data-root",
-            &dr,
-            "personal",
-            "--action",
-            "select",
-            "--resource",
-            "personal/skill/personal/hello",
-            "--host",
-            "claude",
-            "--state",
-            "enable",
-        ],
-    );
+    for key in [
+        ["--host", "claude"],
+        ["--resource", "personal/skill/personal/hello"],
+    ] {
+        let _ = c.run_json(
+            &ws,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "personal",
+                "--action",
+                "select",
+                key[0],
+                key[1],
+                "--state",
+                "enable",
+            ],
+        );
+    }
     let v = c.run_json(
         &ws,
         &["--json", "--data-root", &dr, "personal", "--action", "sync"],
@@ -1237,4 +1240,453 @@ fn corrupt_managed_manifest_is_diagnosed_with_actionable_fix() {
         before,
         "部署未被改写"
     );
+}
+
+/// AIL-061 缺口：关闭一个宿主后清理其托管产物；用户改过的入口判冲突并保留；重复计划稳定。
+#[test]
+fn disabling_host_cleans_up_but_keeps_user_modified_entries() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "sk");
+    for args in [
+        vec!["--host", "claude"],
+        vec!["--host", "codex"],
+        vec!["--resource", "personal/skill/personal/sk"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let _ = c.run_json(&repo, &full);
+    }
+    let pref = c.tmp.path().join("pref.md");
+    std::fs::write(&pref, "个人偏好\n").unwrap();
+    let _ = c.run_json(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "instructions",
+            "--file",
+            pref.to_str().unwrap(),
+        ],
+    );
+    let v = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    let codex_view = repo.join("AGENTS.override.md");
+    assert!(repo.join(".agents/skills/sk").exists() && codex_view.exists());
+    std::fs::write(
+        &codex_view,
+        format!(
+            "{}\nuser edit\n",
+            std::fs::read_to_string(&codex_view).unwrap()
+        ),
+    )
+    .unwrap();
+    let _ = c.run_json(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "select",
+            "--host",
+            "codex",
+            "--state",
+            "disable",
+        ],
+    );
+    let v = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(
+        !repo.join(".agents/skills/sk").exists(),
+        "未修改的 Codex 产物被清理"
+    );
+    assert!(
+        std::fs::read_to_string(&codex_view)
+            .unwrap()
+            .contains("user edit"),
+        "用户改过的入口保留"
+    );
+    assert!(
+        v["skipped_conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "AGENTS.override.md"),
+        "{v}"
+    );
+    assert!(
+        repo.join(".claude/skills/sk").exists(),
+        "仍启用的宿主不受影响"
+    );
+    let plan = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "plan"],
+    );
+    let changes: Vec<_> = plan["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|a| matches!(a["action"].as_str(), Some("create" | "update" | "delete")))
+        .collect();
+    assert!(changes.is_empty(), "重复计划稳定: {changes:?}");
+}
+
+/// AIL-061：关闭宿主后，已被 Git 跟踪的托管产物不删除，并在 sync 结果中逐项列出。
+#[test]
+fn disabling_host_keeps_git_tracked_artifacts_and_reports_them() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "sk");
+    for args in [
+        vec!["--host", "codex"],
+        vec!["--resource", "personal/skill/personal/sk"],
+    ] {
+        let mut full = vec![
+            "--json",
+            "--data-root",
+            dr.as_str(),
+            "personal",
+            "--action",
+            "select",
+            "--state",
+            "enable",
+        ];
+        full.extend(args.iter().copied());
+        let _ = c.run_json(&repo, &full);
+    }
+    let v = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(Command::new("git")
+        .args(["add", "-f", ".agents/skills/sk"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let _ = c.run_json(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "select",
+            "--host",
+            "codex",
+            "--state",
+            "disable",
+        ],
+    );
+    let v = c.run_json(
+        &repo,
+        &["--json", "--data-root", &dr, "personal", "--action", "sync"],
+    );
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(
+        repo.join(".agents/skills/sk").exists(),
+        "被跟踪的产物不删除"
+    );
+    assert!(
+        v["skipped_company_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["path"] == ".agents/skills/sk"),
+        "{v}"
+    );
+}
+
+/// AIL-062：资源库里的坏条目只影响它自己——其他资源照常启用、计划、同步与导入；
+/// 已部署的资源定义坏掉时保留已部署文件；坏条目可以按名字删除。
+#[test]
+fn broken_library_entry_does_not_block_other_resources() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    for name in ["good", "spare", "bad"] {
+        import_skill(&c, &repo, name);
+    }
+    let personal = |args: &[&str]| {
+        let mut full = vec!["--json", "--data-root", dr.as_str(), "personal"];
+        full.extend_from_slice(args);
+        c.run(&repo, &full)
+    };
+    for args in [
+        [
+            "--action", "select", "--host", "claude", "--state", "enable",
+        ],
+        [
+            "--action",
+            "select",
+            "--resource",
+            "personal/skill/personal/good",
+            "--state",
+            "enable",
+        ],
+    ] {
+        assert_eq!(personal(&args).0, 0);
+    }
+    assert_eq!(personal(&["--action", "sync"]).0, 0);
+    let lib = c.tmp.path().join("data/library/resources/skills");
+    let corrupt = |name: &str| {
+        let md = lib.join(name).join("SKILL.md");
+        let raw = std::fs::read_to_string(&md).unwrap();
+        std::fs::write(
+            &md,
+            raw.replacen("namespace:", "description: [unclosed\nnamespace:", 1),
+        )
+        .unwrap();
+    };
+
+    // 未启用的条目坏掉：其他资源的启用、计划、同步、导入都不受影响
+    corrupt("bad");
+    let (code, _, stderr) = personal(&[
+        "--action",
+        "select",
+        "--resource",
+        "personal/skill/personal/spare",
+        "--state",
+        "enable",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, out, stderr) = personal(&["--action", "sync"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        out.contains("resources/skills/bad"),
+        "notes 指出坏条目: {out}"
+    );
+    assert!(repo.join(".claude/skills/spare").exists());
+    import_skill(&c, &repo, "later");
+
+    // 启用坏条目：明确报出文件与原因
+    let (code, _, stderr) = personal(&[
+        "--action",
+        "select",
+        "--resource",
+        "personal/skill/personal/bad",
+        "--state",
+        "enable",
+    ]);
+    assert_eq!(code, 12, "{stderr}");
+    assert!(
+        stderr.contains("resources/skills/bad") && stderr.contains("\"fix\""),
+        "{stderr}"
+    );
+
+    // 已部署的资源定义坏掉：不部署新内容，但也不清理已部署文件
+    corrupt("good");
+    let (code, out, stderr) = personal(&["--action", "sync"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        repo.join(".claude/skills/good").exists(),
+        "已部署文件保留: {out}"
+    );
+    assert!(repo.join(".claude/skills/spare").exists());
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert!(
+        v["result"]["skipped_unsupported"]
+            .to_string()
+            .contains("personal/skill/personal/good"),
+        "{out}"
+    );
+
+    // 坏条目可以按名字删除
+    let (code, _, stderr) = c.run(
+        &repo,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "library",
+            "--action",
+            "delete",
+            "--skill",
+            "bad",
+            "--execute",
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!lib.join("bad").exists());
+}
+
+/// 盲测回归：CLI sync 给出任务 ID；删除型 sync 可撤销（链接按原样重建）；
+/// 重复撤销是前置条件错误而非内部错误；删除后路径被重新占用时冲突保留。
+#[cfg(unix)]
+#[test]
+fn cli_sync_reports_job_id_and_deletions_can_be_undone() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "u");
+    import_skill(&c, &repo, "w");
+    let personal = |args: &[&str]| {
+        let mut full = vec!["--json", "--data-root", dr.as_str(), "personal"];
+        full.extend_from_slice(args);
+        c.run(&repo, &full)
+    };
+    for args in [
+        [
+            "--action", "select", "--host", "claude", "--state", "enable",
+        ],
+        [
+            "--action",
+            "select",
+            "--resource",
+            "personal/skill/personal/u",
+            "--state",
+            "enable",
+        ],
+        [
+            "--action",
+            "select",
+            "--resource",
+            "personal/skill/personal/w",
+            "--state",
+            "enable",
+        ],
+    ] {
+        assert_eq!(personal(&args).0, 0);
+    }
+    assert_eq!(personal(&["--action", "sync"]).0, 0);
+    let link = repo.join(".claude/skills/u");
+    let target_before = std::fs::read_link(&link).unwrap();
+    for id in ["personal/skill/personal/u", "personal/skill/personal/w"] {
+        assert_eq!(
+            personal(&["--action", "select", "--resource", id, "--state", "disable"]).0,
+            0
+        );
+    }
+    let (code, out, stderr) = personal(&["--action", "sync"]);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let job = v["result"]["job_id"]
+        .as_str()
+        .expect("sync 输出任务 ID")
+        .to_string();
+    assert!(
+        v["result"]["undo_hint"].as_str().unwrap().contains(&job),
+        "{v}"
+    );
+    assert!(link.symlink_metadata().is_err());
+    // w 的位置在删除后被用户放了别的东西：撤销不能覆盖
+    std::fs::create_dir_all(repo.join(".claude/skills/w")).unwrap();
+    std::fs::write(repo.join(".claude/skills/w/mine.md"), "mine").unwrap();
+
+    let (code, out, stderr) = personal(&["--action", "undo", "--id", &job]);
+    assert_eq!(code, 0, "{stderr}");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        target_before,
+        "链接按原样重建: {v}"
+    );
+    assert!(
+        v["result"]["conflicts"]
+            .to_string()
+            .contains(".claude/skills/w"),
+        "{v}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".claude/skills/w/mine.md")).unwrap(),
+        "mine"
+    );
+
+    // 冲突项处理前再撤销：仍是可重试的部分撤销；全部处理完后再撤销是前置条件错误
+    std::fs::remove_dir_all(repo.join(".claude/skills/w")).unwrap();
+    assert_eq!(personal(&["--action", "undo", "--id", &job]).0, 0);
+    let (code, _, stderr) = personal(&["--action", "undo", "--id", &job]);
+    assert_eq!(code, 13, "{stderr}");
+    assert!(
+        stderr.contains("E4001") && stderr.contains("\"fix\""),
+        "{stderr}"
+    );
+}
+
+/// 盲测回归：关闭宿主/资源后，`.git/info/exclude` 中对应的托管条目随同步移除
+/// （此前计数每次同步 +1、从不减少，条目永远残留）；用户自己的行不动。
+#[test]
+fn git_exclude_entries_follow_what_is_deployed() {
+    let c = Ctx::new();
+    let repo = make_repo(&c, "r");
+    let dr = c.dr();
+    import_skill(&c, &repo, "sk");
+    let exclude = repo.join(".git/info/exclude");
+    std::fs::write(&exclude, "*.log\n").unwrap();
+    let personal = |args: &[&str]| {
+        let mut full = vec!["--json", "--data-root", dr.as_str(), "personal"];
+        full.extend_from_slice(args);
+        let (code, _, stderr) = c.run(&repo, &full);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+    };
+    personal(&[
+        "--action", "select", "--host", "claude", "--state", "enable",
+    ]);
+    personal(&["--action", "select", "--host", "codex", "--state", "enable"]);
+    personal(&[
+        "--action",
+        "select",
+        "--resource",
+        "personal/skill/personal/sk",
+        "--state",
+        "enable",
+    ]);
+    personal(&["--action", "sync"]);
+    personal(&["--action", "sync"]);
+    let text = std::fs::read_to_string(&exclude).unwrap();
+    assert!(
+        text.contains(".claude/skills/sk") && text.contains(".agents/skills/sk"),
+        "{text}"
+    );
+
+    personal(&[
+        "--action", "select", "--host", "codex", "--state", "disable",
+    ]);
+    personal(&["--action", "sync"]);
+    let text = std::fs::read_to_string(&exclude).unwrap();
+    assert!(text.contains(".claude/skills/sk"), "{text}");
+    assert!(
+        !text.contains(".agents/skills/sk"),
+        "关闭的宿主条目被移除: {text}"
+    );
+
+    personal(&[
+        "--action",
+        "select",
+        "--resource",
+        "personal/skill/personal/sk",
+        "--state",
+        "disable",
+    ]);
+    personal(&["--action", "sync"]);
+    let text = std::fs::read_to_string(&exclude).unwrap();
+    assert!(
+        !text.contains("ailoom-personal") && !text.contains("skills/sk"),
+        "全部停用后托管块移除: {text}"
+    );
+    assert!(text.contains("*.log"), "用户行保留: {text}");
 }

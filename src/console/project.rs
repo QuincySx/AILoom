@@ -2,7 +2,7 @@
 
 use super::*;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// `POST /api/preview/repo-default`
@@ -56,24 +56,20 @@ pub(super) fn post_preview_repo_default(state: &Arc<ServerState>, _req: &Request
 
 /// `GET /api/effective`
 pub(super) fn get_effective(state: &Arc<ServerState>, req: &Request) -> Response {
-    // F01/U04：作用域解析跟随页面选择的仓库/Worktree 根（缺省服务 cwd）
-    let root = req.query_param("root").map(PathBuf::from);
-    if let Some(r) = &root {
-        if let Err(e) = ensure_within_roots(state, r) {
-            return Response::json(403, json!({ "error": e }));
-        }
-    }
+    // F01/U04：作用域解析跟随页面选择的仓库/Worktree 根。必须显式给出并经目录授权：
+    // 退回服务 cwd 既绕过授权，又取决于后台服务碰巧从哪个目录启动。
+    let root = match required_root(state, req) {
+        Ok(root) => root,
+        Err(resp) => return resp,
+    };
     if req.query.iter().any(|(k, v)| k == "view" && v == "project") {
-        let Some(root) = root.as_deref() else {
-            return Response::json(400, json!({"error":"需要 root"}));
-        };
         return collection_response(crate::commands::personal::project_effective(
-            root,
+            &root,
             &state.data_root,
         ));
     }
     match crate::commands::personal::effective(
-        root.as_deref(),
+        Some(&root),
         req.query_param("scope").map(str::to_string),
         // 与 data_root_resolved 同源（AIL-107：避免 XDG 默认根分叉）
         Some(&state.data_root),

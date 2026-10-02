@@ -2,6 +2,8 @@
 //! loopback 绑定、端口占用恢复、多实例会话隔离、Origin/Host/token 校验、
 //! 目录边界（含符号链接逃逸）、草稿 revision 冲突、干净关停。
 
+mod common;
+
 use ailoom::console::{ConsoleOptions, ConsoleServer, SESSION_HEADER};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -10,6 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn opts(tmp: &std::path::Path, port: u16) -> ConsoleOptions {
+    common::isolate_in_process_roots();
     ConsoleOptions {
         port,
         data_root: tmp.join("data"),
@@ -2007,6 +2010,184 @@ fn directory_paths_with_spaces_work_and_escapes_are_rejected() {
         let (code, v) = get(&format!("/api/fs/list?path={}", enc(&bad)));
         assert!((400..500).contains(&code), "{bad:?}: {code} {v}");
         assert!(v["error"].is_string(), "{v}");
+    }
+    server.shutdown();
+    server.join();
+}
+
+/// AIL-062：坏条目在网页上可定位、可打开修复、可删除；列表与计划用的解析器口径一致。
+#[test]
+fn broken_library_entries_can_be_repaired_or_deleted_from_the_web() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 0)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    ailoom::personal_library::ensure_library(&server.state.data_root).unwrap();
+    let skills = server.state.data_root.join("library/resources/skills");
+    for name in ["fixme", "dropme"] {
+        std::fs::create_dir_all(skills.join(name)).unwrap();
+        std::fs::write(
+            skills.join(name).join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: [unclosed\nnamespace: personal\nshared: true\n---\nbody\n"),
+        )
+        .unwrap();
+    }
+    // 宽松解析能过、真实解析器拒绝（缺 namespace）的条目也必须列为 issue
+    std::fs::create_dir_all(skills.join("nons")).unwrap();
+    std::fs::write(skills.join("nons/SKILL.md"), "---\nname: nons\n---\nbody\n").unwrap();
+
+    let (code, raw) = method(server.port, "GET", "/api/library/list", &auth, None);
+    assert_eq!(code, 200, "{raw}");
+    let v = json_body(&raw);
+    let ids: Vec<&str> = v["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["resource_id"].as_str())
+        .collect();
+    for name in ["fixme", "dropme", "nons"] {
+        assert!(
+            ids.contains(&format!("personal/skill/personal/{name}").as_str()),
+            "{raw}"
+        );
+    }
+    assert!(
+        !v["entries"].to_string().contains("\"nons\""),
+        "真实解析器判无效的条目不显示为正常: {raw}"
+    );
+
+    // 打开坏条目并保存修复后的内容
+    let (code, raw) = method(
+        server.port,
+        "GET",
+        "/api/library/resource?id=personal/skill/personal/fixme",
+        &auth,
+        None,
+    );
+    assert_eq!(code, 200, "坏条目可以打开修复: {raw}");
+    let fp = json_body(&raw)["fingerprint"].as_str().unwrap().to_string();
+    let fixed = "---\nname: fixme\ndescription: ok\nnamespace: personal\nshared: true\n---\nbody\n";
+    let (code, raw) = method(
+        server.port,
+        "PUT",
+        "/api/library/resource",
+        &auth,
+        Some(
+            &json!({ "id": "personal/skill/personal/fixme", "content": fixed, "base_fingerprint": fp }),
+        ),
+    );
+    assert_eq!(code, 200, "{raw}");
+    // 不存在的 ID 不会被错配到名字结尾相同的坏条目
+    let (code, _) = method(
+        server.port,
+        "GET",
+        "/api/library/resource?id=personal/skill/personal/xdropme",
+        &auth,
+        None,
+    );
+    assert_eq!(code, 404);
+
+    // 删除另一个坏条目
+    let (code, raw) = post(
+        server.port,
+        "/api/library/delete",
+        &auth,
+        json!({ "id": "personal/skill/personal/dropme", "execute": true }),
+    );
+    assert_eq!(code, 200, "{raw}");
+    let (_, raw) = method(server.port, "GET", "/api/library/list", &auth, None);
+    let v = json_body(&raw);
+    assert!(v["entries"].to_string().contains("fixme"), "{raw}");
+    assert!(!raw.contains("dropme"), "{raw}");
+
+    server.shutdown();
+    server.join();
+}
+
+/// AIL-062：Skill / doc 编辑在保存前校验；非法内容不写入资源库，错误指出文件与字段。
+#[test]
+fn library_edits_are_validated_before_saving() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 0)).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    ailoom::personal_library::ensure_library(&server.state.data_root).unwrap();
+    let lib = server.state.data_root.join("library/resources");
+    std::fs::create_dir_all(lib.join("skills/ed")).unwrap();
+    std::fs::write(
+        lib.join("skills/ed/SKILL.md"),
+        "---\nname: ed\ndescription: d\nnamespace: personal\nshared: true\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(lib.join("docs")).unwrap();
+    std::fs::write(
+        lib.join("docs/guide.md"),
+        "---\nname: guide\ndescription: d\nnamespace: personal\nshared: true\n---\n正文\n",
+    )
+    .unwrap();
+    let cases = [
+        (
+            "personal/skill/personal/ed",
+            lib.join("skills/ed/SKILL.md"),
+            vec![
+                (
+                    "---\nname: ed\ndescription: [x\nnamespace: personal\n---\nbody\n",
+                    "description",
+                ),
+                (
+                    "---\nname: renamed\ndescription: d\nnamespace: personal\n---\nbody\n",
+                    "name",
+                ),
+                (
+                    "---\nname: ed\nshared: maybe\nnamespace: personal\n---\nbody\n",
+                    "shared",
+                ),
+            ],
+        ),
+        (
+            "personal/doc/personal/guide",
+            lib.join("docs/guide.md"),
+            vec![
+                (
+                    "---\nname: guide\ndescription: [x\n---\n正文\n",
+                    "description",
+                ),
+                (
+                    "---\nname: guide\ndescription: d\n正文没有闭合\n",
+                    "frontmatter",
+                ),
+            ],
+        ),
+    ];
+    for (id, file, bad) in cases {
+        let before = std::fs::read_to_string(&file).unwrap();
+        for (content, field) in bad {
+            let (code, raw) = method(
+                server.port,
+                "GET",
+                &format!("/api/library/resource?id={id}"),
+                &auth,
+                None,
+            );
+            assert_eq!(code, 200, "{raw}");
+            let fp = json_body(&raw)["fingerprint"].as_str().unwrap().to_string();
+            let (code, raw) = method(
+                server.port,
+                "PUT",
+                "/api/library/resource",
+                &auth,
+                Some(&json!({ "id": id, "content": content, "base_fingerprint": fp })),
+            );
+            assert!((400..500).contains(&code), "{id} {field}: {code} {raw}");
+            let err = json_body(&raw)["error"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            assert!(err.contains(field), "{id}: 错误指出字段 `{field}`: {raw}");
+            assert_eq!(
+                std::fs::read_to_string(&file).unwrap(),
+                before,
+                "{id}: 非法内容不落盘"
+            );
+        }
     }
     server.shutdown();
     server.join();

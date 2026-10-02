@@ -18,9 +18,22 @@ pub const MARKER_END: &str = "# <<< ailoom-personal <<<";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExcludeState {
     pub schema_version: u32,
-    /// pattern → 引用它的（仓库登记）Worktree 数
+    /// 旧格式：pattern → 计数。每次同步都 +1、从不减少，导致关闭宿主后条目永远残留；
+    /// 新同步会把它迁移进 `owners`。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refcount: BTreeMap<String, u32>,
+    /// pattern → 当前部署了它的所有者（Worktree + 作用域）
+    #[serde(default)]
+    pub owners: BTreeMap<String, std::collections::BTreeSet<String>>,
     pub updated_at: String,
+}
+
+impl ExcludeState {
+    fn live(&self) -> Vec<String> {
+        let mut live: std::collections::BTreeSet<String> = self.refcount.keys().cloned().collect();
+        live.extend(self.owners.keys().cloned());
+        live.into_iter().collect()
+    }
 }
 
 impl Default for ExcludeState {
@@ -28,6 +41,7 @@ impl Default for ExcludeState {
         ExcludeState {
             schema_version: 1,
             refcount: Default::default(),
+            owners: Default::default(),
             updated_at: now_iso(),
         }
     }
@@ -121,8 +135,41 @@ pub fn add_patterns(
         *state.refcount.entry(p.clone()).or_insert(0) += 1;
     }
     state.updated_at = now_iso();
-    let live: Vec<String> = state.refcount.keys().cloned().collect();
-    write_exclude_with(common_dir, &live)?;
+    write_exclude_with(common_dir, &state.live())?;
+    save_state(&state, data_root, repo_id)
+}
+
+/// 同步后对账：把 `owner`（Worktree + 作用域）名下的 pattern 设为本次实际部署的集合。
+/// 关闭宿主或资源后，没有任何所有者引用的行随之移除；用户既有行永不触碰。
+pub fn sync_patterns(
+    common_dir: &Path,
+    data_root: &Path,
+    repo_id: &str,
+    owner: &str,
+    patterns: &[String],
+) -> Result<()> {
+    let mut state = load_state(data_root, repo_id)?;
+    // 旧计数没有归属信息：交给当前所有者对账（其他 Worktree 下次同步时补回各自条目）
+    for legacy in std::mem::take(&mut state.refcount).into_keys() {
+        state
+            .owners
+            .entry(legacy)
+            .or_default()
+            .insert(owner.to_string());
+    }
+    for owners in state.owners.values_mut() {
+        owners.remove(owner);
+    }
+    for p in patterns {
+        state
+            .owners
+            .entry(p.clone())
+            .or_default()
+            .insert(owner.to_string());
+    }
+    state.owners.retain(|_, o| !o.is_empty());
+    state.updated_at = now_iso();
+    write_exclude_with(common_dir, &state.live())?;
     save_state(&state, data_root, repo_id)
 }
 
@@ -143,8 +190,7 @@ pub fn remove_patterns(
         }
     }
     state.updated_at = now_iso();
-    let live: Vec<String> = state.refcount.keys().cloned().collect();
-    write_exclude_with(common_dir, &live)?;
+    write_exclude_with(common_dir, &state.live())?;
     save_state(&state, data_root, repo_id)
 }
 

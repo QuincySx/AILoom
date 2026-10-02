@@ -23,6 +23,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// > 规范默认 `$HOME/.local/state/ailoom`（含旧 `~/.ailoom` 一次性迁移）。
 pub fn resolve_data_root(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = explicit {
+        if p.exists() && !p.is_dir() {
+            return Err(crate::error::Error::new(
+                crate::error::code::USAGE,
+                format!("--data-root 指向的不是目录: {}", p.display()),
+            )
+            .fix("改为一个目录路径（不存在时会自动创建）"));
+        }
         return Ok(p.to_path_buf());
     }
     if let Some(xdg) = non_empty_env("XDG_STATE_HOME") {

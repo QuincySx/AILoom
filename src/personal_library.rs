@@ -5,7 +5,7 @@
 use crate::error::{code, Error, Result};
 use crate::ids::now_iso;
 use crate::manifest::{valid_name, TeamManifest, MANIFEST_FILE};
-use crate::resource::{enumerate, parse_frontmatter, ResourceKind};
+use crate::resource::{enumerate_isolating, parse_frontmatter, ResourceKind};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -235,16 +235,18 @@ fn scan_files(
     for entry in std::fs::read_dir(dir)?.flatten() {
         let p = entry.path();
         let ft = entry.file_type()?;
-        if ft.is_symlink() {
-            return Err(Error::new(
-                code::PATH_TRAVERSAL,
-                format!("源目录含符号链接，拒绝导入: {}", p.display()),
-            ));
-        }
         let rel = p
             .strip_prefix(base)
             .map(|r| r.to_string_lossy().to_string())
             .unwrap_or_default();
+        if ft.is_symlink() {
+            // 报技能目录内的相对路径：Git 导入时 base 位于内部缓存快照，绝对路径对用户没有意义。
+            return Err(Error::new(
+                code::PATH_TRAVERSAL,
+                format!("技能目录含符号链接，拒绝导入: {rel}"),
+            )
+            .fix("把链接替换为真实文件后重新导入（符号链接可能指向技能目录外的文件）"));
+        }
         if ft.is_dir() {
             scan_files(&p, base, out, scripts)?;
         } else {
@@ -310,9 +312,65 @@ pub fn import_preview(
     source_dir: &Path,
     name_override: Option<&str>,
 ) -> Result<ImportPreview> {
-    let source_dir = source_dir
-        .canonicalize()
-        .map_err(|e| Error::new(code::WORKSPACE_INVALID, format!("源目录不可用: {e}")))?;
+    import_preview_inner(data_root, source_dir, name_override, true).map_err(with_import_fix)
+}
+
+/// 进程在导入中途被终止时，暂存副本会留在 `.staging`（库本身不受影响）。
+/// 下次导入时清掉超过一小时的残留；更新的目录可能属于正在进行的另一次导入。
+fn prune_stale_staging(staging_root: &Path) {
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for entry in std::fs::read_dir(staging_root)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t < cutoff);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// 导入校验失败时给出下一步：大多数解析错误本身不带修复提示。
+fn with_import_fix(e: Error) -> Error {
+    if e.message.contains("不在团队清单中") {
+        // 资源库复用团队解析器，但对用户来说这不是团队清单问题
+        return e.fix(
+            "个人资源库不按项目/角色限定：删除 SKILL.md 中的 projects / roles 字段后重新导入",
+        );
+    }
+    if e.fix.is_some() {
+        return e;
+    }
+    match e.code.as_str() {
+        code::MANIFEST_MISSING_FIELD => {
+            e.fix("修正 SKILL.md 开头的 frontmatter（YAML，至少含 name）后重新导入；或用 --name 指定合法名称")
+        }
+        code::PATH_TRAVERSAL => {
+            e.fix("把链接改为技能目录内的相对路径（或 http/https 外链）后重新导入")
+        }
+        _ => e,
+    }
+}
+
+/// `init_library = false` 供已持有 library-update.lock 的更新流程使用：
+/// 初始化库会先做更新恢复，再次获取同一把锁会自锁。
+fn import_preview_inner(
+    data_root: &Path,
+    source_dir: &Path,
+    name_override: Option<&str>,
+    init_library: bool,
+) -> Result<ImportPreview> {
+    let source_dir = source_dir.canonicalize().map_err(|e| {
+        Error::new(
+            code::WORKSPACE_INVALID,
+            format!("源目录不可用: {}: {e}", source_dir.display()),
+        )
+        .fix("检查 --dir 路径：应指向包含 SKILL.md 的技能目录")
+    })?;
     let skill_md = source_dir.join("SKILL.md");
     if !skill_md.is_file() {
         return Err(Error::new(
@@ -345,8 +403,12 @@ pub fn import_preview(
     let mut scripts = Vec::new();
     scan_files(&source_dir, &source_dir, &mut files, &mut scripts)?;
     // 冲突检查：库内同名（skill 身份 + 目标目录）
-    let lib = ensure_library(data_root)?;
-    let target = lib.path.join("resources").join("skills").join(&name);
+    let lib_path = if init_library {
+        ensure_library(data_root)?.path
+    } else {
+        library_root(data_root)
+    };
+    let target = lib_path.join("resources").join("skills").join(&name);
     let mut conflicts = Vec::new();
     if target.exists() {
         conflicts.push(format!(
@@ -412,6 +474,15 @@ pub fn import_execute_with_source(
     name_override: Option<&str>,
     source_meta: Option<crate::skill_source::SkillSourceMeta>,
 ) -> Result<ImportReport> {
+    import_execute_inner(data_root, source_dir, name_override, source_meta).map_err(with_import_fix)
+}
+
+fn import_execute_inner(
+    data_root: &Path,
+    source_dir: &Path,
+    name_override: Option<&str>,
+    source_meta: Option<crate::skill_source::SkillSourceMeta>,
+) -> Result<ImportReport> {
     let preview = import_preview(data_root, source_dir, name_override)?;
     let src = source_dir
         .canonicalize()
@@ -460,7 +531,10 @@ pub fn import_execute_with_source(
                     .unwrap_or_default()
             ),
         )
-        .fix("换一个 --name 另存为新副本；或先删除库内同名技能再导入（更新语义）"));
+        .fix(format!(
+            "来源相同时用更新：ailoom library --action check-update --skill {name}，再按提示 update；来源不同则换一个 --name 另存为新副本",
+            name = preview.skill_name
+        )));
     }
     ensure_library(data_root)?;
     let lib = library_root(data_root);
@@ -468,47 +542,51 @@ pub fn import_execute_with_source(
     // 暂存区：库内 .staging/<id>（与 resources/ 同文件系统，可原子 rename）
     let staging_root = lib.join(".staging");
     std::fs::create_dir_all(&staging_root)?;
+    prune_stale_staging(&staging_root);
     let staging = staging_root.join(format!("{}-{}", preview.skill_name, crate::ids::new_id()));
     let rollback = |staging: &Path| {
         let _ = std::fs::remove_dir_all(staging);
     };
-    let mut copied = 0usize;
-    for rel in &preview.files {
-        let from = src.join(rel);
-        let to = staging.join(rel);
-        if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent)?;
+    // 暂存阶段任何一步失败（含磁盘错误）都删除暂存副本，库保持原状。
+    let staged = (|| -> Result<usize> {
+        let mut copied = 0usize;
+        for rel in &preview.files {
+            let to = staging.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(src.join(rel), &to).map_err(|e| {
+                Error::new(code::WRITE_FAILED, format!("复制源文件失败: {rel}: {e}"))
+            })?;
+            copied += 1;
         }
-        if std::fs::copy(&from, &to).is_err() {
+        // 补齐 frontmatter 元数据（在暂存副本上；保留既有字段与正文）
+        let skill_md = staging.join("SKILL.md");
+        let raw = std::fs::read_to_string(&skill_md)?;
+        let rename_needed = preview
+            .frontmatter_name
+            .as_ref()
+            .map(|n| n != &preview.skill_name)
+            .unwrap_or(false);
+        let mut meta_needed = preview.metadata_to_add.clone();
+        if rename_needed {
+            meta_needed.push("frontmatter.rename".into());
+        }
+        let fixed = add_frontmatter_meta(&raw, &preview.skill_name, &meta_needed)?;
+        if fixed != raw {
+            crate::sync_common::atomic_write(&skill_md, fixed.as_bytes())?;
+        }
+        // 暂存副本必须能被真实解析器完整解析（L01：先验证后发布）
+        validate_staged_skill(&staging, &preview.skill_name)?;
+        Ok(copied)
+    })();
+    let copied = match staged {
+        Ok(n) => n,
+        Err(e) => {
             rollback(&staging);
-            return Err(Error::new(
-                code::WRITE_FAILED,
-                format!("复制源文件失败: {rel}"),
-            ));
+            return Err(e);
         }
-        copied += 1;
-    }
-    // 补齐 frontmatter 元数据（在暂存副本上；保留既有字段与正文）
-    let skill_md = staging.join("SKILL.md");
-    let raw = std::fs::read_to_string(&skill_md)?;
-    let rename_needed = preview
-        .frontmatter_name
-        .as_ref()
-        .map(|n| n != &preview.skill_name)
-        .unwrap_or(false);
-    let mut meta_needed = preview.metadata_to_add.clone();
-    if rename_needed {
-        meta_needed.push("frontmatter.rename".into());
-    }
-    let fixed = add_frontmatter_meta(&raw, &preview.skill_name, &meta_needed)?;
-    if fixed != raw {
-        crate::sync_common::atomic_write(&skill_md, fixed.as_bytes())?;
-    }
-    // 暂存副本必须能被真实解析器完整解析（L01：先验证后发布）
-    if let Err(e) = validate_staged_skill(&staging, &preview.skill_name) {
-        rollback(&staging);
-        return Err(e);
-    }
+    };
     // 原子发布：同文件系统 rename；目标存在性已在 preview 阶段检查
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -520,11 +598,21 @@ pub fn import_execute_with_source(
             format!("发布到资源库失败（库保持原状）: {e}"),
         ));
     }
-    // 发布后整库校验（资源身份/归属/namespace 全链路）；失败则回滚本次发布
+    // 发布后校验本次导入的资源（身份/归属/namespace 全链路）；失败则回滚本次发布。
+    // 库内其他已有坏条目不阻止新导入（AIL-062），它们由 list 的 issues 单独报告。
     let manifest = TeamManifest::load_from(&lib)?;
     let mut warnings: Vec<String> = Vec::new();
-    let entries = match enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut warnings) {
-        Ok(e) => e,
+    let entries = match enumerate_isolating(&lib, &manifest, LIBRARY_TEAM_ID, &mut warnings) {
+        Ok((entries, invalid)) => {
+            if let Some(bad) = invalid
+                .into_iter()
+                .find(|e| e.kind == ResourceKind::Skill && e.name == preview.skill_name)
+            {
+                let _ = std::fs::remove_dir_all(&target);
+                return Err(bad.error);
+            }
+            entries
+        }
         Err(e) => {
             let _ = std::fs::remove_dir_all(&target);
             return Err(e);
@@ -621,17 +709,21 @@ fn add_frontmatter_meta(raw: &str, name: &str, to_add: &[String]) -> Result<Stri
     if to_add.is_empty() {
         return Ok(raw.to_string());
     }
+    // Windows 编辑器常写入 BOM：不去掉就识别不出 frontmatter，原 frontmatter 会被当成正文。
+    let raw = raw.strip_prefix('\u{feff}').unwrap_or(raw);
+    // 沿用原文换行风格，避免 CRLF 文件被改成混合换行。
+    let nl = if raw.contains("\r\n") { "\r\n" } else { "\n" };
     let needs_name = to_add.iter().any(|x| x == "frontmatter.name");
     let needs_rename = to_add.iter().any(|x| x == "frontmatter.rename");
     let mut extras = String::new();
     if needs_name {
-        extras.push_str(&format!("name: {name}\n"));
+        extras.push_str(&format!("name: {name}{nl}"));
     }
     if to_add.iter().any(|x| x.contains("namespace")) {
-        extras.push_str(&format!("namespace: {LIBRARY_NAMESPACE}\n"));
+        extras.push_str(&format!("namespace: {LIBRARY_NAMESPACE}{nl}"));
     }
     if to_add.iter().any(|x| x == "frontmatter.shared = true") {
-        extras.push_str("shared: true\n");
+        extras.push_str(&format!("shared: true{nl}"));
     }
     if let Some(rest) = raw
         .strip_prefix("---\n")
@@ -663,21 +755,23 @@ fn add_frontmatter_meta(raw: &str, name: &str, to_add: &[String]) -> Result<Stri
                         .into_iter()
                         .chain(std::iter::once(format!("name: {name}")))
                         .collect::<Vec<_>>()
-                        .join("\n")
+                        .join(nl)
                 } else {
-                    lines.join("\n")
+                    lines.join(nl)
                 }
             } else {
                 yaml.to_string()
             };
         // 关键修复：YAML 段与新注入字段之间必须有换行分隔
-        let mut yaml = yaml;
-        if !yaml.is_empty() && !yaml.ends_with('\n') {
-            yaml.push('\n');
+        let mut yaml = yaml.trim_end_matches(['\r', '\n']).to_string();
+        if !yaml.is_empty() {
+            yaml.push_str(nl);
         }
-        Ok(format!("---\n{yaml}{extras}{body}"))
+        // body 以「\n---」开头：去掉这个换行，否则结束标记前会多出一个空行
+        let body = body.strip_prefix('\n').unwrap_or(body);
+        Ok(format!("---{nl}{yaml}{extras}{body}"))
     } else {
-        Ok(format!("---\n{extras}---\n\n{raw}"))
+        Ok(format!("---{nl}{extras}---{nl}{nl}{raw}"))
     }
 }
 
@@ -691,32 +785,93 @@ fn staged_digest(data_root: &Path, src: &Path, preview: &ImportPreview) -> Resul
     let staging = library_root(data_root)
         .join(".staging")
         .join(format!("compare-{}", crate::ids::new_id()));
-    let result = (|| {
-        for rel in &preview.files {
-            let to = staging.join(rel);
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(src.join(rel), &to)?;
-        }
-        let skill_md = staging.join("SKILL.md");
-        let raw = std::fs::read_to_string(&skill_md)?;
-        let mut meta_needed = preview.metadata_to_add.clone();
-        if preview
-            .frontmatter_name
-            .as_ref()
-            .is_some_and(|n| n != &preview.skill_name)
-        {
-            meta_needed.push("frontmatter.rename".into());
-        }
-        std::fs::write(
-            &skill_md,
-            add_frontmatter_meta(&raw, &preview.skill_name, &meta_needed)?,
-        )?;
-        skill_dir_digest(&staging)
-    })();
+    let result = write_normalized(src, preview, &staging).and_then(|_| skill_dir_digest(&staging));
     let _ = std::fs::remove_dir_all(&staging);
     result
+}
+
+/// 按导入规则把 `src` 复制到 `dest`：只复制预览列出的文件，并补齐 frontmatter 元数据。
+/// 库内副本永远是这种规范化形态，上游比较与更新都必须先经过同一转换。
+fn write_normalized(src: &Path, preview: &ImportPreview, dest: &Path) -> Result<()> {
+    for rel in &preview.files {
+        let to = dest.join(rel);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src.join(rel), &to)?;
+    }
+    let skill_md = dest.join("SKILL.md");
+    let raw = std::fs::read_to_string(&skill_md)?;
+    let mut meta_needed = preview.metadata_to_add.clone();
+    if preview
+        .frontmatter_name
+        .as_ref()
+        .is_some_and(|n| n != &preview.skill_name)
+    {
+        meta_needed.push("frontmatter.rename".into());
+    }
+    std::fs::write(
+        &skill_md,
+        add_frontmatter_meta(&raw, &preview.skill_name, &meta_needed)?,
+    )?;
+    Ok(())
+}
+
+/// 上游目录规范化后的摘要（与库内 imported_digest 同一口径）。
+pub(crate) fn normalized_digest(data_root: &Path, src: &Path, name: &str) -> Result<String> {
+    let preview = import_preview_inner(data_root, src, Some(name), false)?;
+    staged_digest(data_root, src, &preview)
+}
+
+/// 把上游目录按导入规则写入更新暂存区。
+pub(crate) fn copy_normalized(data_root: &Path, src: &Path, name: &str, dest: &Path) -> Result<()> {
+    let preview = import_preview_inner(data_root, src, Some(name), false)?;
+    write_normalized(src, &preview, dest)
+}
+
+/// 没有发现入口时按地址标注来源：只有真正的 GitHub / GitLab 地址才带平台前缀，
+/// 其余（自建 Git、本地仓库）一律标 `git:`，避免把本地仓库显示成 GitHub 来源。
+fn git_discovery_label(url: &str) -> String {
+    let lower = url.to_ascii_lowercase();
+    let host_is = |host: &str| {
+        lower.contains(&format!("://{host}/"))
+            || lower.contains(&format!("@{host}:"))
+            || lower.starts_with(&format!("{host}/"))
+    };
+    if host_is("github.com") {
+        format!("github:{url}")
+    } else if host_is("gitlab.com") {
+        format!("gitlab:{url}")
+    } else {
+        format!("git:{url}")
+    }
+}
+
+#[cfg(test)]
+mod discovery_label_tests {
+    #[test]
+    fn labels_follow_the_actual_host() {
+        assert_eq!(
+            super::git_discovery_label("https://github.com/o/r.git"),
+            "github:https://github.com/o/r.git"
+        );
+        assert_eq!(
+            super::git_discovery_label("git@github.com:o/r.git"),
+            "github:git@github.com:o/r.git"
+        );
+        assert_eq!(
+            super::git_discovery_label("https://gitlab.com/g/r"),
+            "gitlab:https://gitlab.com/g/r"
+        );
+        assert_eq!(
+            super::git_discovery_label("/tmp/local/repo"),
+            "git:/tmp/local/repo"
+        );
+        assert_eq!(
+            super::git_discovery_label("https://git.example.com/x/github.com"),
+            "git:https://git.example.com/x/github.com"
+        );
+    }
 }
 
 fn skill_dir_digest(dir: &Path) -> Result<String> {
@@ -753,6 +908,56 @@ fn skill_dir_digest(dir: &Path) -> Result<String> {
     }
     Ok(format!("sha256:{:x}", hasher.finalize()))
 }
+/// 资源 ID 在库内的相对路径。定义无效的条目也能找到（按 kind + name），
+/// 否则坏条目既不能启用也删不掉，用户只能手改数据目录（AIL-062）。
+fn locate_entry(data_root: &Path, resource_id: &str) -> Result<Option<String>> {
+    let lib = library_root(data_root);
+    let manifest = TeamManifest::load_from(&lib)?;
+    let (entries, invalid) =
+        enumerate_isolating(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
+    if let Some(e) = entries.iter().find(|e| e.id.to_string() == resource_id) {
+        return Ok(Some(e.path.clone()));
+    }
+    let parts: Vec<&str> = resource_id.split('/').collect();
+    if parts.len() != 4 || parts[0] != LIBRARY_TEAM_ID {
+        return Ok(None);
+    }
+    Ok(invalid
+        .into_iter()
+        .find(|e| e.kind.as_str() == parts[1] && e.name == parts[3])
+        .map(|e| e.path))
+}
+
+/// `--skill` 既可写完整资源 ID，也可写 skill 名（与 check-update / update 一致）。
+pub fn resolve_skill_ref(data_root: &Path, skill: &str) -> Result<String> {
+    if skill.contains('/') {
+        return Ok(skill.to_string());
+    }
+    let lib = library_root(data_root);
+    let manifest = TeamManifest::load_from(&lib)?;
+    let (entries, invalid) =
+        enumerate_isolating(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
+    if let Some(e) = entries
+        .iter()
+        .find(|e| e.id.kind == ResourceKind::Skill && e.id.name == skill)
+    {
+        return Ok(e.id.to_string());
+    }
+    if invalid
+        .iter()
+        .any(|e| e.kind == ResourceKind::Skill && e.name == skill)
+    {
+        return Ok(format!(
+            "{LIBRARY_TEAM_ID}/skill/{LIBRARY_NAMESPACE}/{skill}"
+        ));
+    }
+    Err(Error::new(
+        code::UNKNOWN_REFERENCE,
+        format!("资源库中没有名为 {skill} 的 skill"),
+    )
+    .fix("运行 ailoom library --action list 查看库内资源；其他类型资源请写完整资源 ID"))
+}
+
 /// 删除库内资源前的影响预览：列出个人配置中启用该资源的作用域。
 pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json::Value> {
     recover_updates(data_root)?;
@@ -783,10 +988,7 @@ pub fn delete_preview(data_root: &Path, resource_id: &str) -> Result<serde_json:
             }
         }
     }
-    let lib = library_root(data_root);
-    let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
-    let exists = entries.iter().any(|e| e.id.to_string() == resource_id);
+    let exists = locate_entry(data_root, resource_id)?.is_some();
     Ok(serde_json::json!({
         "resource_id": resource_id,
         "exists": exists,
@@ -809,21 +1011,16 @@ pub fn delete_execute(data_root: &Path, resource_id: &str) -> Result<()> {
         ));
     }
     let lib = library_root(data_root);
-    let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
-    let entry = entries
-        .iter()
-        .find(|e| e.id.to_string() == resource_id)
-        .ok_or_else(|| {
-            Error::new(
-                code::UNKNOWN_REFERENCE,
-                format!("资源不存在: {resource_id}"),
-            )
-        })?;
+    let rel = locate_entry(data_root, resource_id)?.ok_or_else(|| {
+        Error::new(
+            code::UNKNOWN_REFERENCE,
+            format!("资源不存在: {resource_id}"),
+        )
+    })?;
     let full = lib
-        .join(&entry.path)
+        .join(&rel)
         .canonicalize()
-        .unwrap_or_else(|_| lib.join(&entry.path));
+        .unwrap_or_else(|_| lib.join(&rel));
     let archive = data_root.join("library-archive").join(crate::ids::new_id());
     std::fs::create_dir_all(&archive)?;
     std::fs::rename(&full, archive.join(full.file_name().unwrap()))?;
@@ -847,7 +1044,8 @@ pub fn list(data_root: &Path) -> Result<LibraryListing> {
         });
     }
     let manifest = TeamManifest::load_from(&lib)?;
-    let entries = enumerate(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
+    let (entries, _invalid) =
+        enumerate_isolating(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())?;
     let skills = entries
         .iter()
         .filter(|e| e.id.kind == ResourceKind::Skill)
@@ -988,6 +1186,9 @@ pub struct TolerantEntry {
 pub struct LibraryIssue {
     pub path: String,
     pub error: String,
+    /// 能对应到资源时给出 ID，供界面提供「打开修复 / 删除」入口
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<String>,
 }
 
 /// 逐项扫描资源库：可解析的条目正常返回；坏文件记为 issue（带文件级错误），
@@ -1000,6 +1201,7 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
         issues.push(LibraryIssue {
             path: lib.join(".updates-journal.json").display().to_string(),
             error: format!("Skill 更新恢复未完成：{e}"),
+            resource_id: None,
         });
     }
     // 尚未初始化的资源库是正常的空状态，不是「清单损坏」（U-01）。
@@ -1012,6 +1214,7 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
             issues.push(LibraryIssue {
                 path: lib.join(MANIFEST_FILE).display().to_string(),
                 error: format!("清单不可读: {e}"),
+                resource_id: None,
             });
             return (entries, issues);
         }
@@ -1057,6 +1260,7 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
                                 issues.push(LibraryIssue {
                                     path: rel.clone(),
                                     error: format!("更新检查记录不可用：{e}"),
+                                    resource_id: None,
                                 });
                                 Some(crate::skill_source::UpdateStatus::failed(
                                     &fname,
@@ -1081,14 +1285,23 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
                 Ok((Some(meta), _)) => issues.push(LibraryIssue {
                     path: rel,
                     error: format!("SKILL.md name `{:?}` 与目录名 `{fname}` 不一致", meta.name),
+                    resource_id: Some(format!(
+                        "{LIBRARY_TEAM_ID}/skill/{LIBRARY_NAMESPACE}/{fname}"
+                    )),
                 }),
                 Ok((None, _)) => issues.push(LibraryIssue {
                     path: rel,
                     error: "SKILL.md 缺少 frontmatter".into(),
+                    resource_id: Some(format!(
+                        "{LIBRARY_TEAM_ID}/skill/{LIBRARY_NAMESPACE}/{fname}"
+                    )),
                 }),
                 Err(e) => issues.push(LibraryIssue {
                     path: rel,
                     error: e,
+                    resource_id: Some(format!(
+                        "{LIBRARY_TEAM_ID}/skill/{LIBRARY_NAMESPACE}/{fname}"
+                    )),
                 }),
             }
         }
@@ -1119,6 +1332,26 @@ pub fn list_tolerant(data_root: &Path) -> (Vec<TolerantEntry>, Vec<LibraryIssue>
             continue;
         }
         collect_file_entries(&base, &lib, kind, false, &mut entries, &mut issues);
+    }
+    // 与计划用的真实解析器对齐：这里宽松解析通过、但真实解析判为无效的条目，
+    // 也要作为 issue 列出，否则界面显示正常、同步时却被跳过。
+    if let Ok((_, invalid)) = enumerate_isolating(&lib, &manifest, LIBRARY_TEAM_ID, &mut Vec::new())
+    {
+        for bad in invalid {
+            if issues.iter().any(|i| i.path == bad.path) {
+                continue;
+            }
+            entries.retain(|e| !(e.kind == bad.kind.as_str() && e.name == bad.name));
+            issues.push(LibraryIssue {
+                resource_id: Some(format!(
+                    "{LIBRARY_TEAM_ID}/{}/{LIBRARY_NAMESPACE}/{}",
+                    bad.kind.as_str(),
+                    bad.name
+                )),
+                path: bad.path,
+                error: bad.error.message,
+            });
+        }
     }
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     (entries, issues)
@@ -1192,6 +1425,9 @@ fn collect_file_entries(
             Err(e) => issues.push(LibraryIssue {
                 path: rel,
                 error: e,
+                resource_id: Some(format!(
+                    "{LIBRARY_TEAM_ID}/{kind}/{LIBRARY_NAMESPACE}/{stem}"
+                )),
             }),
         }
     }
@@ -1251,26 +1487,41 @@ fn resolve_skill_dir_in_snapshot(
     snap_root: &Path,
     repo_path: Option<&str>,
 ) -> Result<(PathBuf, Vec<String>)> {
-    let explicit: Option<PathBuf> = repo_path.map(|p| {
-        let rel = p.trim_matches('/');
-        if rel.is_empty() {
+    if let Some(raw) = repo_path {
+        let rel = raw.trim_matches('/');
+        let rel_path = Path::new(rel);
+        if rel_path.components().any(|c| {
+            !matches!(c, std::path::Component::Normal(_)) && c != std::path::Component::CurDir
+        }) {
+            return Err(
+                Error::new(code::PATH_TRAVERSAL, format!("仓库内路径越界: {raw}"))
+                    .fix("--path 只能写仓库内的相对子目录，不能含 `..` 或盘符"),
+            );
+        }
+        let dir = if rel.is_empty() {
             snap_root.to_path_buf()
         } else {
             snap_root.join(rel)
-        }
-    });
-    if let Some(dir) = explicit {
-        if !dir.starts_with(snap_root) {
-            return Err(Error::new(
-                code::PATH_TRAVERSAL,
-                format!("repo-path 越界: {}", dir.display()),
-            ));
-        }
+        };
         if !dir.join("SKILL.md").is_file() {
             return Err(Error::new(
                 code::MANIFEST_MISSING_FIELD,
-                format!("指定路径不含 SKILL.md（不是 skill 根）: {}", dir.display()),
-            ));
+                format!(
+                    "指定路径不含 SKILL.md（不是 skill 根）: {}",
+                    if rel.is_empty() { "." } else { rel }
+                ),
+            )
+            .fix("检查 --path；不带 --path 预览可列出仓库内的候选 skill 目录"));
+        }
+        // 路径上的符号链接可能把目标指到仓库外（例如本机其他目录）：解析后必须仍在快照内。
+        let real = dir.canonicalize()?;
+        let real_root = snap_root.canonicalize()?;
+        if !real.starts_with(&real_root) {
+            return Err(Error::new(
+                code::PATH_TRAVERSAL,
+                format!("仓库内路径经符号链接指向仓库外，拒绝导入: {rel}"),
+            )
+            .fix("只导入仓库内的真实目录；符号链接目录不会被跟随"));
         }
         return Ok((dir, Vec::new()));
     }
@@ -1345,7 +1596,7 @@ pub fn git_import_preview_labeled(
     Ok(GitImportPreview {
         discovery_entry: discovery_label
             .map(str::to_string)
-            .unwrap_or_else(|| format!("github:{url}")),
+            .unwrap_or_else(|| git_discovery_label(url)),
         repo_url: src.url.clone(),
         repo_path: repo_path_rel,
         ref_: ref_.map(str::to_string),
@@ -1400,12 +1651,16 @@ pub fn git_import_execute_labeled(
                     .unwrap_or_else(|| "同名目录已存在".into())
             ),
         )
-        .fix("换一个 --name 另存为新副本；或先删除库内同名技能再导入（更新语义）"));
+        .fix(format!(
+            "来源相同时用更新：ailoom library --action check-update --skill {name}，再按提示 update；来源不同则换一个 --name 另存为新副本",
+            name = preview.skill_name
+        )));
     }
     let src = crate::source::GitSource::new(url, ref_)?;
     let cache = skill_git_cache(data_root, &src.identity);
     let snap = src.resolve(&cache, None)?;
-    let skill_dir = snap.root.join(preview.repo_path.trim_start_matches('/'));
+    // 重新拉取后快照可能已变（分支前移），必须按同一规则再次校验路径边界。
+    let (skill_dir, _) = resolve_skill_dir_in_snapshot(&snap.root, Some(&preview.repo_path))?;
     let meta = crate::skill_source::git_meta(
         &preview.discovery_entry,
         &preview.repo_url,
@@ -1421,30 +1676,6 @@ mod recovery;
 pub use recovery::{recover_updates, Recovery};
 mod update;
 pub use update::{cached_update, check_update, update_execute, update_execute_checked};
-
-/// 递归复制（跳过符号链接；导入/更新不引入链接）。
-fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
-    for entry in walkdir::WalkDir::new(src) {
-        let entry =
-            entry.map_err(|e| Error::new(code::WRITE_FAILED, format!("Skill 复制失败：{e}")))?;
-        let rel = entry
-            .path()
-            .strip_prefix(src)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_default();
-        let to = dst.join(&rel);
-        let ft = entry.file_type();
-        if ft.is_dir() {
-            std::fs::create_dir_all(&to)?;
-        } else if ft.is_file() {
-            if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(entry.path(), &to)?;
-        }
-    }
-    Ok(())
-}
 
 /// 通过发现入口导入（AIL-065）：解析提供方 → 实际 GitHub 仓库 → 复用 git 导入；
 /// 有 skill 名提示时按目录名/资源名匹配（不猜 API）。

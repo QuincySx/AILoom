@@ -75,14 +75,19 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
         .iter()
         .any(|c| c["check"] == "declaration" && c["ok"] == false)
     {
+        // 没有团队声明 = 纯个人模式，是正常状态；只在需要团队资源时才要 init
         push(
             &mut checks,
             "declaration",
-            false,
-            json!({ "missing": decl_path.display().to_string() }),
-            Some("运行 ailoom init".into()),
+            true,
+            json!({ "missing": decl_path.display().to_string(), "mode": "personal", "note": "未绑定团队资源源（可选）" }),
+            Some("需要团队资源时运行 ailoom init --url <团队源>".into()),
         );
     }
+    let team_mode = declaration.is_some()
+        || checks
+            .iter()
+            .any(|c| c["check"] == "declaration" && c["ok"] == false);
 
     // 3. 绑定
     let binding = Binding::load(&ctx.layout.binding_path).unwrap_or(None);
@@ -108,13 +113,14 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
                 },
             );
         }
-        None => push(
+        None if team_mode => push(
             &mut checks,
             "binding",
             false,
             json!({ "missing": ctx.layout.binding_path.display().to_string() }),
             Some("运行 ailoom init".into()),
         ),
+        None => {}
     }
 
     // 4. 源锁与快照（离线安全）
@@ -124,8 +130,27 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
         .join(AILOOM_DIR)
         .join("machine")
         .join("sources.lock.json");
-    let lock = SourcesLock::load(&lock_path)?;
-    if let Some(decl) = &declaration {
+    // 体检要能报告损坏的文件本身，不能因为读不了就整体退出
+    let lock = match SourcesLock::load(&lock_path) {
+        Ok(lock) => lock,
+        Err(e) => {
+            push(
+                &mut checks,
+                "source-lock",
+                false,
+                e.to_json(),
+                Some(e.fix.clone().unwrap_or_else(|| {
+                    format!(
+                        "删除损坏的 {} 后运行 ailoom init --refresh 重建",
+                        lock_path.display()
+                    )
+                })),
+            );
+            None
+        }
+    };
+    let lock_failed = checks.iter().any(|c| c["check"] == "source-lock");
+    if let (false, Some(decl)) = (lock_failed, &declaration) {
         match lock
             .as_ref()
             .and_then(|l| l.sources.get(&decl.source.name).cloned())
@@ -186,26 +211,25 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
                 }
             }
         }
-    } else {
-        push(
-            &mut checks,
-            "source-lock",
-            false,
-            json!({ "reason": "无声明" }),
-            Some("运行 ailoom init".into()),
-        );
     }
 
     // 5. 托管清单与目标漂移
-    match ManagedManifest::load(&ctx.layout.managed_manifest_path)? {
-        None => push(
+    match ManagedManifest::load(&ctx.layout.managed_manifest_path) {
+        Err(e) => push(
+            &mut checks,
+            "managed-manifest",
+            false,
+            e.to_json(),
+            e.fix.clone(),
+        ),
+        Ok(None) => push(
             &mut checks,
             "managed-manifest",
             true,
             json!({ "items": 0 }),
             None,
         ),
-        Some(managed) => {
+        Ok(Some(managed)) => {
             let mut drifted: Vec<Value> = Vec::new();
             for (key, item) in &managed.items {
                 let current =

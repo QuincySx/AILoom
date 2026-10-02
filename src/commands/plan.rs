@@ -28,12 +28,10 @@ pub fn run(args: &PlanArgs, json: bool, data_root: Option<&std::path::Path>) -> 
         "excluded_resources": p.desired.excluded.len(),
     });
     if !json {
+        // 不支持项已作为计划动作包含在 summary 中
         print!("{}", p.plan.summary());
-        for u in &p.unsupported {
-            println!("unsupported {} [{}] {}", u.resource_id, u.tool, u.reason);
-        }
         if p.plan.has_conflicts() {
-            println!("存在冲突：目标不会被覆盖；请处理后重新 sync。");
+            println!("{}", crate::sync::plan::CONFLICT_HELP);
         }
     }
     Ok(value)

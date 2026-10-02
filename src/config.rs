@@ -15,7 +15,13 @@ pub struct SourceDeclaration {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// 契约字段名是 `ref`；早期版本写成 `ref_`，读取时兼容
+    #[serde(
+        rename = "ref",
+        alias = "ref_",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ref_: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -29,7 +35,13 @@ pub struct ExtraSource {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// 契约字段名是 `ref`；早期版本写成 `ref_`，读取时兼容
+    #[serde(
+        rename = "ref",
+        alias = "ref_",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ref_: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,

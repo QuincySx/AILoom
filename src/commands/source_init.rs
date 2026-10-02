@@ -196,11 +196,7 @@ pub fn run(
         "skipped_existing": skipped,
         "resources_enumerated": entries.len(),
         "git_inited": git_inited,
-        "next": format!(
-            "成员接入：ailoom init --local-path {} --project {}（或先 push 到远端用 --url）",
-            dir.display(),
-            projects[0]
-        ),
+        "next": next_step(&dir, &projects[0]),
     });
     if !json {
         println!(
@@ -208,8 +204,36 @@ pub fn run(
             dir.display(),
             written.len()
         );
+        println!("{}", value["next"].as_str().unwrap_or_default());
     }
     Ok(value)
+}
+
+/// 给出能照抄执行的接入命令。`--local-path` 只接受业务仓库内的相对路径（绝对路径会被 init 拒绝），
+/// 所以按源目录所处位置分别给出：同仓源 → 相对仓库根的路径；独立 Git 仓库 → `--url`。
+fn next_step(dir: &Path, project: &str) -> String {
+    let top = crate::gitx::git(dir, &["rev-parse", "--show-toplevel"])
+        .ok()
+        .map(|t| PathBuf::from(t.trim()))
+        .and_then(|t| t.canonicalize().ok());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    match top {
+        Some(top) if top == dir => format!(
+            "成员接入：在业务仓库根运行 ailoom init --url {} --project {project}（推送到远端后改用远端地址）",
+            dir.display()
+        ),
+        Some(top) => format!(
+            "成员接入：在 {} 运行 ailoom init --local-path {} --project {project}",
+            top.display(),
+            dir.strip_prefix(&top).unwrap_or(&dir).display()
+        ),
+        None => format!(
+            "成员接入：先在 {} 执行 git init 并提交（或重新运行时加 --git），再在业务仓库根运行 ailoom init --url {} --project {project}；\
+             也可以把源放进业务仓库内，用相对路径 --local-path 绑定",
+            dir.display(),
+            dir.display()
+        ),
+    }
 }
 
 fn manifest_toml(team_id: &str, projects: &[String], roles: &[String]) -> String {
