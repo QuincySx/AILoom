@@ -534,6 +534,8 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
     // 包内容不含开发机绝对路径或秘密（扫描已发布文件集合）
     for f in [
         "packaging/npm/cli.js",
+        "packaging/npm/platforms.js",
+        "packaging/npm/build.mjs",
         "packaging/npm/package.json",
         "packaging/npm/PLATFORMS.md",
         "packaging/npm/README.md",
@@ -558,7 +560,7 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
         .collect();
     assert_eq!(
         files,
-        vec!["cli.js", "PLATFORMS.md"],
+        vec!["cli.js", "platforms.js", "PLATFORMS.md"],
         "发布白名单: {files:?}"
     );
     // 包装器按 package.json 版本下载同版本的 Release 二进制
@@ -573,64 +575,136 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
     );
 }
 
-/// npm 包装器首次运行：从下载源取二进制与 .sha256，校验后缓存；之后离线也能用；
-/// 缓存被改动、下载内容与校验不符都拒绝运行，且不留下二进制。
+/// npm 发布包：build.mjs 生成 5 个平台子包与主包（子包按 os/cpu 区分、主包精确锁定子包版本）；
+/// 主包运行同目录 node_modules 里的平台子包二进制；子包版本不符或缺失时明确报错。
 #[test]
-fn npm_wrapper_downloads_verifies_and_caches() {
+fn npm_packages_build_and_wrapper_runs_platform_package() {
     let node = resolve_node();
-    let fix = start_http_server();
-    publish(&fix, &format!("ailoom-{TRIPLE}"), V1);
     let env = InstallerEnv::new();
-    let home = env.tmp.path().join("home");
     let repo = std::env::current_dir().unwrap();
-    let run = |home: &Path, base: &str| {
+    let version = env!("CARGO_PKG_VERSION");
+    let dist = env.tmp.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    for name in [
+        "ailoom-aarch64-apple-darwin",
+        "ailoom-x86_64-apple-darwin",
+        "ailoom-x86_64-unknown-linux-gnu",
+        "ailoom-aarch64-unknown-linux-gnu",
+        "ailoom-x86_64-pc-windows-msvc.exe",
+    ] {
+        std::fs::write(dist.join(name), V1).unwrap();
+    }
+    // 输出目录本身叫 node_modules：主包与子包互为兄弟目录，与 npm 安装后的布局一致
+    let modules = env.tmp.path().join("prefix/node_modules");
+    let out = Command::new(&node)
+        .arg(repo.join("packaging/npm/build.mjs"))
+        .args([dist.to_str().unwrap(), version, modules.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "build.mjs 失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let order: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| {
+            Path::new(l)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(order.len(), 6);
+    assert_eq!(
+        order.last().map(String::as_str),
+        Some("ailoom-cli"),
+        "主包最后发布"
+    );
+
+    let read = |pkg: &str| -> serde_json::Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(modules.join(pkg).join("package.json")).unwrap(),
+        )
+        .unwrap()
+    };
+    let main = read("ailoom-cli");
+    let deps = main["optionalDependencies"].as_object().unwrap();
+    assert_eq!(deps.len(), 5);
+    assert!(
+        deps.values().all(|v| v == version),
+        "子包精确锁定版本: {deps:?}"
+    );
+    let arm = read("ailoom-cli-darwin-arm64");
+    assert_eq!(arm["version"], version);
+    assert_eq!(arm["os"], serde_json::json!(["darwin"]));
+    assert_eq!(arm["cpu"], serde_json::json!(["arm64"]));
+    assert_eq!(
+        read("ailoom-cli-linux-x64")["libc"],
+        serde_json::json!(["glibc"])
+    );
+    assert!(modules
+        .join("ailoom-cli-win32-x64/bin/ailoom.exe")
+        .is_file());
+
+    // 打包后的二进制保持可执行
+    let pack = Command::new("npm")
+        .args(["pack", "--dry-run", "--json", "--ignore-scripts"])
+        .current_dir(modules.join("ailoom-cli-darwin-arm64"))
+        .output()
+        .unwrap_or_else(|e| panic!("需要 PATH 中存在 npm（{e}）"));
+    let packed: serde_json::Value = serde_json::from_slice(&pack.stdout).unwrap_or_else(|e| {
+        panic!(
+            "npm pack 输出不是 JSON（{e}）: {}",
+            String::from_utf8_lossy(&pack.stderr)
+        )
+    });
+    let bin = packed[0]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == "bin/ailoom")
+        .expect("子包包含 bin/ailoom");
+    assert_ne!(
+        bin["mode"].as_u64().unwrap() & 0o111,
+        0,
+        "bin/ailoom 可执行"
+    );
+
+    let run = || {
         Command::new(&node)
-            .arg(repo.join("packaging/npm/cli.js"))
+            .arg(modules.join("ailoom-cli/cli.js"))
             .arg("passthrough-arg")
-            .env("HOME", home)
             .env_remove("AILOOM_BIN_DIR")
-            .env("AILOOM_DOWNLOAD_BASE", base)
             .env("AILOOM_TRIPLE", TRIPLE)
             .output()
             .unwrap()
     };
-
-    let out = run(&home, &fix.base());
+    let out = run();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
         "installed-v1",
-        "首次运行下载并执行: stderr={}",
+        "运行平台子包的二进制: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let cached = home
-        .join(".ailoom/npm")
-        .join(env!("CARGO_PKG_VERSION"))
-        .join(format!("ailoom-{TRIPLE}"));
-    assert!(cached.is_file(), "二进制缓存在 ~/.ailoom/npm/<版本>/");
 
-    // 下载源不可达：用缓存
-    let out = run(&home, "http://127.0.0.1:9");
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "installed-v1");
+    // 子包版本与主包不符 → 拒绝
+    let sub = modules.join("ailoom-cli-darwin-arm64/package.json");
+    let mut changed = arm.clone();
+    changed["version"] = serde_json::json!("0.0.1");
+    std::fs::write(&sub, changed.to_string()).unwrap();
+    let out = run();
+    assert_ne!(out.status.code(), Some(0), "版本不符必须拒绝");
 
-    // 缓存被改动 → 拒绝
-    std::fs::write(&cached, V2).unwrap();
-    let out = run(&home, &fix.base());
-    assert_ne!(out.status.code(), Some(0), "缓存与校验不符必须拒绝");
-    assert!(!String::from_utf8_lossy(&out.stdout).contains("installed-v2"));
-
-    // 下载内容与 .sha256 不符 → 拒绝，且不留下二进制
-    std::fs::write(
-        fix.dir.join(format!("ailoom-{TRIPLE}.sha256")),
-        format!("{}  x\n", "0".repeat(64)),
-    )
-    .unwrap();
-    let home2 = env.tmp.path().join("home2");
-    let out = run(&home2, &fix.base());
-    assert_ne!(out.status.code(), Some(0), "校验不符必须拒绝");
-    let dir2 = home2.join(".ailoom/npm").join(env!("CARGO_PKG_VERSION"));
+    // 子包缺失（--omit=optional）→ 指出缺哪个包
+    std::fs::remove_dir_all(modules.join("ailoom-cli-darwin-arm64")).unwrap();
+    let out = run();
+    assert_ne!(out.status.code(), Some(0));
     assert!(
-        !dir2.join(format!("ailoom-{TRIPLE}")).exists(),
-        "校验失败不留下二进制"
+        String::from_utf8_lossy(&out.stderr).contains("ailoom-cli-darwin-arm64"),
+        "报错指出缺少的子包: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }
 

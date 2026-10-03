@@ -1,7 +1,7 @@
 {
   "name": "ailoom-cli",
   "version": "0.2.0",
-  "description": "AILoom CLI: downloads and runs the ailoom binary for your platform (no Rust toolchain required)",
+  "description": "AILoom CLI: runs the prebuilt ailoom binary for your platform (no Rust toolchain required)",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -12,6 +12,7 @@
   },
   "files": [
     "cli.js",
+    "platforms.js",
     "PLATFORMS.md"
   ],
   "repository": {

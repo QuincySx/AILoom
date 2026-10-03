@@ -7,6 +7,6 @@ npm install -g ailoom-cli
 ailoom web        # start the local web console and open it
 ```
 
-On first run the wrapper downloads the ailoom binary for your platform from the GitHub Release matching this package version and verifies its sha256. Supported platforms, mirrors and offline installs: [PLATFORMS.md](PLATFORMS.md). Full guide: [installation docs](https://github.com/QuincySx/AILoom/blob/main/docs/guide/INSTALL.md).
+npm installs the prebuilt binary for your platform as an optional dependency (`ailoom-cli-<os>-<cpu>`); nothing is downloaded at run time. Supported platforms and offline use: [PLATFORMS.md](PLATFORMS.md). Full guide: [installation docs](https://github.com/QuincySx/AILoom/blob/main/docs/guide/INSTALL.md).
 
 License: Apache-2.0

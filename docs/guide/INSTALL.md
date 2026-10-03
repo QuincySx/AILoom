@@ -2,7 +2,7 @@
 
 ## 安装
 
-用 npm（需要 Node 20 及以上，首次运行时下载当前平台的二进制并校验）：
+用 npm（需要 Node 20 及以上；npm 会自动装上当前平台的预编译版本）：
 
 ```bash
 npm install -g ailoom-cli
@@ -19,12 +19,7 @@ ailoom version
 ailoom web                  # 启动后台服务并打开网页
 ```
 
-不用 npm、也没有 Rust 时，直接下载 GitHub Release 里的预编译版本：
-
-```bash
-AILOOM_DOWNLOAD_BASE=https://github.com/QuincySx/AILoom/releases/latest/download scripts/install.sh
-# 下载、校验 sha256 后安装到 ~/.ailoom/bin/ailoom
-```
+`scripts/install.sh` 也能从自建的下载源安装预编译版本（`AILOOM_DOWNLOAD_BASE=<下载地址>`，下载、校验 sha256 后安装到 `~/.ailoom/bin/ailoom`）；项目本身不发布 GitHub Release。
 
 安装过程中任何一步失败都会保留原来的安装。
 

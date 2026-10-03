@@ -13,7 +13,7 @@
 - **诊断报告**：`ailoom diagnose`（网页「服务 → 导出诊断信息」）生成一份可以直接发给维护者的文件，不含用户名、令牌和资源内容。
 - **升级**：`ailoom service restart`；重新运行安装脚本时，正在运行的网页服务会自动换成新版本。
 - 安装、升级、数据位置与备份、卸载的完整说明见 `docs/guide/INSTALL.md`；仓库补上 `LICENSE`（Apache-2.0）。
-- **npm 安装**：`npm install -g ailoom-cli`，首次运行下载当前平台的二进制并校验 sha256；支持内网镜像与离线目录。
+- **npm 安装**：`npm install -g ailoom-cli`，npm 会自动装上当前平台的预编译版本（macOS、Linux、Windows）。
 
 ### 修复
 

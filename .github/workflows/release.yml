@@ -1,10 +1,9 @@
 # Release pipeline, started by hand (workflow_dispatch):
-# - builds ailoom for five targets; each artifact is ailoom-<triple> plus
-#   ailoom-<triple>.sha256 ("<hex>  <file>"), the layout scripts/install.sh and
-#   packaging/npm/cli.js download from;
-# - by default creates the GitHub Release v<Cargo.toml version> and then publishes
-#   packaging/npm as ailoom-cli via npm Trusted Publishing (OIDC, no token).
-#   npm rejects a version that already exists, so a rerun cannot publish twice.
+# - builds ailoom for five targets; each artifact is ailoom-<triple> plus ailoom-<triple>.sha256;
+# - by default publishes to npm: one package per platform (ailoom-cli-<os>-<cpu>) and the wrapper
+#   ailoom-cli, which pins them as optional dependencies (packaging/npm/build.mjs).
+#   Publishing uses npm Trusted Publishing (OIDC); a brand-new package's first publish needs the
+#   NPM_TOKEN secret instead. Versions already on npm are skipped, so a rerun is safe.
 # Uncheck "publish" to only build.
 
 name: release
@@ -13,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: 'Create the GitHub Release and publish to npm (uncheck to only build)'
+        description: 'Publish to npm (uncheck to only build)'
         type: boolean
         default: true
 
@@ -78,72 +77,48 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  release:
-    name: publish release
-    runs-on: ubuntu-latest
-    needs: build
-    if: ${{ inputs.publish == true }}
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.meta.outputs.version }}
-    steps:
-      - uses: actions/checkout@v4
-      # Tag follows Cargo.toml; release notes are that version's CHANGELOG.md section, required
-      - name: Version and release notes
-        id: meta
-        shell: bash
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          LC_ALL=C awk -v v="$version" 'index($0, "## " v) == 1 && (length($0) == length("## " v) || substr($0, length("## " v) + 1, 1) !~ /[0-9.]/) {f=1; next} /^## / {if (f) exit} f' CHANGELOG.md > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "CHANGELOG.md has no section for $version; add one before releasing" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-          path: dist
-      - name: Verify sha256 sidecars
-        shell: bash
-        run: |
-          cd dist
-          for sum in *.sha256; do
-            sha256sum -c "$sum"
-          done
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.meta.outputs.version }}
-          name: v${{ steps.meta.outputs.version }}
-          body_path: release-notes.md
-          files: dist/*
-
   npm:
-    # The npm wrapper downloads this version's Release binary on first run, so it goes after the Release
     name: publish npm
     runs-on: ubuntu-latest
-    needs: release
+    needs: build
     if: ${{ inputs.publish == true }}
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Verify sha256 sidecars
+        working-directory: dist
+        run: |
+          for sum in *.sha256; do
+            sha256sum -c "$sum"
+          done
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
       # Trusted Publishing needs npm 11.5.1+
       - name: Update npm
         run: npm install -g npm@latest
-      - name: Prepare package
-        working-directory: packaging/npm
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
+      - name: Assemble packages
         run: |
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
-          cp ../../LICENSE .
-          npm pack --ignore-scripts --dry-run
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          node packaging/npm/build.mjs dist "$version" "$RUNNER_TEMP/npm" > "$RUNNER_TEMP/npm-order.txt"
       - name: Publish
-        working-directory: packaging/npm
-        run: npm publish --ignore-scripts --access public
+        env:
+          # Only used when trusted publishing is not configured yet (first publish of a new package)
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          while read -r dir; do
+            name=$(node -p "require('$dir/package.json').name")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already on npm, skipping"
+              continue
+            fi
+            npm publish "$dir" --ignore-scripts --access public
+          done < "$RUNNER_TEMP/npm-order.txt"

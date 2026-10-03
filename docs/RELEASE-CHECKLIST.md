@@ -7,7 +7,7 @@
 - [ ] `Cargo.toml` 的 `version` 已更新（`Cargo.lock` 只应改这一行，锁文件格式不要跟着新 cargo 升级）
 - [ ] `CHANGELOG.md` 有该版本的段落，写用户能感知的新增、修复与已知限制；发布流水线以它作为 Release 说明，缺失时拒绝发布
 - [ ] 打签名 tag：`git tag -s v<版本> -m "v<版本>"`
-- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：默认创建 GitHub Release 并发布 npm 包 `ailoom-cli`；取消勾选 `publish` 只构建制品。npm 拒绝重复版本，重跑不会重复发布
+- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：默认把 5 个平台子包和主包 `ailoom-cli` 发布到 npm（不发 GitHub Release）；取消勾选 `publish` 只构建。npm 上已有的版本会跳过，重跑不会重复发布
 - [ ] `packaging/npm/package.json` 的 `version` 与 `Cargo.toml` 一致（`tests/installer.rs` 断言；流水线发布时也会写入）
 
 ## 1. 质量门
@@ -38,8 +38,8 @@
 - [ ] 升级安装：网页服务在运行时，安装后自动重启为新版本（`AILOOM_INSTALL_RESTART=0` 可关闭）；`tests/installer.rs` 覆盖
 - [ ] macOS 二进制签名与公证：需要 Apple Developer ID 证书与公证账号（尚未配置）；未签名的下载版会被 Gatekeeper 拦截，源码安装不受影响
 - [ ] 制品无开发机路径/秘密；hash 校验清单随包发布
-- [ ] npm 首次配置：npmjs.com → `ailoom-cli` → Settings → Trusted Publisher 选 GitHub Actions，填 `QuincySx` / `AILoom` / `release.yml`；之后发布不需要令牌
-- [ ] 发布后验证：`npm i -g ailoom-cli && ailoom version` 输出新版本（首次运行会下载同版本的 Release 二进制）
+- [ ] npm 首次发布：平台子包 `ailoom-cli-{darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64}` 是新包，第一次发布要在仓库 Secrets 放 `NPM_TOKEN`；发布后在 npmjs.com 给这 5 个包和 `ailoom-cli` 各配一次 Trusted Publisher（GitHub Actions，`QuincySx` / `AILoom` / `release.yml`），再删掉 `NPM_TOKEN`
+- [ ] 发布后验证：`npm i -g ailoom-cli && ailoom version` 输出新版本
 
 ## 5. 文档
 
