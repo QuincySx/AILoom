@@ -34,8 +34,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # CI 不接触开发者主目录：HOME 指向临时目录，测试本身使用注入数据根
       - name: Isolate HOME
+        # rustup 默认在 $HOME/.rustup 找工具链：换 HOME 前先固定它的位置
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
+          echo "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
           echo "HOME=$RUNNER_TEMP/fake-home" >> "$GITHUB_ENV"
       # CC Switch 迁移通过 sqlite3 命令行只读查询；不依赖运行环境是否预装
       - name: Install sqlite3
