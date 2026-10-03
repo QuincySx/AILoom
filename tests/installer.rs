@@ -536,6 +536,7 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
         "packaging/npm/cli.js",
         "packaging/npm/package.json",
         "packaging/npm/PLATFORMS.md",
+        "packaging/npm/README.md",
     ] {
         let text = std::fs::read_to_string(repo.join(f)).unwrap();
         assert!(!text.contains("/Users/"), "{f} 含绝对路径");
@@ -559,6 +560,77 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
         files,
         vec!["cli.js", "PLATFORMS.md"],
         "发布白名单: {files:?}"
+    );
+    // 包装器按 package.json 版本下载同版本的 Release 二进制
+    assert_eq!(
+        pkg["version"],
+        env!("CARGO_PKG_VERSION"),
+        "npm 包版本与 Cargo.toml 不一致"
+    );
+    assert_eq!(
+        pkg["repository"]["url"], "git+https://github.com/QuincySx/AILoom.git",
+        "provenance 要求 repository 与发布仓库一致"
+    );
+}
+
+/// npm 包装器首次运行：从下载源取二进制与 .sha256，校验后缓存；之后离线也能用；
+/// 缓存被改动、下载内容与校验不符都拒绝运行，且不留下二进制。
+#[test]
+fn npm_wrapper_downloads_verifies_and_caches() {
+    let node = resolve_node();
+    let fix = start_http_server();
+    publish(&fix, &format!("ailoom-{TRIPLE}"), V1);
+    let env = InstallerEnv::new();
+    let home = env.tmp.path().join("home");
+    let repo = std::env::current_dir().unwrap();
+    let run = |home: &Path, base: &str| {
+        Command::new(&node)
+            .arg(repo.join("packaging/npm/cli.js"))
+            .arg("passthrough-arg")
+            .env("HOME", home)
+            .env_remove("AILOOM_BIN_DIR")
+            .env("AILOOM_DOWNLOAD_BASE", base)
+            .env("AILOOM_TRIPLE", TRIPLE)
+            .output()
+            .unwrap()
+    };
+
+    let out = run(&home, &fix.base());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "installed-v1",
+        "首次运行下载并执行: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cached = home
+        .join(".ailoom/npm")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join(format!("ailoom-{TRIPLE}"));
+    assert!(cached.is_file(), "二进制缓存在 ~/.ailoom/npm/<版本>/");
+
+    // 下载源不可达：用缓存
+    let out = run(&home, "http://127.0.0.1:9");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "installed-v1");
+
+    // 缓存被改动 → 拒绝
+    std::fs::write(&cached, V2).unwrap();
+    let out = run(&home, &fix.base());
+    assert_ne!(out.status.code(), Some(0), "缓存与校验不符必须拒绝");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("installed-v2"));
+
+    // 下载内容与 .sha256 不符 → 拒绝，且不留下二进制
+    std::fs::write(
+        fix.dir.join(format!("ailoom-{TRIPLE}.sha256")),
+        format!("{}  x\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let home2 = env.tmp.path().join("home2");
+    let out = run(&home2, &fix.base());
+    assert_ne!(out.status.code(), Some(0), "校验不符必须拒绝");
+    let dir2 = home2.join(".ailoom/npm").join(env!("CARGO_PKG_VERSION"));
+    assert!(
+        !dir2.join(format!("ailoom-{TRIPLE}")).exists(),
+        "校验失败不留下二进制"
     );
 }
 

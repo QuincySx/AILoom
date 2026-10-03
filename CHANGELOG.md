@@ -13,6 +13,7 @@
 - **诊断报告**：`ailoom diagnose`（网页「服务 → 导出诊断信息」）生成一份可以直接发给维护者的文件，不含用户名、令牌和资源内容。
 - **升级**：`ailoom service restart`；重新运行安装脚本时，正在运行的网页服务会自动换成新版本。
 - 安装、升级、数据位置与备份、卸载的完整说明见 `docs/guide/INSTALL.md`；仓库补上 `LICENSE`（Apache-2.0）。
+- **npm 安装**：`npm install -g ailoom-cli`，首次运行下载当前平台的二进制并校验 sha256；支持内网镜像与离线目录。
 
 ### 修复
 
@@ -29,10 +30,8 @@
 - Linux 上团队 Hook 超时时，回收进程的信号会打到 AILoom 自身所在的进程组，连同调用方一起被杀掉。
 - `ailoom init --url` 不写 `--ref` 时固定用 `main`，默认分支是 master 的团队仓库绑定失败；现在跟随远端默认分支。
 - 兼容较旧的 git（2.30 起，如 Debian 11）：Worktree 枚举、仓库身份、锁定原因与 `.git/info/exclude` 定位不再依赖新版 git 才有的参数。
-- npm 包装在 Node 18 / 20 上无法启动。
 
 ### 已知限制
 
 - Claude Code、Codex 从用户级目录加载全局 Skill 尚未在真机上验证。
 - Grok、Pi、OpenCode、Cursor 只按官方文档路径部署，未逐一真机验证；Windows 未验证。
-- 还没有远端仓库，CI 没有真正运行过。

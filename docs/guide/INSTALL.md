@@ -2,7 +2,15 @@
 
 ## 安装
 
-目前只能从源码安装（需要 Rust 1.85 及以上，[rustup](https://rustup.rs) 一条命令装好）：
+用 npm（需要 Node 20 及以上，首次运行时下载当前平台的二进制并校验）：
+
+```bash
+npm install -g ailoom-cli
+ailoom version
+ailoom web                  # 启动后台服务并打开网页
+```
+
+或从源码安装（需要 Rust 1.85 及以上，[rustup](https://rustup.rs) 一条命令装好）：
 
 ```bash
 git clone <本仓库> && cd ailoom
@@ -11,17 +19,18 @@ ailoom version
 ailoom web                  # 启动后台服务并打开网页
 ```
 
-预编译版本发布后，没有 Rust 也能安装：
+不用 npm、也没有 Rust 时，直接下载 GitHub Release 里的预编译版本：
 
 ```bash
-AILOOM_DOWNLOAD_BASE=<下载地址> scripts/install.sh    # 下载、校验 sha256 后安装到 ~/.ailoom/bin/ailoom
+AILOOM_DOWNLOAD_BASE=https://github.com/QuincySx/AILoom/releases/latest/download scripts/install.sh
+# 下载、校验 sha256 后安装到 ~/.ailoom/bin/ailoom
 ```
 
 安装过程中任何一步失败都会保留原来的安装。
 
 ## 升级
 
-重新运行一次 `scripts/install.sh` 即可。如果网页服务正在运行，装完会自动重启成新版本；不想自动重启就设置 `AILOOM_INSTALL_RESTART=0`，之后手动运行：
+npm 安装的运行 `npm install -g ailoom-cli@latest`；脚本安装的重新运行一次 `scripts/install.sh`。如果网页服务正在运行，装完会自动重启成新版本；不想自动重启就设置 `AILOOM_INSTALL_RESTART=0`，之后手动运行：
 
 ```bash
 ailoom service restart
@@ -48,7 +57,7 @@ ailoom service restart
 ```bash
 ailoom service disable && ailoom service stop    # 关闭登录自启动并停止网页服务
 ailoom uninstall --execute                       # 在每个项目里运行：移除 AILoom 部署的文件（你改过的文件会保留）
-cargo uninstall ailoom                           # 删除程序（用下载方式安装的：scripts/install.sh uninstall）
+cargo uninstall ailoom                           # 删除程序（npm 安装的：npm uninstall -g ailoom-cli；下载安装的：scripts/install.sh uninstall）
 ```
 
 卸载不会删除你的数据。确定不要了，再手动删除上表里的数据目录。
@@ -64,7 +73,6 @@ cargo uninstall ailoom                           # 删除程序（用下载方�
 | 平台 | 状态 |
 |---|---|
 | macOS（Apple 芯片 / Intel） | 可用，日常开发与测试都在 macOS 上 |
-| Linux（x86_64 / arm64） | 可以编译和运行，未经人工完整验证 |
+| Linux（x86_64 / arm64） | CI 在 Ubuntu 上跑全部测试；未经人工完整验证 |
 | Windows | 未验证；后台服务与登录自启动不支持，可以用 `ailoom console` 前台运行 |
 
-npm 包装（`packaging/npm/`）与预编译版本尚未发布。

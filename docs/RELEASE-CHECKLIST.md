@@ -1,13 +1,14 @@
 # 发布检查单（RELEASE-CHECKLIST）
 
-> 每次发版前逐项核对。0.2.0（2026-10-02）是第一个打 tag 的测试版，尚未对外发布制品。
+> 每次发版前逐项核对。
 
 ## 0. 版本
 
 - [ ] `Cargo.toml` 的 `version` 已更新（`Cargo.lock` 只应改这一行，锁文件格式不要跟着新 cargo 升级）
 - [ ] `CHANGELOG.md` 有该版本的段落，写用户能感知的新增、修复与已知限制；发布流水线以它作为 Release 说明，缺失时拒绝发布
 - [ ] 打签名 tag：`git tag -s v<版本> -m "v<版本>"`
-- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：先不勾 `publish` 只构建制品；确认后再勾选创建 GitHub Release（需要仓库配置 `RELEASE_TOKEN`）
+- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：先不勾 `publish` 只构建制品；确认后勾选 `publish` 创建 GitHub Release，同时勾选 `npm` 发布 npm 包 `ailoom-cli`
+- [ ] `packaging/npm/package.json` 的 `version` 与 `Cargo.toml` 一致（`tests/installer.rs` 断言；流水线发布时也会写入）
 
 ## 1. 质量门
 
@@ -15,7 +16,7 @@
 - [ ] `cargo clippy --all-targets -- -D warnings` 通过
 - [ ] `cargo test` 全部通过（含 tests/e2e.rs 端到端验收）
 - [ ] 端到端验收（AIL-023）在目标平台跑通并记录输出摘要
-- [ ] 浏览器验收：`scripts/ui-browser.sh` 全部模式 PASS（需要本机 Chrome；CI 暂不运行），日志与截图在 `target/ui-browser/`
+- [ ] 浏览器验收：`scripts/ui-browser.sh` 全部模式 PASS（CI `browser` job；本机运行需要 Chrome），日志与截图在 `target/ui-browser/`
 - [ ] `python3 scripts/docs_check.py` 与 `node --experimental-vm-modules --test tests/frontend_components.mjs` 通过（CI `frontend-and-docs` job）
 - [ ] MSRV（1.85，CI `msrv` job）下 `cargo check --locked --all-targets` 通过（若变更依赖，同步更新 Cargo.toml `rust-version` 与 CI）
 
@@ -37,12 +38,13 @@
 - [ ] 升级安装：网页服务在运行时，安装后自动重启为新版本（`AILOOM_INSTALL_RESTART=0` 可关闭）；`tests/installer.rs` 覆盖
 - [ ] macOS 二进制签名与公证：需要 Apple Developer ID 证书与公证账号（尚未配置）；未签名的下载版会被 Gatekeeper 拦截，源码安装不受影响
 - [ ] 制品无开发机路径/秘密；hash 校验清单随包发布
-- [ ] npm 包名可用性重新核实；未经明确发布指令不实际 `npm publish` / 推公开仓库
+- [ ] npm 首次配置：npmjs.com → `ailoom-cli` → Settings → Trusted Publisher 选 GitHub Actions，填 `QuincySx` / `AILoom` / `release.yml`；之后发布不需要令牌
+- [ ] 发布后验证：`npm i -g ailoom-cli && ailoom version` 输出新版本（首次运行会下载同版本的 Release 二进制）
 
 ## 5. 文档
 
 - [ ] `docs/guide/INSTALL.md` 的安装、升级、数据位置、卸载与诊断说明与实际一致
-- [ ] 仓库根目录有 `LICENSE`；`.ailoom/team/THIRD_PARTY.md` 中第三方 Skill 的许可证在公开推送前补齐
+- [ ] 仓库根目录有 `LICENSE`；第三方 Skill 不提交进仓库（见 `.ailoom/team/THIRD_PARTY.md`）
 
 - [ ] docs/QUICKSTART.md、docs/SUPPORT.md 与实际命令行一致（help 输出比对）
 - [ ] docs/CONTRACTS.md 变更记录已更新；受影响卡片已同步
