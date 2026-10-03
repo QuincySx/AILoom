@@ -2,6 +2,8 @@
 
 以 Rust 构建的本地优先工具，把项目与团队的 AI 资源（Skill、Rules、Agent、MCP）、知识与协作经验统一管理，并部署到各家 AI 编程工具。
 
+> 当前版本 0.2.0（测试版），变化见 [更新记录](CHANGELOG.md)。
+>
 > 当前迭代：[2026-10 稳定与收敛迭代](docs/initiatives/iteration-2026-10.md) · 任务状态见 [任务看板](docs/BACKLOG.md)（以 [cards.json](docs/cards.json) 为准）
 
 ## 快速开始
