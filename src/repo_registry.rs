@@ -124,11 +124,7 @@ pub fn discover_repo(start: &Path) -> Result<RepoDiscovery> {
         );
     }
     // Git 身份探测错误必须显式失败，不允许静默按非 Git 处理
-    let common = git(
-        &start,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    let common_dir = PathBuf::from(common.trim())
+    let common_dir = crate::gitx::rev_parse_path(&start, &["--git-common-dir"])?
         .canonicalize()
         .map_err(|e| Error::new(code::GIT_COMMAND_FAILED, format!("common-dir 不可用: {e}")))?;
     let repo_root = match common_dir.file_name().and_then(|n| n.to_str()) {
@@ -177,10 +173,30 @@ pub fn discover_repo(start: &Path) -> Result<RepoDiscovery> {
     })
 }
 
+/// 链接 worktree 的 `.git` 文件指向 `<common>/worktrees/<id>`，锁定原因存在其下的 `locked`。
+fn locked_reason_from_gitdir(worktree: &Path) -> Option<String> {
+    let pointer = std::fs::read_to_string(worktree.join(".git")).ok()?;
+    let gitdir = worktree.join(pointer.strip_prefix("gitdir:")?.trim());
+    let reason = std::fs::read_to_string(gitdir.join("locked")).ok()?;
+    let reason = reason.trim();
+    (!reason.is_empty()).then(|| reason.to_string())
+}
+
 /// `git worktree list --porcelain -z` 无损解析（-z 模式：字段以 NUL 结束，
 /// 记录以双 NUL 结束；路径含空格/UTF-8 安全）。
 pub fn list_worktrees(any_worktree: &Path) -> Result<Vec<WorktreeInfo>> {
-    let raw = git(any_worktree, &["worktree", "list", "--porcelain", "-z"])?;
+    // `-z` 需要 git 2.36+。更早的版本按行输出、字段与记录结构相同：换行换成 NUL 后共用解析。
+    let raw = match git(any_worktree, &["worktree", "list", "--porcelain", "-z"]) {
+        Ok(raw) => raw,
+        Err(e)
+            if e.context["stderr"]
+                .as_str()
+                .is_some_and(|s| s.contains("unknown switch")) =>
+        {
+            git(any_worktree, &["worktree", "list", "--porcelain"])?.replace('\n', "\0")
+        }
+        Err(e) => return Err(e),
+    };
     let mut out = Vec::new();
     let mut info: Option<WorktreeInfo> = None;
     let blank = || WorktreeInfo {
@@ -194,6 +210,10 @@ pub fn list_worktrees(any_worktree: &Path) -> Result<Vec<WorktreeInfo>> {
     };
     let finish = |info: &mut Option<WorktreeInfo>, out: &mut Vec<WorktreeInfo>| {
         if let Some(mut i) = info.take() {
+            if i.locked_reason.is_none() {
+                // git 2.31 之前 porcelain 不输出锁定状态：从该 worktree 的 gitdir/locked 读
+                i.locked_reason = locked_reason_from_gitdir(&i.path);
+            }
             if !i.path.as_os_str().is_empty() {
                 if let Ok(canon) = i.path.canonicalize() {
                     i.path = canon;

@@ -72,7 +72,9 @@ pub fn run(
         decl.source.url = Some(url.clone());
         decl.source.path = None;
         if args.ref_.is_none() && decl.source.ref_.is_none() {
-            decl.source.ref_ = Some("main".into());
+            // 跟随远端默认分支（可能是 master）；查不到再用 main
+            let branch = crate::gitx::remote_default_branch(url);
+            decl.source.ref_ = Some(branch.unwrap_or_else(|| "main".into()));
         }
     }
     if let Some(local) = &args.local_path {

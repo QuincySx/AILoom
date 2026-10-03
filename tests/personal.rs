@@ -74,6 +74,24 @@ fn make_repo(c: &Ctx, name: &str) -> PathBuf {
     cmd.args(["init", "-q"]).current_dir(&repo);
     let st = cmd.status().unwrap();
     assert!(st.success());
+    // 有一个提交才能在旧版 git（< 2.42）上从它派生 worktree
+    let st = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ])
+        .current_dir(&repo)
+        .status()
+        .unwrap();
+    assert!(st.success());
     std::fs::write(repo.join("README.md"), "demo").unwrap();
     repo
 }

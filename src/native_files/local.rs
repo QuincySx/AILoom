@@ -185,18 +185,7 @@ fn ignore_block(record: &Record) -> String {
 }
 fn exclude(record: &Record, enable: bool) -> Result<()> {
     // Git resolves info/exclude through the common directory for linked worktrees.
-    let path = PathBuf::from(
-        git(
-            &record.root,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "info/exclude",
-            ],
-        )?
-        .trim(),
-    );
+    let path = crate::gitx::rev_parse_path(&record.root, &["--git-path", "info/exclude"])?;
     check_path(&path)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

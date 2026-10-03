@@ -452,6 +452,16 @@ fn ail039_subproject_scope_boundaries() {
 /// porcelain -z 无损：含换行的路径不会被记录分隔符截断（AIL-039）。
 #[test]
 fn ail039_worktree_path_with_newline_survives_porcelain_z() {
+    // `worktree list -z` 需要 git 2.36+；更早的版本没有无损输出含换行路径的方式
+    let version = git(Path::new("."), &["--version"]).unwrap();
+    let mut parts = version
+        .trim_start_matches("git version ")
+        .split('.')
+        .map(|p| p.parse::<u32>().unwrap_or(0));
+    if (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) < (2, 36) {
+        eprintln!("跳过：{version} 不支持 worktree list -z");
+        return;
+    }
     let tmp = tempfile::tempdir().unwrap();
     let main = tmp.path().join("main");
     ail039_seed_repo(&main);

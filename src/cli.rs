@@ -60,7 +60,7 @@ pub enum Command {
         /// 团队资源源 Git URL（禁止内嵌凭据）
         #[arg(long)]
         url: Option<String>,
-        /// 源 ref（分支/标签），默认 main
+        /// 源 ref（分支/标签），默认跟随远端默认分支
         #[arg(long)]
         ref_: Option<String>,
         /// 源别名，默认 team

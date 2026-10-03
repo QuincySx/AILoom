@@ -91,15 +91,9 @@ fn repository_anchor(root: &Path, is_git: bool) -> Result<String> {
         }
     }
     // 无远端：用主 worktree 的 git common dir 路径哈希，同一仓库的各 worktree 共享
-    let common = gitx::git_optional(
-        root,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )
-    .unwrap_or_default();
-    let base = if common.trim().is_empty() {
-        root.join(".git").to_string_lossy().to_string()
-    } else {
-        common.trim().to_string()
+    let base = match gitx::rev_parse_path(root, &["--git-common-dir"]) {
+        Ok(common) => common.to_string_lossy().to_string(),
+        Err(_) => root.join(".git").to_string_lossy().to_string(),
     };
     Ok(format!("path+{}", sha256_prefix(base.as_bytes(), 32)))
 }

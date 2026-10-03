@@ -26,6 +26,10 @@
 - 关闭工具后 `.git/info/exclude` 里的条目不会移除。
 - 嵌套仓库与 linked worktree 会继承外层目录的项目声明。
 - 带 BOM 的 SKILL.md 导入后丢失描述；多处报错不带路径或修复提示；多处提示里的命令写法 CLI 不接受。
+- Linux 上团队 Hook 超时时，回收进程的信号会打到 AILoom 自身所在的进程组，连同调用方一起被杀掉。
+- `ailoom init --url` 不写 `--ref` 时固定用 `main`，默认分支是 master 的团队仓库绑定失败；现在跟随远端默认分支。
+- 兼容较旧的 git（2.30 起，如 Debian 11）：Worktree 枚举、仓库身份、锁定原因与 `.git/info/exclude` 定位不再依赖新版 git 才有的参数。
+- npm 包装在 Node 18 / 20 上无法启动。
 
 ### 已知限制
 

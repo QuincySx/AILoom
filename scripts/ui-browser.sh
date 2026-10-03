@@ -1,12 +1,19 @@
 #!/bin/bash
 # 浏览器验收：在隔离目录中启动控制台与调试 Chrome，依次运行 tests/ui_browser.mjs 的全部模式。
 # 用法：scripts/ui-browser.sh [输出目录]    （默认 target/ui-browser）
-# 需要：已构建的 target/debug/ailoom、Node 22+、本机 Chrome（CHROME 可覆盖路径）。
+# 需要：已构建的 target/debug/ailoom、Node 22+、Chrome 或 Chromium（CHROME 可覆盖路径；
+# CHROME_FLAGS 追加启动参数，例如容器里以 root 运行时的 --no-sandbox）。
 # 不触碰真实 HOME / ~/.claude / ~/.codex；结束时只停止本脚本启动的进程。
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-$ROOT/target/ui-browser}
-CHROME=${CHROME:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
+if [ -z "${CHROME:-}" ]; then
+  for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "$(command -v google-chrome 2>/dev/null)" "$(command -v chromium 2>/dev/null)" "$(command -v chromium-browser 2>/dev/null)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then CHROME=$candidate; break; fi
+  done
+fi
+[ -n "${CHROME:-}" ] || { echo "未找到 Chrome / Chromium；用 CHROME=<路径> 指定" >&2; exit 2; }
 CONSOLE_PORT=${CONSOLE_PORT:-47971}
 CDP_PORT=${CDP_PORT:-9251}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/ailoom-ui.XXXXXX")
@@ -27,7 +34,7 @@ start_chrome() {
   HOME="$REAL_HOME" "$CHROME" --headless=new --remote-debugging-port="$CDP_PORT" --user-data-dir="$WORK/chrome-$1" \
     --no-first-run --no-default-browser-check --disable-background-networking --disable-component-update \
     --disable-sync --disable-default-apps --metrics-recording-only --use-mock-keychain --password-store=basic \
-    about:blank >>"$OUT/chrome.log" 2>&1 &
+    ${CHROME_FLAGS:-} about:blank >>"$OUT/chrome.log" 2>&1 &
   CHROME_PID=$!
   for _ in $(seq 1 60); do
     curl -sf "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null && break

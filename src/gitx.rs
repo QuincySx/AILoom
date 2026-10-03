@@ -1,7 +1,7 @@
 //! Git 子进程辅助：参数数组调用、固定 cwd、检查退出码；错误输出做凭据脱敏。
 
 use crate::error::{code, Error, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// 脱敏文本中 URL 内嵌的凭据：`scheme://user:pass@host/…` → `scheme://***@host/…`。
@@ -106,7 +106,48 @@ pub fn git_optional(cwd: &Path, args: &[&str]) -> Option<String> {
     git(cwd, args).ok()
 }
 
-/// `git init` 包装（测试与脚手架复用）。
+/// `git rev-parse --path-format=absolute <args>` 的绝对路径。
+/// `--path-format` 是 git 2.31 才有的参数；更早的 git 不报错，而是把它原样作为一行输出，
+/// 再输出相对当前目录的路径。识别这种情况并自行拼成绝对路径；新版 git 的结果与原来一致。
+pub fn rev_parse_path(cwd: &Path, args: &[&str]) -> Result<PathBuf> {
+    let mut full = vec!["rev-parse", "--path-format=absolute"];
+    full.extend_from_slice(args);
+    let out = git(cwd, &full)?;
+    let line = out
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty() && *l != "--path-format=absolute")
+        .ok_or_else(|| Error::new(code::GIT_COMMAND_FAILED, "git rev-parse 没有输出路径"))?;
+    let legacy = out.lines().any(|l| l.trim() == "--path-format=absolute");
+    let path = PathBuf::from(line);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    };
+    // 新版 git 给的是规范化的真实路径；旧版的相对 / 未规范化路径（如 `sub/../.git`）在这里补齐，
+    // 让同一仓库从不同目录得到相同结果。路径还不存在时（如 info/exclude）保持拼接结果。
+    Ok(if legacy {
+        path.canonicalize().unwrap_or(path)
+    } else {
+        path
+    })
+}
+
+/// 远端默认分支（远端 `HEAD` 指向的分支名）；远端不可达或没有 HEAD 时返回 None。
+pub fn remote_default_branch(url: &str) -> Option<String> {
+    let out = git_optional(
+        &std::env::temp_dir(),
+        &["ls-remote", "--symref", url, "HEAD"],
+    )?;
+    out.lines().find_map(|l| {
+        let target = l.strip_prefix("ref:")?.split_whitespace().next()?;
+        target.strip_prefix("refs/heads/").map(str::to_string)
+    })
+}
+
+/// `git init` 包装（测试与脚手架复用）。默认分支固定为 `main`：
+/// 不依赖本机 `init.defaultBranch`（未设置时 git 用 master，而 `ailoom init` 默认找 main）。
 pub fn git_init(path: &Path, bare: bool) -> Result<()> {
     std::fs::create_dir_all(path)?;
     let mut args = vec!["init", "-q"];
@@ -120,6 +161,7 @@ pub fn git_init(path: &Path, bare: bool) -> Result<()> {
     })?);
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     git(parent, &args)?;
+    git(path, &["symbolic-ref", "HEAD", "refs/heads/main"])?;
     Ok(())
 }
 
@@ -191,5 +233,20 @@ mod tests {
         git_commit_all(dir.path(), "init", &["a b.txt"]).unwrap();
         let log = git(dir.path(), &["log", "--oneline"]).unwrap();
         assert!(log.contains("init"));
+    }
+
+    #[test]
+    fn remote_default_branch_follows_remote_head() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        git_init(dir.path(), false).unwrap();
+        git(dir.path(), &["symbolic-ref", "HEAD", "refs/heads/master"]).unwrap();
+        git_commit_all(dir.path(), "init", &["a.txt"]).unwrap();
+        let url = format!("file://{}", dir.path().display());
+        assert_eq!(remote_default_branch(&url).as_deref(), Some("master"));
+        assert_eq!(
+            remote_default_branch("file:///nonexistent/ailoom-repo"),
+            None
+        );
     }
 }

@@ -568,6 +568,21 @@ fn ail067_library_update_to_selected_worktrees_flow() {
     let repo = c.tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     assert!(c.git(&repo, &["init", "-q"]));
+    assert!(c.git(
+        &repo,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base"
+        ]
+    ));
     let wt2 = c.tmp.path().join("wt2");
     let dr = c.dr();
     let _ = c.run_json(

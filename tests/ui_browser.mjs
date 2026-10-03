@@ -87,7 +87,8 @@ if (mode === 'grouped') {
 if (mode === 'cc-switch') {
   await evaluate("location.hash='#/library'");
   await waitFor("!!document.querySelector('[data-cc-switch]')");
-  await evaluate("document.querySelector('[data-cc-switch]').focus(); document.querySelector('[data-cc-switch]').click()");
+  // 按钮在「更新与迁移」折叠区里：像用户一样先展开，否则折叠内容不可聚焦，焦点无从恢复
+  await evaluate("{const b=document.querySelector('[data-cc-switch]'); const d=b.closest('details'); if(d) d.open=true; b.focus(); b.click();}");
   await waitFor("document.querySelector('[data-cc-json]')?.closest('dialog')?.matches(':modal')");
   if (!await evaluate("getComputedStyle(document.querySelector('[data-cc-apply]')).display === 'none' && getComputedStyle(document.querySelector('[data-cc-prepare]')).display === 'none'")) throw new Error('Migration actions must stay hidden before scan/preview');
   const ccDirectory = process.argv[5];
@@ -219,9 +220,11 @@ if (mode === 'global') {
   await waitFor("!document.querySelector('dialog:modal') && [...document.querySelectorAll('.global-skills .workspace-resource-status')].some(s=>s.textContent==='已启用')");
   const deployed = await evaluate(`(async()=>{const {api}=await import('/ui/services/api.js');return (await api.globalSkills()).deployed.filter(d=>d.resource_id===${JSON.stringify(id)}).map(d=>d.path.split('#')[0]).sort();})()`);
   if (JSON.stringify(deployed) !== JSON.stringify(['.agents/skills/global-skill', 'claude/skills/global-skill'])) throw new Error('全局部署路径不符：' + JSON.stringify(deployed));
-  const realCells = await evaluate("[...document.querySelectorAll('.location-table td[data-label=\"真实目录\"]')].map(td=>td.textContent)");
+  // 位置信息收在每行的「查看位置」里：安装位置 / 文件类型 / 实际位置
+  await evaluate("document.querySelectorAll('.global-location-row details').forEach(d=>d.open=true)");
+  const realCells = await evaluate("[...document.querySelectorAll('.global-location-row details dl')].map(dl=>{const dt=[...dl.querySelectorAll('dt')].find(x=>x.textContent==='实际位置');return dt?.nextElementSibling?.textContent||'';}).filter(Boolean)");
   if (realCells.length !== 2 || !realCells.every(c => c.includes('elsewhere/foreign-skill'))) throw new Error('非托管条目的真实目录未展示：' + JSON.stringify(realCells));
-  if (!await evaluate("[...document.querySelectorAll('.location-table')].some(t=>t.textContent.includes('经过'))")) throw new Error('链接套链接未展示中间经过');
+  if (!await evaluate("[...document.querySelectorAll('.global-location-row details dl')].some(t=>t.textContent.includes('经过'))")) throw new Error('链接套链接未展示中间经过');
   await screenshot(output + '-global.png');
   await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
   await screenshot(output + '-global-mobile.png');

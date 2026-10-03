@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# 同一分支有新提交时取消还在跑的旧运行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # AIL-002 隔离规则：清空全部机器根覆盖变量（空值=未设置），
@@ -26,17 +31,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       # CI 不接触开发者主目录：HOME 指向临时目录，测试本身使用注入数据根
       - name: Isolate HOME
         run: |
           mkdir -p "$RUNNER_TEMP/fake-home"
           echo "HOME=$RUNNER_TEMP/fake-home" >> "$GITHUB_ENV"
+      # CC Switch 迁移通过 sqlite3 命令行只读查询；不依赖运行环境是否预装
+      - name: Install sqlite3
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
-        run: cargo test --all-features
+        run: cargo test --locked --all-features --no-fail-fast
 
   # AIL-130：声明的最低 Rust 版本（Cargo.toml rust-version）必须真实可编译
   msrv:
@@ -44,6 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
       - name: Check on MSRV
         run: cargo check --locked --all-targets
 
@@ -59,3 +70,27 @@ jobs:
         run: node --experimental-vm-modules --test tests/frontend_components.mjs tests/global_skills_frontend.mjs
       - name: Docs check
         run: python3 scripts/docs_check.py
+
+  # 网页真实浏览器验收（scripts/ui-browser.sh 全部模式）；截图与日志无论成败都上传
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: cargo build --locked
+      # Ubuntu 24.04 runner 限制非特权用户命名空间，Chrome 沙箱起不来
+      - name: Browser acceptance
+        env:
+          CHROME_FLAGS: --no-sandbox
+        run: scripts/ui-browser.sh "$RUNNER_TEMP/ui-browser"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-browser
+          path: ${{ runner.temp }}/ui-browser
+          if-no-files-found: ignore

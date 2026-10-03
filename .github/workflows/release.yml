@@ -105,8 +105,7 @@ jobs:
         run: |
           cd dist
           for sum in *.sha256; do
-            file="${sum%.sha256}"
-            echo "$(<"$sum")" | sha256sum -c -
+            sha256sum -c "$sum"
           done
       - uses: softprops/action-gh-release@v2
         with:

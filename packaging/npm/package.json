@@ -3,6 +3,7 @@
   "version": "0.0.0-draft",
   "description": "AILoom npm wrapper: locates and runs the platform ailoom binary (no Rust toolchain required)",
   "license": "Apache-2.0",
+  "type": "module",
   "bin": {
     "ailoom": "./cli.js"
   },

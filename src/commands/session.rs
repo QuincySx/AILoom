@@ -32,7 +32,7 @@ pub fn run(args: &SessionArgs, json: bool, data_root: Option<&std::path::Path>) 
             if !json && bad_lines > 0 {
                 crate::logging::warn(format!("事件文件含 {bad_lines} 个坏行（已跳过）"));
             }
-            let mut out = json!({ "sessions": [] });
+            let mut out;
             match &args.session {
                 Some(sid) => {
                     // RW-09/R06：有效聚合 = 实时事件（剔除已清算）+ 累计基线

@@ -138,15 +138,22 @@ fn writeln_stdout(s: &str) -> std::io::Result<()> {
 }
 
 /// 回收整个进程组（子进程以 process_group(0) 启动，pgid = pid）；
-/// 组杀失败时兜底杀直接子进程。
+/// 组杀失败时兜底杀直接子进程。直接走系统调用：Linux procps 的 `kill -9 -<pid>`
+/// 会把负 pid 解析错，信号打到调用方所在的进程组上。
 fn kill_process_group(pid: u32) {
     #[cfg(unix)]
     {
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &format!("-{pid}")])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return;
+        };
+        if pid <= 0 {
+            return;
+        }
+        unsafe {
+            if libc::kill(-pid, libc::SIGKILL) == -1 {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
     }
     #[cfg(not(unix))]
     let _ = pid;

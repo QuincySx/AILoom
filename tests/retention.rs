@@ -367,6 +367,22 @@ fn cleanup_skips_cache_shared_by_sibling_worktree() {
     let data = tmp.path().join("data");
     let wsa = tmp.path().join("ws-a");
     ailoom::gitx::git_init(&wsa, false).unwrap();
+    ailoom::gitx::git(
+        &wsa,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ],
+    )
+    .unwrap();
     let ctx_a = AppContext::discover(Some(&data), &wsa, Some(&wsa)).unwrap();
     ailoom::paths::ensure_layout(&ctx_a.layout).unwrap();
     std::fs::create_dir_all(&ctx_a.layout.cache_root).unwrap();
