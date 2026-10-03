@@ -6,3 +6,8 @@ Cargo.lock.orig
 /.claude/skills/
 /.agents/skills/
 /.codex/config.toml
+
+# 本机草稿
+/.scratch/
+# 第三方 Skill 不随仓库发布，各自放在本机（见 .ailoom/team/THIRD_PARTY.md）
+/.ailoom/team/resources/skills/

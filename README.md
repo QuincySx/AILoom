@@ -50,7 +50,7 @@ ailoom init      # 按 .ailoom/project.toml 绑定本机（不改仓库内容）
 ailoom sync      # 部署到 .claude/skills 与 .agents/skills（已在 .gitignore 中）
 ```
 
-新增或修改 Skill：改 `.ailoom/team/resources/skills/<名字>/`，SKILL.md frontmatter 需含 `namespace: common` 与 `shared: true`，提交后各自 `ailoom sync`。这些 Skill 多数来自第三方来源，推送到公开远端前请核对各自的许可证。
+这些 Skill 来自第三方，不随仓库发布：放在本机的 `.ailoom/team/resources/skills/<名字>/`（已在 .gitignore 中），SKILL.md frontmatter 需含 `namespace: common` 与 `shared: true`，然后 `ailoom sync`。见 [THIRD_PARTY.md](.ailoom/team/THIRD_PARTY.md)。
 
 ## 验证
 
