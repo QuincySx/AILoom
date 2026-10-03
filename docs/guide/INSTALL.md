@@ -2,7 +2,7 @@
 
 ## 安装
 
-用 npm（需要 Node 20 及以上；npm 会自动装上当前平台的预编译版本）：
+用 npm（需要 Node 20 及以上；包里带着 macOS、Linux、Windows 的预编译版本，约 21 MB）：
 
 ```bash
 npm install -g ailoom-cli

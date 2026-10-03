@@ -7,6 +7,6 @@ npm install -g ailoom-cli
 ailoom web        # start the local web console and open it
 ```
 
-npm installs the prebuilt binary for your platform as an optional dependency (`ailoom-cli-<os>-<cpu>`); nothing is downloaded at run time. Supported platforms and offline use: [PLATFORMS.md](PLATFORMS.md). Full guide: [installation docs](https://github.com/QuincySx/AILoom/blob/main/docs/guide/INSTALL.md).
+The package contains prebuilt binaries for every supported platform and runs the one for your system; nothing is downloaded at run time. Supported platforms and offline use: [PLATFORMS.md](PLATFORMS.md). Full guide: [installation docs](https://github.com/QuincySx/AILoom/blob/main/docs/guide/INSTALL.md).
 
 License: Apache-2.0

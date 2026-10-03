@@ -560,7 +560,7 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
         .collect();
     assert_eq!(
         files,
-        vec!["cli.js", "platforms.js", "PLATFORMS.md"],
+        vec!["cli.js", "platforms.js", "PLATFORMS.md", "bin"],
         "发布白名单: {files:?}"
     );
     // 包装器按 package.json 版本下载同版本的 Release 二进制
@@ -575,30 +575,30 @@ fn npm_wrapper_locates_local_artifact_and_passes_through() {
     );
 }
 
-/// npm 发布包：build.mjs 生成 5 个平台子包与主包（子包按 os/cpu 区分、主包精确锁定子包版本）；
-/// 主包运行同目录 node_modules 里的平台子包二进制；子包版本不符或缺失时明确报错。
+/// npm 发布包：build.mjs 把 5 个平台的二进制放进 ailoom-cli 的 bin/（保持可执行）；
+/// 包装器运行当前平台那一个；缺对应二进制时明确报错。
 #[test]
-fn npm_packages_build_and_wrapper_runs_platform_package() {
+fn npm_package_build_and_wrapper_runs_bundled_binary() {
     let node = resolve_node();
     let env = InstallerEnv::new();
     let repo = std::env::current_dir().unwrap();
     let version = env!("CARGO_PKG_VERSION");
     let dist = env.tmp.path().join("dist");
     std::fs::create_dir_all(&dist).unwrap();
-    for name in [
+    let names = [
         "ailoom-aarch64-apple-darwin",
         "ailoom-x86_64-apple-darwin",
         "ailoom-x86_64-unknown-linux-gnu",
         "ailoom-aarch64-unknown-linux-gnu",
         "ailoom-x86_64-pc-windows-msvc.exe",
-    ] {
+    ];
+    for name in names {
         std::fs::write(dist.join(name), V1).unwrap();
     }
-    // 输出目录本身叫 node_modules：主包与子包互为兄弟目录，与 npm 安装后的布局一致
-    let modules = env.tmp.path().join("prefix/node_modules");
+    let pkg = env.tmp.path().join("ailoom-cli");
     let out = Command::new(&node)
         .arg(repo.join("packaging/npm/build.mjs"))
-        .args([dist.to_str().unwrap(), version, modules.to_str().unwrap()])
+        .args([dist.to_str().unwrap(), version, pkg.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(
@@ -606,52 +606,14 @@ fn npm_packages_build_and_wrapper_runs_platform_package() {
         "build.mjs 失败: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let order: Vec<String> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|l| {
-            Path::new(l)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    assert_eq!(order.len(), 6);
-    assert_eq!(
-        order.last().map(String::as_str),
-        Some("ailoom-cli"),
-        "主包最后发布"
-    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(pkg.join("package.json")).unwrap()).unwrap();
+    assert_eq!(manifest["version"], version);
 
-    let read = |pkg: &str| -> serde_json::Value {
-        serde_json::from_str(
-            &std::fs::read_to_string(modules.join(pkg).join("package.json")).unwrap(),
-        )
-        .unwrap()
-    };
-    let main = read("ailoom-cli");
-    let deps = main["optionalDependencies"].as_object().unwrap();
-    assert_eq!(deps.len(), 5);
-    assert!(
-        deps.values().all(|v| v == version),
-        "子包精确锁定版本: {deps:?}"
-    );
-    let arm = read("ailoom-cli-darwin-arm64");
-    assert_eq!(arm["version"], version);
-    assert_eq!(arm["os"], serde_json::json!(["darwin"]));
-    assert_eq!(arm["cpu"], serde_json::json!(["arm64"]));
-    assert_eq!(
-        read("ailoom-cli-linux-x64")["libc"],
-        serde_json::json!(["glibc"])
-    );
-    assert!(modules
-        .join("ailoom-cli-win32-x64/bin/ailoom.exe")
-        .is_file());
-
-    // 打包后的二进制保持可执行
+    // 打包内容：5 个二进制都在且保持可执行
     let pack = Command::new("npm")
         .args(["pack", "--dry-run", "--json", "--ignore-scripts"])
-        .current_dir(modules.join("ailoom-cli-darwin-arm64"))
+        .current_dir(&pkg)
         .output()
         .unwrap_or_else(|e| panic!("需要 PATH 中存在 npm（{e}）"));
     let packed: serde_json::Value = serde_json::from_slice(&pack.stdout).unwrap_or_else(|e| {
@@ -660,21 +622,23 @@ fn npm_packages_build_and_wrapper_runs_platform_package() {
             String::from_utf8_lossy(&pack.stderr)
         )
     });
-    let bin = packed[0]["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["path"] == "bin/ailoom")
-        .expect("子包包含 bin/ailoom");
-    assert_ne!(
-        bin["mode"].as_u64().unwrap() & 0o111,
-        0,
-        "bin/ailoom 可执行"
-    );
+    let files = packed[0]["files"].as_array().unwrap();
+    for name in names {
+        let entry = files
+            .iter()
+            .find(|f| f["path"] == format!("bin/{name}"))
+            .unwrap_or_else(|| panic!("包里缺 bin/{name}"));
+        assert_ne!(
+            entry["mode"].as_u64().unwrap() & 0o111,
+            0,
+            "bin/{name} 可执行"
+        );
+    }
+    assert!(files.iter().any(|f| f["path"] == "LICENSE"), "包含 LICENSE");
 
     let run = || {
         Command::new(&node)
-            .arg(modules.join("ailoom-cli/cli.js"))
+            .arg(pkg.join("cli.js"))
             .arg("passthrough-arg")
             .env_remove("AILOOM_BIN_DIR")
             .env("AILOOM_TRIPLE", TRIPLE)
@@ -685,25 +649,17 @@ fn npm_packages_build_and_wrapper_runs_platform_package() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
         "installed-v1",
-        "运行平台子包的二进制: stderr={}",
+        "运行包内对应平台的二进制: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // 子包版本与主包不符 → 拒绝
-    let sub = modules.join("ailoom-cli-darwin-arm64/package.json");
-    let mut changed = arm.clone();
-    changed["version"] = serde_json::json!("0.0.1");
-    std::fs::write(&sub, changed.to_string()).unwrap();
-    let out = run();
-    assert_ne!(out.status.code(), Some(0), "版本不符必须拒绝");
-
-    // 子包缺失（--omit=optional）→ 指出缺哪个包
-    std::fs::remove_dir_all(modules.join("ailoom-cli-darwin-arm64")).unwrap();
+    // 缺对应平台的二进制 → 明确报错
+    std::fs::remove_file(pkg.join(format!("bin/ailoom-{TRIPLE}"))).unwrap();
     let out = run();
     assert_ne!(out.status.code(), Some(0));
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("ailoom-cli-darwin-arm64"),
-        "报错指出缺少的子包: {}",
+        String::from_utf8_lossy(&out.stderr).contains(TRIPLE),
+        "报错指出缺少的平台: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }

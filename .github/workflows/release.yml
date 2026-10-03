@@ -1,9 +1,8 @@
 # Release pipeline, started by hand (workflow_dispatch):
 # - builds ailoom for five targets; each artifact is ailoom-<triple> plus ailoom-<triple>.sha256;
-# - by default publishes to npm: one package per platform (ailoom-cli-<os>-<cpu>) and the wrapper
-#   ailoom-cli, which pins them as optional dependencies (packaging/npm/build.mjs).
-#   Publishing uses npm Trusted Publishing (OIDC); a brand-new package's first publish needs the
-#   NPM_TOKEN secret instead. Versions already on npm are skipped, so a rerun is safe.
+# - by default publishes the npm package ailoom-cli, which carries all five binaries
+#   (packaging/npm/build.mjs), via npm Trusted Publishing (OIDC, no token).
+#   A version already on npm is skipped, so a rerun is safe.
 # Uncheck "publish" to only build.
 
 name: release
@@ -104,21 +103,15 @@ jobs:
       # Trusted Publishing needs npm 11.5.1+
       - name: Update npm
         run: npm install -g npm@latest
-      - name: Assemble packages
+      - name: Assemble package
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          node packaging/npm/build.mjs dist "$version" "$RUNNER_TEMP/npm" > "$RUNNER_TEMP/npm-order.txt"
+          node packaging/npm/build.mjs dist "$version" "$RUNNER_TEMP/npm"
       - name: Publish
-        env:
-          # Only used when trusted publishing is not configured yet (first publish of a new package)
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          while read -r dir; do
-            name=$(node -p "require('$dir/package.json').name")
-            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
-              echo "$name@$VERSION is already on npm, skipping"
-              continue
-            fi
-            npm publish "$dir" --ignore-scripts --access public
-          done < "$RUNNER_TEMP/npm-order.txt"
+          if npm view "ailoom-cli@$VERSION" version >/dev/null 2>&1; then
+            echo "ailoom-cli@$VERSION is already on npm, skipping"
+          else
+            npm publish "$RUNNER_TEMP/npm" --ignore-scripts --access public
+          fi
