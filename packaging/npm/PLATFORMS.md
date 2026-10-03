@@ -1,18 +1,18 @@
-# 支持的平台
+# Supported platforms
 
-| 系统 | 架构 | 二进制 |
+| OS | Architecture | Binary |
 |---|---|---|
-| macOS | Apple 芯片 / Intel | `ailoom-aarch64-apple-darwin` / `ailoom-x86_64-apple-darwin` |
-| Linux（glibc） | x64 / arm64 | `ailoom-x86_64-unknown-linux-gnu` / `ailoom-aarch64-unknown-linux-gnu` |
+| macOS | Apple silicon / Intel | `ailoom-aarch64-apple-darwin` / `ailoom-x86_64-apple-darwin` |
+| Linux (glibc) | x64 / arm64 | `ailoom-x86_64-unknown-linux-gnu` / `ailoom-aarch64-unknown-linux-gnu` |
 | Windows | x64 | `ailoom-x86_64-pc-windows-msvc.exe` |
 
-## 下载与离线
+## Download and offline use
 
-- 首次运行从 `https://github.com/QuincySx/AILoom/releases/download/v<版本>/` 下载上表对应的二进制和同名 `.sha256`，校验通过后缓存到 `~/.ailoom/npm/<版本>/`；之后每次运行前都会重新校验。
-- 内网镜像：`AILOOM_DOWNLOAD_BASE=<镜像目录>`，目录里放着与 Release 同名的文件。
-- 完全离线：把二进制和 `.sha256` 放进一个目录，设置 `AILOOM_BIN_DIR=<该目录>`，不会再联网。
-- 校验文件缺失或不一致时拒绝运行。
+- On first run the binary for your platform and its `.sha256` are downloaded from `https://github.com/QuincySx/AILoom/releases/download/v<version>/`, verified, and cached in `~/.ailoom/npm/<version>/`. The cached binary is verified again before every run.
+- Mirror: set `AILOOM_DOWNLOAD_BASE=<directory URL>` to a location holding files with the same names as the Release assets.
+- Fully offline: put the binary and its `.sha256` in a directory and set `AILOOM_BIN_DIR=<that directory>`; nothing is downloaded.
+- A missing or mismatching checksum stops the wrapper from running the binary.
 
-## 版本对应
+## Versions
 
-npm 包版本与 `Cargo.toml` 版本一致，由 release workflow 发布时写入；包装器下载同版本的 Release 二进制。
+The npm package version equals the `Cargo.toml` version (written by the release workflow), and the wrapper downloads the Release binary of that same version.

@@ -7,7 +7,7 @@
 - [ ] `Cargo.toml` 的 `version` 已更新（`Cargo.lock` 只应改这一行，锁文件格式不要跟着新 cargo 升级）
 - [ ] `CHANGELOG.md` 有该版本的段落，写用户能感知的新增、修复与已知限制；发布流水线以它作为 Release 说明，缺失时拒绝发布
 - [ ] 打签名 tag：`git tag -s v<版本> -m "v<版本>"`
-- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：先不勾 `publish` 只构建制品；确认后勾选 `publish` 创建 GitHub Release，同时勾选 `npm` 发布 npm 包 `ailoom-cli`
+- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：默认创建 GitHub Release 并发布 npm 包 `ailoom-cli`；取消勾选 `publish` 只构建制品。npm 拒绝重复版本，重跑不会重复发布
 - [ ] `packaging/npm/package.json` 的 `version` 与 `Cargo.toml` 一致（`tests/installer.rs` 断言；流水线发布时也会写入）
 
 ## 1. 质量门
