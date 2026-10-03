@@ -201,6 +201,34 @@ if (mode === 'instructions') {
   await waitFor("document.querySelector('[data-msg]').textContent.includes('已保存')");
   if ((await evaluate(api({ root: project, read: true }))).content !== '合并后的说明') throw new Error('Save on latest revision failed');
 }
+if (mode === 'global') {
+  // AIL-152：全局配置页 —— 全局启用一个 Skill，预览并应用后确实部署到（临时）用户目录；规则与 Agent 栏仍可用。
+  const [skillDir] = process.argv.slice(5);
+  const id = 'personal/skill/personal/global-skill';
+  await evaluate(`(async()=>{const {api}=await import('/ui/services/api.js');await api.approveDir(${JSON.stringify(skillDir)});await api.libraryImport(${JSON.stringify(skillDir)},null,true);})()`);
+  await evaluate("location.hash='#/native-files'");
+  await waitFor(`!!document.querySelector('[data-toggle="${id}"]')`);
+  if (!await evaluate("document.querySelector('nav.sidebar')?.textContent.includes('全局配置')")) throw new Error('导航未显示「全局配置」');
+  await evaluate(`document.querySelector('[data-toggle="${id}"]').click()`);
+  await waitFor(`document.querySelector('[data-toggle="${id}"]')?.textContent.trim()==='停用' && !document.querySelector('[data-apply]').disabled`);
+  await evaluate("document.querySelector('[data-apply]').click()");
+  await waitFor("document.querySelector('dialog:modal')?.innerText.includes('.agents/skills/global-skill')");
+  await screenshot(output + '-global-plan.png');
+  await evaluate("[...document.querySelectorAll('dialog:modal button')].find(b=>b.textContent.trim()==='应用').click()");
+  await waitFor("!document.querySelector('dialog:modal') && [...document.querySelectorAll('.global-skills .workspace-resource-status')].some(s=>s.textContent==='已启用')");
+  const deployed = await evaluate(`(async()=>{const {api}=await import('/ui/services/api.js');return (await api.globalSkills()).deployed.filter(d=>d.resource_id===${JSON.stringify(id)}).map(d=>d.path.split('#')[0]).sort();})()`);
+  if (JSON.stringify(deployed) !== JSON.stringify(['.agents/skills/global-skill', 'claude/skills/global-skill'])) throw new Error('全局部署路径不符：' + JSON.stringify(deployed));
+  const realCells = await evaluate("[...document.querySelectorAll('.location-table td[data-label=\"真实目录\"]')].map(td=>td.textContent)");
+  if (realCells.length !== 2 || !realCells.every(c => c.includes('elsewhere/foreign-skill'))) throw new Error('非托管条目的真实目录未展示：' + JSON.stringify(realCells));
+  if (!await evaluate("[...document.querySelectorAll('.location-table')].some(t=>t.textContent.includes('经过'))")) throw new Error('链接套链接未展示中间经过');
+  await screenshot(output + '-global.png');
+  await send('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  await screenshot(output + '-global-mobile.png');
+  if (await evaluate('document.documentElement.scrollWidth > window.innerWidth + 1')) throw new Error('全局配置页窄屏出现横向滚动');
+  await send('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  await evaluate("[...document.querySelectorAll('[data-tab]')].find(b=>b.dataset.tab==='files').click()");
+  await waitFor("!!document.querySelector('.native-files [data-new]')");
+}
 if (mode === 'onboarding') {
   // 三步引导页只做讲解与直达入口，不承载配置动作。
   for (const [index, target] of [[0, '#/projects/manage'], [1, '#/library'], [2, '#/projects']]) {

@@ -32,6 +32,7 @@ Codex 项目级 Agent 的支持结论在文档与适配器之间尚不一致，�
 | 个人层：仓外配置、仓库 / Worktree / 子目录三态选择、个人指令 | supported | tests/personal.rs、tests/personal_instructions.rs |
 | 团队同步与个人同步交替执行不互删 | supported | tests/personal.rs、tests/collections.rs（组合场景） |
 | 资源库、资源合集（Git / 本地 / 外部目录）、CC Switch 迁移 | supported | tests/collections.rs、tests/skill_sources.rs |
+| 全局 Skill（`~/.claude/skills`、`~/.agents/skills`，所有项目可见） | supported（文件部署）；宿主从用户级目录加载：未真机验证 | tests/global_skills.rs、tests/console_global.rs；浏览器验收 `global` 模式 |
 | 网页控制台（loopback、会话令牌、目录授权） | supported | tests/console_*.rs；浏览器验收 `scripts/ui-browser.sh` |
 | 网页服务与登录自启动 | supported（macOS / Linux） | tests/service.rs |
 | 原生 Rules / Agent 文件编辑（含「仅本机生效」） | supported | tests/native_files.rs、tests/native_local.rs；见 [原生文件](NATIVE-FILES.md) |
@@ -53,6 +54,6 @@ Codex 项目级 Agent 的支持结论在文档与适配器之间尚不一致，�
 
 ## 明确不做
 
-- 不写用户级宿主配置来冒充项目级能力（「全局规则与 Agent」页面是用户显式编辑用户级文件，不在此列）。
+- 不写用户级宿主配置来冒充项目级能力（「全局配置」页面是用户显式启用全局 Skill、编辑用户级文件，不在此列）。
 - 不宣称「同步成功 = 宿主发现成功 = Agent 使用成功」，三层验收分开。
 - 不把启发式纠正计数称为真实错误率；不把干预次数当绩效。

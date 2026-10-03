@@ -2452,5 +2452,15 @@
     "size": "S",
     "depends_on": [],
     "file": "cards/AIL-151.md"
+  },
+  {
+    "id": "AIL-152",
+    "title": "全局 Skill：部署到用户级目录，所有项目可见",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [],
+    "file": "cards/AIL-152.md"
   }
 ]

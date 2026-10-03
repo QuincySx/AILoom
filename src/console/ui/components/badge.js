@@ -10,8 +10,8 @@ const MAPS = {
   },
   host: {
     'needs-new-session': ['warn', '需新会话'],
-    'needs-approval': ['warn', '需宿主批准'],
-    'host-unverified': ['bad', '宿主未验证'],
+    'needs-approval': ['warn', '需在 AI 工具中批准'],
+    'host-unverified': ['bad', '未确认能加载'],
     deployed: ['ok', '已部署'],
     missing: ['bad', '缺失'],
   },

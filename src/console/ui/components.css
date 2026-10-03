@@ -173,3 +173,25 @@ th { color: var(--muted-foreground); font-weight: 500; background: var(--muted);
 
 .dir-rel { min-width:0; overflow:hidden; }
 .dir-name { flex-shrink:0; }
+/* AIL-152：全局 Skill 目标目录开关 */
+.global-target { display: flex; align-items: flex-start; gap: var(--sp-2); padding: var(--sp-2) 0; }
+.global-target small { display: block; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.global-skills h3 { margin-top: var(--sp-5); }
+/* 位置表：一条一行；窄屏改为竖排卡片，不横向滚动 */
+.location-table { margin-bottom: var(--sp-4); }
+.location-table col.c-name { width: 20%; }
+.location-table col.c-path { width: 31%; }
+.location-table col.c-kind { width: 88px; }
+.location-table col.c-act { width: 96px; }
+.location-table td { padding: var(--sp-2) var(--sp-3); vertical-align: top; }
+.location-table td small { display: block; color: var(--muted-foreground); }
+.global-skills h4 { margin: var(--sp-4) 0 var(--sp-2); font-size: var(--fs-small); color: var(--muted-foreground); font-weight: 500; overflow-wrap: anywhere; }
+.warn-text { color: var(--warning); }
+@media (max-width: 720px) {
+  .location-table, .location-table tbody, .location-table tr, .location-table td { display: block; width: 100%; }
+  .location-table thead, .location-table colgroup { display: none; }
+  .location-table tr { border-bottom: 1px solid var(--border); padding: var(--sp-2) 0; }
+  .location-table td { border: 0; padding: 2px 0; }
+  .location-table td[data-label]::before { content: attr(data-label) "："; color: var(--muted-foreground); }
+}
+.location-table .status-chip { white-space: nowrap; }

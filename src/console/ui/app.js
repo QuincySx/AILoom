@@ -23,7 +23,7 @@ const ROUTES = {
   '#/projects/manage': { title: '管理目录', mount: pageProjects.mount, hidden: true },
   '#/samples': { title: '组件样例', mount: pageSamples.mount, hidden: true },
   '#/onboarding': { title: '开始使用', mount: pageOnboarding.mount, hidden: true },
-  '#/native-files': { title: '全局规则与 Agent', mount: pageNativeFiles.mount },
+  '#/native-files': { title: '全局配置', mount: pageNativeFiles.mount },
   '#/library': { title: '资源库', mount: pageLibrary.mount },
   '#/tasks': { title: '操作记录', mount: pageTasks.mount, secondary: true },
 };

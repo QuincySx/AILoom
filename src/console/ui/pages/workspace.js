@@ -319,10 +319,12 @@ export function mount(container, {projectId}) {
     const issues=(deployment.issues||[]).filter(i=>i.resource_id===entry.id);
     const applied=!issues.length&&items.length&&items.every(i=>i.state==='current');
     const extensions=extensionRequirements(entry);
-    const requirement=extensions.map(c=>`${c.required_extension}：${applied?'配置已生成，':''}扩展加载未验证`).join('；');
-    const status=target.viewKind==='project-shared'?'项目默认':deployment.error?'状态未知':off?'已停用':issues.length?'需处理':applied?(extensions.length?'已配置':'已应用'):'待应用';
+    const requirement=extensions.map(c=>`需要安装 ${c.required_extension}`).join('；');
+    // AIL-152：已全局部署的 Skill 在项目内不重复部署，状态以全局为准
+    const global=!off&&(effective.global_skills||[]).includes(entry.id);
+    const status=target.viewKind==='project-shared'?'项目默认':global?'已全局启用':deployment.error?'状态未知':off?'已停用':issues.length?'需处理':applied?(extensions.length?'已配置':'已应用'):'待应用';
     const inherited=!diff.here&&diff.upstream?.choice==='enable';
-    return `<article class="workspace-resource"><span class="workspace-resource-icon">${icon(entry.kind)}</span><div class="workspace-resource-info"><button class="workspace-resource-title" data-resource-details="${esc(entry.id)}">${esc(entry.name || entry.id)}</button><p>${esc(entry.description || '暂无说明')}</p><small>${esc(names[entry.kind] || entry.kind)} · ${esc(entry.source_name || '本地能力')}${inherited?' · 来自上级':''}${extensions.length?' · 依赖官方扩展':''}</small></div><span class="workspace-resource-status ${applied&&!off&&!extensions.length?'current':''}" title="${esc([requirement,...issues.map(i=>`${tools[i.target_tool]||i.target_tool}：${i.reason}`)].filter(Boolean).join('；'))}">${status}</span><button data-resource-action="${esc(entry.id)}" ${busy||entry.kind==='package'?'disabled':''}>${off?'恢复':'移除'}</button></article>`;
+    return `<article class="workspace-resource"><span class="workspace-resource-icon">${icon(entry.kind)}</span><div class="workspace-resource-info"><button class="workspace-resource-title" data-resource-details="${esc(entry.id)}">${esc(entry.name || entry.id)}</button><p>${esc(entry.description || '暂无说明')}</p><small>${esc(names[entry.kind] || entry.kind)} · ${esc(entry.source_name || '本地能力')}${inherited?' · 来自上级':''}${extensions.length?' · 依赖官方扩展':''}</small></div><span class="workspace-resource-status ${(global||applied&&!off&&!extensions.length)?'current':''}" title="${esc([requirement,...issues.map(i=>`${tools[i.target_tool]||i.target_tool}：${i.reason}`)].filter(Boolean).join('；'))}">${status}</span><button data-resource-action="${esc(entry.id)}" ${busy||entry.kind==='package'?'disabled':''}>${off?'恢复':'移除'}</button></article>`;
   }
   function renderFooter() {
     if(target.viewKind==='project-shared') {
@@ -377,7 +379,7 @@ export function mount(container, {projectId}) {
 
   async function details(entry) {
     const body=document.createElement('div');
-    body.innerHTML=`${extensionRequirements(entry).map(c=>`<p class="muted">${esc(c.notes)}。扩展加载未验证。</p>`).join('')}${(deployment.issues||[]).filter(i=>i.resource_id===entry.id).map(i=>`<p class="field-error">${esc(tools[i.target_tool]||i.target_tool)}：${esc(i.reason)}</p>`).join('')}<p>${esc(entry.description || '暂无说明')}</p><p class="muted">${esc(names[entry.kind]||entry.kind)} · ${esc(entry.source_name || '本地能力')}</p><div data-definition></div>`;
+    body.innerHTML=`${extensionRequirements(entry).map(c=>`<p class="muted">需要安装 ${esc(c.required_extension)}。${esc(c.notes)}</p>`).join('')}${(deployment.issues||[]).filter(i=>i.resource_id===entry.id).map(i=>`<p class="field-error">${esc(tools[i.target_tool]||i.target_tool)}：${esc(i.reason)}</p>`).join('')}<p>${esc(entry.description || '暂无说明')}</p><p class="muted">${esc(names[entry.kind]||entry.kind)} · ${esc(entry.source_name || '本地能力')}</p><div data-definition></div>`;
     const diff=diffOf(effective.resources?.[entry.id]?.trace,layerOfTarget(target));
     const actions=[{label:'关闭'}];
     if(entry.id.startsWith('personal/')&&['rule','agent'].includes(entry.kind))actions.unshift({label:'编辑',onAction:async()=>{await ManagedDefinition(root,{id:entry.id,kind:entry.kind});if(!disposed)await refresh();}});

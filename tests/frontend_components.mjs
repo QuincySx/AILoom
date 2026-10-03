@@ -141,7 +141,7 @@ test('Pi 官方扩展的配置落盘不冒充运行可用状态', async () => {
   const entry={id:'review',kind:'agent',name:'Reviewer'};
   let html=context.row(entry,false);
   assert.match(html,/已配置/);
-  assert.match(html,/扩展加载未验证/);
+  assert.match(html,/需要安装 Pi 官方 subagent/,'配置写好不等于扩展可用：提示用户安装');
   assert.doesNotMatch(html,/workspace-resource-status current/);
   context.deployment.items[0].state='not-deployed';
   assert.match(context.row(entry,false),/待应用/);

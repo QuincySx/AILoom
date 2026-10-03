@@ -237,6 +237,7 @@ pub fn open_url(url: &str) -> Result<()> {
 
 mod delete_skill;
 mod fs;
+mod global;
 mod http;
 mod knowledge;
 mod library;
@@ -272,6 +273,12 @@ const KNOWN_PATHS: &[&str] = &[
     "/api/fs/list",
     "/api/fs/pick-directory",
     "/api/fs/read",
+    "/api/global/apply",
+    "/api/global/plan",
+    "/api/global/restore",
+    "/api/global/select",
+    "/api/global/skills",
+    "/api/global/takeover",
     "/api/hosts/detect",
     "/api/jobs",
     "/api/jobs/apply",
@@ -439,6 +446,12 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             ))
         }
         ("GET", "/api/library/list") => api_library_list(state),
+        ("GET", "/api/global/skills") => global::get_global_skills(state),
+        ("GET", "/api/global/plan") => global::get_global_plan(state),
+        ("POST", "/api/global/select") => global::post_global_select(state, req),
+        ("POST", "/api/global/apply") => global::post_global_apply(state),
+        ("POST", "/api/global/takeover") => global::post_global_takeover(state, req),
+        ("POST", "/api/global/restore") => global::post_global_restore(state, req),
         ("GET", "/api/collections") => {
             collection_response(crate::collections::list(&state.data_root))
         }

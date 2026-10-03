@@ -314,6 +314,7 @@ JSON envelope：`{"schema_version":1,"result":…}` 成功；失败输出 `{"sch
 - v1.2（2026-09-15，RW-01/S01）：§3 兼容迁移补充可达性与身份连续性要求——迁移时把 `<legacy>/device-id` 复制到新数据根（目标已存在则不覆盖），保证设备身份跨升级连续；迁移成功后在旧 `store` 位置保留指向新位置的兼容符号链接，使既有工作区指向旧 store 的绝对 Skill 链接无需重新 sync 仍可达；迁移中段失败回滚时一并清理本次新建的空目录，避免下一进程把空新根误判为新旧并存并采用。文件格式与 `schema_version` 不变。实现：`src/paths.rs`；回归：`paths` 单测 12 项 + `skill_store_require` 迁移集成 2 项。
 
 - v1.4（2026-10-01，审查修复）：新增 E6003（知识库位置/可迁移恢复状态，原误用 E5004）与 E9101（本地网页服务，原误用 E4001）；`.ailoom/knowledge.json` 不支持的版本改报 E3001；`--json` 错误输出补顶层 `schema_version`（字段保持平铺，向后兼容），§5 前后两处写法统一；E8100-E8199 退出码按表修正为 18（原实现误为 17）；§5 补登记已在用的 E2006、E2007；非宿主文件的并发/版本不符改用 E4001、目标冲突改用 E4002、非法路径改用 E3007（原挪用 E5004，AIL-136），控制台对 E4001/E4002/E5004/E6003 统一返回 409；托管清单损坏改用新增的 E4006（原为 E9000，提示中引用了不存在的 `--force-manifest`）；`profile.toml` 解析失败与团队声明一致改为 E3002（E3001 只表示未知 schema_version），并附路径与修复建议。未托管 Skill 删除的链接恢复记录带 `schema_version: 1`。§0 登记 `.ailoom/knowledge.json`、`knowledge/bindings.json`、`service/runtime.json` 三个文件（后两者补 `schema_version`，缺省按 1 读取）；§11.2 登记 `independent_resources` 语义。
+- v1.5（2026-10-02，盲测修复与 AIL-152）：§4.3 项目声明、§4.5 源锁与 Skill 来源元数据统一写出 `ref`（此前实现误写为 `ref_`，按契约手写的 `ref` 会被静默忽略）；读取兼容旧的 `ref_`。新增 §11.3 全局 Skill：profile.toml 的 `[global]` 表、`<data_root>/global/` 部署状态与 `ailoom global` / `/api/global/*` 接口。
 
 ## 11. 仓库身份、个人配置层与本地控制台（v1.3，2026-09-16，AIL-039/040 新增）
 
@@ -334,3 +335,17 @@ JSON envelope：`{"schema_version":1,"result":…}` 成功；失败输出 `{"sch
 - **与 v1 选择模型关系**：团队层（§2 角色∪项目 + require 门禁）语义不变；个人层叠加在团队层之上，只影响 **AILoom 期望部署集合**，不提升源读取权限、不重写团队声明、不阻止宿主从全局/祖先目录加载能力。
 - **独立资源选择**（v1.4）：任一层 `independent_resources = true` 表示「本层起不继承上层的资源选择」——计算到该层时清空此前各层的资源结果与 trace，再应用本层及更高层的选择；宿主选择仍照常继承。默认 `false`（不写入文件），旧文件语义不变。
 - Git 探测错误（如 `.git` 文件损坏）必须显式报错（E2 段），不允许静默归类为非 Git。
+
+
+### 11.3 全局 Skill（v1.5，AIL-152）
+
+- **选择**：`profile.toml` 的 `[global]` 表。`skills` 为全局启用的完整资源 ID 数组（资源库 `personal/*` 或合集 `collection-*` 中的 Skill）；`targets` 为目标目录开关表，缺省视为开启。写入与 §11.2 同一把文件锁和 `revision` 乐观并发规则；未列出的资源不全局部署。
+  ```toml
+  [global]
+  skills = ["personal/skill/personal/code-review"]
+  targets = { claude = true, agents = true }
+  ```
+- **目标目录**：`claude` = `$CLAUDE_CONFIG_DIR/skills`（未设时 `~/.claude/skills`）；`agents` = `~/.agents/skills`，供遵循 `.agents` 规范的 agent 共用（Codex 等）。目录不在用户目录下时该目标不部署并在 notes 说明。只部署 Skill 链接，不写任何宿主的全局配置文件。
+- **所有权**：部署状态在 `<data_root>/global/`：`managed-manifest.json`（只记录 AILoom 部署的条目）、`journal/`、`locks/`，与项目同步同一套计划 / 冲突 / 恢复规则。目标位置已有非托管条目（例如 CC Switch 的链接）→ 冲突保留；用户「接管」时把该条目（链接只移动链接本身）移入 `archive/<id>/`，并写 `record.json`（`original`、`archived`、`link_target`、`at`、`restored`），可 `restore` 放回；原位置被占用时拒绝还原（E4002）。用户目录是 Git 仓库时被跟踪的路径不写。
+- **与项目层的关系**：某资源已在全局托管清单中部署到某宿主时，项目对该宿主不再重复部署（Codex 同时去掉 `.codex/config.toml` 中对应的 `skills.config` 条目），`effective` 返回 `global_skills`；仅勾选未同步时项目照常部署。附加宿主（Grok、Pi、OpenCode、Cursor）是否读取 `~/.agents/skills` 未核实，项目内照常部署。全局启用算作引用：删除资源或移除合集前需先停用。
+- **接口**：CLI `ailoom global --action status | select | plan | sync | recover | takeover | restore`；控制台 `GET /api/global/skills`、`GET /api/global/plan`、`POST /api/global/select`（`{skill | target, enabled, base_revision?}`，revision 不符 → 409）、`POST /api/global/apply`、`POST /api/global/takeover`（`{target, name}`）、`POST /api/global/restore`（`{id}`）。

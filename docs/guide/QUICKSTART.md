@@ -18,7 +18,7 @@ ailoom web                # 启动或复用本地网页服务（仅 loopback）�
 | 页面 | 用途 |
 |---|---|
 | **我的目录** | 左侧是项目与 Worktree / 子目录树；右侧管理当前目录使用的 AI 工具与能力 |
-| **全局规则与 Agent** | 编辑各 AI 工具用户级的 Rules / Agent 原生文件（见 [原生文件](NATIVE-FILES.md)） |
+| **全局配置** | 全局 Skill（部署到用户级目录，所有项目可见），以及各 AI 工具用户级的 Rules / Agent 原生文件（见 [原生文件](NATIVE-FILES.md)） |
 | **资源库** | 导入 Skill / MCP / Rules / Agent（GitHub、GitLab、其他 Git、本地文件夹、skills.sh），从 CC Switch 迁移，检查更新 |
 | **操作记录** | 每次应用的文件改动；可撤销 |
 
@@ -52,6 +52,30 @@ AGENTS.md 全文的本地视图，不遮蔽公司基线）。
 CLI 下 `ailoom library --action list` 的 `issues` 列出问题文件，`ailoom library --action delete --skill <名字> --execute` 可删除（移入本机归档）。
 
 日常管理在网页「我的目录」与「资源库」完成；个人文档与流程产物默认保存在仓外数据区。
+
+## 全局 Skill：少数想在所有项目里用的
+
+大部分 Skill 建议按项目启用；少数通用的（例如编码规范、Git 规范）可以全局启用。网页「全局配置 → Skill」：
+
+1. 在列表里点「启用」（来源是资源库或合集，库里没有的先到「资源库」导入）；
+2. 选择目标目录：**Claude Code**（`~/.claude/skills`，遵循 `CLAUDE_CONFIG_DIR`）、**Codex 等其他 Agent**（`~/.agents/skills`，遵循 `.agents` 规范的 agent 共用）；
+3. 点「应用」，确认将写入的条目。新开会话后生效。
+
+- 只管理 AILoom 部署的条目。目录里已有的同名条目（例如 CC Switch 安装的）**保留不动**，列在「其他来源的 Skill」里；与你启用的 Skill 同名时，点「替换…」才把原来的移入 AILoom 归档（链接只移动链接本身），之后可在同一页「还原」。
+- 不写任何宿主的全局配置文件（例如 `~/.codex/config.toml`）。
+- 已全局部署的 Skill 在项目里不再重复部署，项目页标注「已全局启用」；只勾选还没应用时，项目照常部署。
+- Claude Code、Codex 之外的附加 agent 是否读取 `~/.agents/skills` 尚未逐一真机核实，这些 agent 在项目里照常部署。
+
+CLI 等价操作：
+
+```bash
+ailoom global                                                       # 状态：目标目录、全局启用的 Skill、非托管条目
+ailoom global --action select --skill personal/skill/personal/my-skill --state enable
+ailoom global --action plan                                         # 预览
+ailoom global --action sync                                         # 应用
+ailoom global --action takeover --target claude --name my-skill     # 接管同名的已有条目（移入归档）
+ailoom global --action restore --id <归档 ID>                        # 还原
+```
 
 ## 多个 Git 合集：按需引用 Skill / MCP
 

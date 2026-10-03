@@ -6,6 +6,7 @@
 | resource_kind | project/user scope | 发现路径 | 格式 | 热重载/重启 | 支持级别 | 来源 | 实际验证 |
 |---|---|---|---|---|---|---|---|
 | skill | project | `.claude/skills/<name>/SKILL.md`（子目录 `.claude/skills` 亦发现） | Markdown + YAML frontmatter | 按需加载，无需重启 | supported | code.claude.com/docs/en/skills | **真机 2.1.272 发现+调用通过**（隔离项目 `claude -p` 逐字返回技能标记，2026-09-16） |
+| skill | user | `$CLAUDE_CONFIG_DIR/skills/<name>`（未设时 `~/.claude/skills`） | 同 project | 同 project | 部署 supported（AIL-152 全局 Skill）；宿主加载待核实 | code.claude.com/docs/en/skills（个人 Skill 目录；2026-10-02 未重新核对） | 文件落盘自动化验证（tests/global_skills.rs）；真机发现与调用：**未验证** |
 | rule（常驻） | project | `.claude/rules/*.md`（递归） | Markdown + YAML frontmatter | 会话加载 | supported | code.claude.com/docs/en/memory | 文件落盘自动化验证；真实宿主加载：未验证 |
 | rule（条件 paths） | project | 同上，frontmatter `paths` | 同上 | 同上 | supported（透传 frontmatter） | 同上 | 渲染断言；宿主行为：未验证 |
 | rule（条件）→ Codex 片段 | — | — | — | — | unsupported（显式报错） | AIL-010 | 自动化断言 Unsupported |

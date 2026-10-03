@@ -89,6 +89,40 @@ pub struct PersonalProfile {
     /// key = repo_registry RepoIdentity.repo_id（非 Git 路径模式为 nongit-<hash>）
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub repos: BTreeMap<String, RepoProfile>,
+    /// 全局 Skill（AIL-152）：部署到用户级目录，所有项目可见。
+    #[serde(default, skip_serializing_if = "GlobalProfile::is_empty")]
+    pub global: GlobalProfile,
+}
+
+/// 全局目标目录：`claude` = Claude Code 用户级 skills；`agents` = 遵循 `.agents` 规范的
+/// agent 共用的 `~/.agents/skills`（Codex 等）。
+pub const GLOBAL_TARGETS: [&str; 2] = ["claude", "agents"];
+
+/// 全局 Skill 选择。只记录显式启用的资源；未列出即不全局部署。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GlobalProfile {
+    /// 全局启用的 Skill 资源 ID（资源库 personal/* 或合集 collection-*）
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub skills: std::collections::BTreeSet<String>,
+    /// 目标目录开关；缺省视为开启
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub targets: BTreeMap<String, bool>,
+}
+
+impl GlobalProfile {
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty() && self.targets.is_empty()
+    }
+    pub fn target_enabled(&self, target: &str) -> bool {
+        self.targets.get(target).copied().unwrap_or(true)
+    }
+}
+
+/// 全局选择键。
+#[derive(Debug, Clone)]
+pub enum GlobalKey {
+    Skill(String),
+    Target(String),
 }
 
 impl PersonalProfile {
@@ -98,6 +132,7 @@ impl PersonalProfile {
             revision: 0,
             library: None,
             repos: Default::default(),
+            global: GlobalProfile::default(),
         }
     }
 
@@ -266,7 +301,7 @@ fn carrying_unknown_fields(path: &Path, profile: &PersonalProfile) -> Result<Str
     let Ok(old_doc) = old_text.parse::<toml_edit::DocumentMut>() else {
         return Ok(new_text);
     };
-    const KNOWN: [&str; 4] = ["schema_version", "revision", "library", "repos"];
+    const KNOWN: [&str; 5] = ["schema_version", "revision", "library", "repos", "global"];
     for (key, item) in old_doc.iter() {
         if KNOWN.contains(&key) {
             continue;
@@ -313,6 +348,90 @@ impl TriState {
             _ => None,
         }
     }
+}
+
+/// 就地写入一条全局选择（与 [`select_scoped_in_place`] 同一把锁与 revision 规则）。
+/// 返回新 revision。
+pub fn set_global_in_place(
+    data_root: &Path,
+    key: &GlobalKey,
+    enabled: bool,
+    expect_revision: Option<u64>,
+) -> Result<u64> {
+    let _lock = profile_lock(data_root)?;
+    let path = PersonalProfile::profile_path(data_root);
+    let raw = if path.is_file() {
+        std::fs::read_to_string(&path)?
+    } else {
+        format!("schema_version = {PROFILE_SCHEMA_VERSION}\nrevision = 0\n")
+    };
+    let mut doc = raw.parse::<toml_edit::DocumentMut>().map_err(|e| {
+        Error::new(
+            code::MANIFEST_MISSING_FIELD,
+            format!("profile.toml 解析失败: {e}"),
+        )
+        .fix("修正 profile.toml 的语法，或从备份恢复；修复前不会写入该文件")
+    })?;
+    let current_rev = doc
+        .get("revision")
+        .and_then(|r| r.as_integer())
+        .unwrap_or(0) as u64;
+    if let Some(expect) = expect_revision {
+        if expect != current_rev {
+            return Err(Error::new(
+                code::PRECONDITION_FAILED,
+                format!(
+                    "profile.toml 已被其他会话修改（期望 revision {expect}，当前 {current_rev}）"
+                ),
+            )
+            .context(serde_json::json!({ "current_revision": current_rev })));
+        }
+    }
+    doc["schema_version"] = toml_edit::value(i64::from(PROFILE_SCHEMA_VERSION));
+    doc["revision"] = toml_edit::value((current_rev + 1) as i64);
+    if doc.get("global").and_then(|i| i.as_table()).is_none() {
+        doc["global"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let global = doc["global"]
+        .as_table_mut()
+        .ok_or_else(|| Error::new(code::SCHEMA_VERSION, "global 不是表"))?;
+    match key {
+        GlobalKey::Skill(id) => {
+            let mut ids: std::collections::BTreeSet<String> = global
+                .get("skills")
+                .and_then(|i| i.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if enabled {
+                ids.insert(id.clone());
+            } else {
+                ids.remove(id);
+            }
+            let mut arr = toml_edit::Array::new();
+            for id in ids {
+                arr.push(id);
+            }
+            global.insert("skills", toml_edit::value(arr));
+        }
+        GlobalKey::Target(target) => {
+            if !GLOBAL_TARGETS.contains(&target.as_str()) {
+                return Err(Error::new(
+                    code::UNKNOWN_REFERENCE,
+                    format!("未知全局目标: {target}（支持 claude / agents）"),
+                ));
+            }
+            if global.get("targets").and_then(|i| i.as_table()).is_none() {
+                global.insert("targets", toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            global["targets"][target.as_str()] = toml_edit::value(enabled);
+        }
+    }
+    crate::sync_common::atomic_write(&path, doc.to_string().as_bytes())?;
+    Ok(current_rev + 1)
 }
 
 /// 就地写入一条三态选择：文件锁 + 乐观 revision + toml_edit 格式保留。

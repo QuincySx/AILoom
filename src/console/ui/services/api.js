@@ -93,6 +93,13 @@ export const api = {
   collectionApply: (previewId) => request('POST', '/api/collections/apply', { preview_id: previewId }),
   libraryImport: (dir, name, execute) => request('POST', '/api/library/import', { dir, name, execute }),
   libraryImportEntry: (entry, name, execute) => request('POST', '/api/library/import-entry', { entry, name, execute }),
+  // AIL-152：全局 Skill
+  globalSkills: () => request('GET', '/api/global/skills'),
+  globalSelect: (body) => request('POST', '/api/global/select', body),
+  globalPlan: () => request('GET', '/api/global/plan'),
+  globalApply: () => request('POST', '/api/global/apply', {}),
+  globalTakeover: (target, name) => request('POST', '/api/global/takeover', { target, name }),
+  globalRestore: (id) => request('POST', '/api/global/restore', { id }),
   libraryDelete: (id, execute) => request('POST', '/api/library/delete', { id, execute }),
   libraryResource: (id) => request('GET', '/api/library/resource' + qs({ id })),
   libraryDefinitionSave: (id, definition, baseFingerprint) => request('PUT', '/api/library/resource', {id,definition,base_fingerprint:baseFingerprint}),

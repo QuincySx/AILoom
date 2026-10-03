@@ -61,6 +61,13 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             ),
         ),
         (
+            "/ui/features/globalSkills.js",
+            (
+                include_str!("ui/features/globalSkills.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
             "/ui/pages/nativeFiles.js",
             (
                 include_str!("ui/pages/nativeFiles.js"),

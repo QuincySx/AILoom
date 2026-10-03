@@ -753,6 +753,53 @@ fn run(cli: &cli::Cli) -> Result<()> {
             }
             Ok(())
         }
+        Some(Command::Global {
+            action,
+            skill,
+            target,
+            state,
+            name,
+            id,
+        }) => {
+            use ailoom::error::{code, Error};
+            let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let need = |v: &Option<String>, flag: &str| {
+                v.clone()
+                    .ok_or_else(|| Error::new(code::USAGE, format!("{action} 需要 --{flag}")))
+            };
+            let value = match action.as_str() {
+                "status" => ailoom::global_skills::status(&data)?,
+                "plan" => ailoom::global_skills::plan(&data)?,
+                "sync" => ailoom::global_skills::sync(&data)?,
+                "recover" => ailoom::global_skills::recover(&data)?,
+                "select" => {
+                    let enabled = need(state, "state")? == "enable";
+                    let key =
+                        match (skill, target) {
+                            (Some(s), None) => ailoom::profile::GlobalKey::Skill(s.clone()),
+                            (None, Some(t)) => ailoom::profile::GlobalKey::Target(t.clone()),
+                            _ => return Err(Error::new(
+                                code::USAGE,
+                                "select 需要 --skill <资源ID> 或 --target <claude|agents> 其中之一",
+                            )),
+                        };
+                    ailoom::global_skills::select(&data, &key, enabled, None)?
+                }
+                "takeover" => ailoom::global_skills::takeover(
+                    &data,
+                    &need(target, "target")?,
+                    &need(name, "name")?,
+                )?,
+                "restore" => ailoom::global_skills::restore(&data, &need(id, "id")?)?,
+                _ => return Err(Error::new(code::USAGE, "未知 global 动作")),
+            };
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                output::emit_global(action, &value);
+            }
+            Ok(())
+        }
         Some(Command::Collection {
             action,
             name,

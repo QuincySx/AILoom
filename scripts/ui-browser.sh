@@ -46,6 +46,12 @@ done
 mkdir -p "$WORK/project-a" "$WORK/project-b" "$WORK/project-c" "$WORK/skills/browser-skill"
 git -C "$WORK/project-a" init -q && git -C "$WORK/project-b" init -q && git -C "$WORK/project-c" init -q
 printf -- "---\nname: browser-skill\ndescription: 浏览器验收用\n---\n正文\n" >"$WORK/skills/browser-skill/SKILL.md"
+mkdir -p "$WORK/skills/global-skill" "$HOME/claude/skills" "$HOME/.agents/skills" "$WORK/elsewhere/foreign-skill"
+# 全局目录里的非托管条目：Claude 下一个链接，.agents 下一个链接套链接（检查位置 / 真实目录的展示）
+printf -- "---\nname: foreign-skill\n---\n外部\n" >"$WORK/elsewhere/foreign-skill/SKILL.md"
+ln -s "$WORK/elsewhere/foreign-skill" "$HOME/claude/skills/foreign-skill"
+ln -s "$HOME/claude/skills/foreign-skill" "$HOME/.agents/skills/foreign-skill"
+printf -- "---\nname: global-skill\ndescription: 全局启用验收用\n---\n正文\n" >"$WORK/skills/global-skill/SKILL.md"
 
 failed=0
 attempt() {
@@ -78,5 +84,6 @@ run cc-switch
 run projects "$WORK/project-a"
 run onboarding
 run instructions "$WORK/project-c"
+run global "$WORK/skills/global-skill"
 run design "$WORK/project-b" "$WORK/skills/browser-skill"
 exit $failed

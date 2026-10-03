@@ -254,6 +254,210 @@ pub fn recover(root: &Path, data_root: Option<&Path>) -> Result<Value> {
     Ok(value)
 }
 
+/// 渲染结果：显式选中的资源库 / 合集资源。
+pub(crate) struct SelectedRender {
+    pub artifacts: Vec<crate::adapters::common::Artifact>,
+    pub unsupported: Vec<crate::adapters::UnsupportedItem>,
+    pub notes: Vec<String>,
+    pub entries: Vec<crate::resource::ResourceEntry>,
+    /// 引用了但来源读取失败或条目已不存在的合集资源
+    pub unresolved: std::collections::BTreeSet<String>,
+}
+
+/// 把显式选中的资源库（personal/*）与合集（collection-*）资源渲染为产物；
+/// 项目部署与全局部署共用，保证两边对坏条目、缺失来源、外部目录的处理一致。
+/// `library_root` / `collection_root` 是渲染时的落点根（项目为 Worktree 根 / 作用域目录）。
+pub(crate) fn render_selected(
+    data_root_resolved: &Path,
+    ids: &[String],
+    targets: &ToolTargets,
+    library_root: &Path,
+    collection_root: &Path,
+) -> Result<SelectedRender> {
+    // 资源库层：被启用的 personal/* 资源（AIL-043 库 → AIL-040 选择）
+    let personal_enabled: Vec<String> = ids
+        .iter()
+        .filter(|k| k_starts_personal(k))
+        .cloned()
+        .collect();
+    let mut personal_selected_entries: Vec<crate::resource::ResourceEntry> = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut notes = Vec::new();
+    let mut unresolved_refs = std::collections::BTreeSet::new();
+    let mut artifacts = Vec::new();
+    if !personal_enabled.is_empty() {
+        let lib = crate::personal_library::ensure_library(data_root_resolved)?;
+        let src = LocalSource::new(&lib.path)?;
+        let snap = src.resolve()?;
+        let manifest = crate::manifest::TeamManifest::load_from(&snap.root)?;
+        let (desired, invalid_entries) = resolve_isolating(ResolveRequest {
+            snapshot_root: &snap.root,
+            manifest: &manifest,
+            source: crate::personal_library::LIBRARY_TEAM_ID,
+            identity: &src.identity,
+            revision: snap.resolved_commit.clone(),
+            content_digest: snap.content_digest.clone(),
+            active_projects: &[],
+            active_roles: &[],
+        })?;
+        if !invalid_entries.is_empty() {
+            notes.push(format!(
+                "资源库中有 {} 个条目无效，已跳过（不影响其他资源）：{}",
+                invalid_entries.len(),
+                invalid_entries
+                    .iter()
+                    .map(|e| e.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ));
+        }
+        // 过滤出被启用的资源
+        let filtered_desired = filter_desired_by_ids(&desired, &personal_enabled);
+        // AIL-044：不凭名字假定安装——被启用但资源库中不存在的资源显式 unsupported
+        let resolved_ids: std::collections::BTreeSet<String> = filtered_desired
+            .selected
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        for id in &personal_enabled {
+            if resolved_ids.contains(id) {
+                continue;
+            }
+            if let Some(bad) = invalid_library_entry(&invalid_entries, id) {
+                unsupported.push(crate::adapters::UnsupportedItem {
+                    resource_id: id.clone(),
+                    tool: "-".into(),
+                    kind: bad.kind.as_str().into(),
+                    reason: format!(
+                        "资源定义无效，未部署：{}：{}（已部署的文件保留；修复后重新同步）",
+                        bad.path, bad.error.message
+                    ),
+                });
+            } else {
+                unsupported.push(crate::adapters::UnsupportedItem {
+                    resource_id: id.clone(),
+                    tool: "-".into(),
+                    kind: "resource".into(),
+                    reason: "资源库中不存在该资源（不凭名字假定安装）；请在资源库导入或修正资源 ID"
+                        .into(),
+                });
+            }
+        }
+        personal_selected_entries = filtered_desired
+            .selected
+            .iter()
+            .map(|s| s.entry.clone())
+            .collect();
+        let (mut lib_artifacts, lib_unsupported) =
+            render_artifacts(&filtered_desired, &snap.root, targets, library_root)?;
+        artifacts.append(&mut lib_artifacts);
+        unsupported.extend(lib_unsupported);
+    }
+
+    // 合集订阅只提供目录，必须按完整资源 ID 显式选用；不套团队 shared 自动启用规则。
+    let collections = crate::collections::load(data_root_resolved)?;
+    let mut remaining: std::collections::BTreeSet<String> = ids
+        .iter()
+        .filter(|id| id.starts_with("collection-"))
+        .cloned()
+        .collect();
+    for source in collections.sources.values() {
+        let prefix = format!("{}/", source.id);
+        let selected_ids: Vec<String> = remaining
+            .iter()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect();
+        if selected_ids.is_empty() {
+            continue;
+        }
+        // AIL-119：来源读取失败（快照缺失/路径失联）不再硬失败 —— 记入 notes，
+        // 该来源的已登记引用进入 unresolved_references，由前端提供解除入口。
+        let catalog = match crate::collections::catalog(data_root_resolved, source) {
+            Ok(c) => c,
+            Err(e) => {
+                notes.push(format!(
+                    "来源「{}」读取失败：{}；其已登记引用标记为来源不可用，可在项目中解除",
+                    source.name, e
+                ));
+                continue;
+            }
+        };
+        let mut selected = Vec::new();
+        for entry in catalog.entries {
+            let id = entry.id.to_string();
+            if !selected_ids.contains(&id) {
+                continue;
+            }
+            remaining.remove(&id);
+            personal_selected_entries.push(entry.clone());
+            selected.push(crate::resolver::Selected {
+                id,
+                kind: entry.id.kind.as_str().into(),
+                name: entry.id.name.clone(),
+                namespace: entry.id.namespace.clone(),
+                reason: "个人显式引用合集资源".into(),
+                entry,
+            });
+        }
+        crate::resolver::check_target_conflicts(&selected)?;
+        let desired = crate::resolver::DesiredSet {
+            source: source.id.clone(),
+            // 不同锁定版本使用不同实体；更新一个 Worktree 不能经共享 symlink 偷改其他 Worktree。
+            identity: format!(
+                "{}#{}",
+                source.lock.identity,
+                source.lock.resolved_commit.as_deref().unwrap_or_default()
+            ),
+            skills_root: catalog.skills_root,
+            revision: source.lock.resolved_commit.clone(),
+            content_digest: source.lock.content_digest.clone(),
+            active_projects: vec![],
+            active_roles: vec![],
+            selected,
+            excluded: vec![],
+        };
+        let (mut rendered, missing) =
+            render_artifacts(&desired, &catalog.snapshot.root, targets, collection_root)?;
+        if source.external_path.is_some() {
+            for artifact in &mut rendered {
+                if let crate::adapters::common::ArtifactBody::Symlink { source_dir, .. } =
+                    &artifact.body
+                {
+                    artifact.body = crate::adapters::common::ArtifactBody::ExternalSymlink {
+                        target: source_dir.clone(),
+                    };
+                }
+            }
+        }
+        // 个人合集不生成公司指令索引；其余仍经同一所有权/公司文件守卫。
+        rendered.retain(|a| a.resource_id != "ailoom-internal/doc-index");
+        artifacts.extend(rendered);
+        unsupported.extend(missing);
+    }
+    if !remaining.is_empty() {
+        // AIL-119：来源读取失败或条目消失时不再硬失败整个项目页 ——
+        // 记入 notes 与未解析引用列表（effective 返回 unresolved_references），
+        // 前端展示「来源不可用」行并提供解除引用入口；plan 跳过对应产物。
+        let ids: Vec<String> = remaining.iter().cloned().collect();
+        notes.push(format!(
+            "引用的合集资源不存在（来源读取失败或已删除）：{}；可在项目中解除引用",
+            ids.join(", ")
+        ));
+        for id in ids {
+            unresolved_refs.insert(id);
+        }
+        remaining.clear();
+    }
+    Ok(SelectedRender {
+        artifacts,
+        unsupported,
+        notes,
+        entries: personal_selected_entries,
+        unresolved: unresolved_refs,
+    })
+}
+
 /// 组装个人模式部署准备（不写盘；plan 纯只读）。
 pub fn prepare_personal(
     data_root: Option<&Path>,
@@ -425,208 +629,53 @@ pub fn prepare_personal(
         }
     }
 
-    // 资源库层：被启用的 personal/* 资源（AIL-043 库 → AIL-040 选择）
-    let personal_enabled: Vec<String> = effective
+    // 资源库与合集层：被启用的 personal/* 与 collection-* 资源（与全局部署共用渲染）
+    let selected_ids: Vec<String> = effective
         .resources
         .iter()
-        .filter(|(k, v)| v.deployed && k_starts_personal(k))
+        .filter(|(_, v)| v.deployed)
         .map(|(k, _)| k.clone())
         .collect();
-    let mut personal_selected_entries: Vec<crate::resource::ResourceEntry> = Vec::new();
-    let mut unsupported = Vec::new();
-    if !personal_enabled.is_empty() {
-        let lib = crate::personal_library::ensure_library(data_root_resolved)?;
-        let src = LocalSource::new(&lib.path)?;
-        let snap = src.resolve()?;
-        let manifest = crate::manifest::TeamManifest::load_from(&snap.root)?;
-        let (desired, invalid_entries) = resolve_isolating(ResolveRequest {
-            snapshot_root: &snap.root,
-            manifest: &manifest,
-            source: crate::personal_library::LIBRARY_TEAM_ID,
-            identity: &src.identity,
-            revision: snap.resolved_commit.clone(),
-            content_digest: snap.content_digest.clone(),
-            active_projects: &[],
-            active_roles: &[],
-        })?;
-        if !invalid_entries.is_empty() {
-            notes.push(format!(
-                "资源库中有 {} 个条目无效，已跳过（不影响其他资源）：{}",
-                invalid_entries.len(),
-                invalid_entries
-                    .iter()
-                    .map(|e| e.path.as_str())
-                    .collect::<Vec<_>>()
-                    .join("、")
-            ));
-        }
-        let targets = ToolTargets {
-            claude: enabled_hosts.iter().any(|h| h == "claude"),
-            codex: enabled_hosts.iter().any(|h| h == "codex"),
-            extra: enabled_hosts
-                .iter()
-                .filter(|h| h.as_str() != "claude" && h.as_str() != "codex")
-                .cloned()
-                .collect(),
-        };
-        // 过滤出被启用的资源
-        let filtered_desired = filter_desired_by_ids(&desired, &personal_enabled);
-        // AIL-044：不凭名字假定安装——被启用但资源库中不存在的资源显式 unsupported
-        let resolved_ids: std::collections::BTreeSet<String> = filtered_desired
-            .selected
+    let targets = ToolTargets {
+        claude: enabled_hosts.iter().any(|h| h == "claude"),
+        codex: enabled_hosts.iter().any(|h| h == "codex"),
+        extra: enabled_hosts
             .iter()
-            .map(|s| s.id.clone())
-            .collect();
-        for id in &personal_enabled {
-            if resolved_ids.contains(id) {
-                continue;
-            }
-            if let Some(bad) = invalid_library_entry(&invalid_entries, id) {
-                unsupported.push(crate::adapters::UnsupportedItem {
-                    resource_id: id.clone(),
-                    tool: "-".into(),
-                    kind: bad.kind.as_str().into(),
-                    reason: format!(
-                        "资源定义无效，未部署：{}：{}（已部署的文件保留；修复后重新同步）",
-                        bad.path, bad.error.message
-                    ),
-                });
-            } else {
-                unsupported.push(crate::adapters::UnsupportedItem {
-                    resource_id: id.clone(),
-                    tool: "-".into(),
-                    kind: "resource".into(),
-                    reason: "资源库中不存在该资源（不凭名字假定安装）；请在资源库导入或修正资源 ID"
-                        .into(),
-                });
-            }
-        }
-        personal_selected_entries = filtered_desired
-            .selected
-            .iter()
-            .map(|s| s.entry.clone())
-            .collect();
-        let (mut lib_artifacts, lib_unsupported) =
-            render_artifacts(&filtered_desired, &snap.root, &targets, &worktree_root)?;
-        // F07：子项目作用域的产物落进子项目目录
-        if let Some(rel) = &active_rel {
-            for a in &mut lib_artifacts {
-                a.path = PathBuf::from(rel).join(&a.path);
-            }
-        }
-        artifacts.append(&mut lib_artifacts);
-        unsupported.extend(lib_unsupported);
-    }
-
-    // 合集订阅只提供目录，必须按完整资源 ID 显式选用；不套团队 shared 自动启用规则。
-    let collections = crate::collections::load(data_root_resolved)?;
-    let mut remaining: std::collections::BTreeSet<String> = effective
-        .resources
-        .iter()
-        .filter(|(id, v)| v.deployed && id.starts_with("collection-"))
-        .map(|(id, _)| id.clone())
-        .collect();
-    for source in collections.sources.values() {
-        let prefix = format!("{}/", source.id);
-        let selected_ids: Vec<String> = remaining
-            .iter()
-            .filter(|id| id.starts_with(&prefix))
+            .filter(|h| h.as_str() != "claude" && h.as_str() != "codex")
             .cloned()
-            .collect();
-        if selected_ids.is_empty() {
-            continue;
-        }
-        // AIL-119：来源读取失败（快照缺失/路径失联）不再硬失败 —— 记入 notes，
-        // 该来源的已登记引用进入 unresolved_references，由前端提供解除入口。
-        let catalog = match crate::collections::catalog(data_root_resolved, source) {
-            Ok(c) => c,
-            Err(e) => {
-                notes.push(format!(
-                    "来源「{}」读取失败：{}；其已登记引用标记为来源不可用，可在项目中解除",
-                    source.name, e
-                ));
-                continue;
-            }
-        };
-        let mut selected = Vec::new();
-        for entry in catalog.entries {
-            let id = entry.id.to_string();
-            if !selected_ids.contains(&id) {
-                continue;
-            }
-            remaining.remove(&id);
-            personal_selected_entries.push(entry.clone());
-            selected.push(crate::resolver::Selected {
-                id,
-                kind: entry.id.kind.as_str().into(),
-                name: entry.id.name.clone(),
-                namespace: entry.id.namespace.clone(),
-                reason: "个人显式引用合集资源".into(),
-                entry,
-            });
-        }
-        crate::resolver::check_target_conflicts(&selected)?;
-        let desired = crate::resolver::DesiredSet {
-            source: source.id.clone(),
-            // 不同锁定版本使用不同实体；更新一个 Worktree 不能经共享 symlink 偷改其他 Worktree。
-            identity: format!(
-                "{}#{}",
-                source.lock.identity,
-                source.lock.resolved_commit.as_deref().unwrap_or_default()
-            ),
-            skills_root: catalog.skills_root,
-            revision: source.lock.resolved_commit.clone(),
-            content_digest: source.lock.content_digest.clone(),
-            active_projects: vec![],
-            active_roles: vec![],
-            selected,
-            excluded: vec![],
-        };
-        let targets = ToolTargets {
-            claude: enabled_hosts.iter().any(|h| h == "claude"),
-            codex: enabled_hosts.iter().any(|h| h == "codex"),
-            extra: enabled_hosts
-                .iter()
-                .filter(|h| h.as_str() != "claude" && h.as_str() != "codex")
-                .cloned()
-                .collect(),
-        };
-        let (mut rendered, missing) =
-            render_artifacts(&desired, &catalog.snapshot.root, &targets, &scope_dir)?;
-        if source.external_path.is_some() {
-            for artifact in &mut rendered {
-                if let crate::adapters::common::ArtifactBody::Symlink { source_dir, .. } =
-                    &artifact.body
-                {
-                    artifact.body = crate::adapters::common::ArtifactBody::ExternalSymlink {
-                        target: source_dir.clone(),
-                    };
-                }
-            }
-        }
-        // 个人合集不生成公司指令索引；其余仍经同一所有权/公司文件守卫。
-        rendered.retain(|a| a.resource_id != "ailoom-internal/doc-index");
+            .collect(),
+    };
+    let rendered = render_selected(
+        data_root_resolved,
+        &selected_ids,
+        &targets,
+        &worktree_root,
+        &scope_dir,
+    )?;
+    let personal_selected_entries = rendered.entries;
+    let unsupported = rendered.unsupported;
+    notes.extend(rendered.notes);
+    unresolved_refs.extend(rendered.unresolved);
+    // F07：子项目作用域的产物落进子项目目录
+    for mut a in rendered.artifacts {
         if let Some(rel) = &active_rel {
-            for artifact in &mut rendered {
-                artifact.path = PathBuf::from(rel).join(&artifact.path);
-            }
+            a.path = PathBuf::from(rel).join(&a.path);
         }
-        artifacts.extend(rendered);
-        unsupported.extend(missing);
+        artifacts.push(a);
     }
-    if !remaining.is_empty() {
-        // AIL-119：来源读取失败或条目消失时不再硬失败整个项目页 ——
-        // 记入 notes 与未解析引用列表（effective 返回 unresolved_references），
-        // 前端展示「来源不可用」行并提供解除引用入口；plan 跳过对应产物。
-        let ids: Vec<String> = remaining.iter().cloned().collect();
+    // AIL-152：已全局部署的 Skill 不在项目里重复部署（宿主里只出现一份）
+    let global_skipped =
+        crate::global_skills::skip_globally_deployed(data_root_resolved, &mut artifacts);
+    if !global_skipped.is_empty() {
         notes.push(format!(
-            "引用的合集资源不存在（来源读取失败或已删除）：{}；可在项目中解除引用",
-            ids.join(", ")
+            "{} 个 Skill 已全局启用，项目内不重复部署：{}",
+            global_skipped.len(),
+            global_skipped
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、")
         ));
-        for id in ids {
-            unresolved_refs.insert(id);
-        }
-        remaining.clear();
     }
 
     // 个人指令条目（AIL-042）：Codex 替代视图按作用域取最近基线（子项目用其目录内基线）
@@ -906,6 +955,11 @@ pub fn effective(
         "pending_actions": pending,
         "skipped": p.skipped,
         "notes": p.notes,
+        // AIL-152：已全局部署的资源（项目页标注「已全局启用」，项目内不重复部署）
+        "global_skills": crate::global_skills::deployed_set(data_root_resolved)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<std::collections::BTreeSet<_>>(),
     }))
 }
 

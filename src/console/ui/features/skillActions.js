@@ -19,9 +19,9 @@ export async function openSkillDelete({root,sub,path,name,onDone}) {
   catch(e) { onDone?.({error:e.message}); return; }
   const size=(p.bytes||0)>=1048576?`${(p.bytes/1048576).toFixed(1)} MB`:`${Math.max(1,Math.round((p.bytes||0)/1024))} KB`;
   const body=document.createElement('div');
-  body.innerHTML=`<p>准备删除未托管 Skill「${esc(name)}」的原目录，删除后 AI 工具不再从这里加载它。</p>
+  body.innerHTML=`<p>删除「${esc(name)}」后，AI 工具不会再加载它。可以从归档恢复。</p>
     <table><tr><th scope="row">目录</th><td class="path">${esc(p.path)}</td></tr>
-    <tr><th scope="row">规模</th><td>${p.is_symlink?`符号链接 → ${esc(p.link_target||'')}：只摘除链接本身，不触碰目标`:`${p.files} 个文件 · 约 ${size}`}</td></tr>
+    <tr><th scope="row">规模</th><td>${p.is_symlink?`链接，指向 ${esc(p.link_target||'')}（只删除链接，原目录不受影响）`:`${p.files} 个文件 · 约 ${size}`}</td></tr>
     <tr><th scope="row">影响</th><td>资源库与其他项目不受影响；链接目标不会被删除。</td></tr>
     <tr><th scope="row">恢复</th><td>${p.is_symlink?'本机归档 project-archive 记录原链接目标，可按记录重建链接。':'目录移入本机归档 project-archive，可移回原路径恢复。'}</td></tr></table>`;
   const confirm=()=>{
@@ -38,7 +38,7 @@ export async function openSkillDelete({root,sub,path,name,onDone}) {
       {label:'取消',returnValue:false},
     ]});
   };
-  const first=Dialog(document.body,{title:`删除未托管 Skill · ${name}`,content:body,canClose:()=>true,actions:[
+  const first=Dialog(document.body,{title:`删除 Skill · ${name}`,content:body,canClose:()=>true,actions:[
     {label:'继续：输入名称确认',onAction:()=>{first.close();confirm();}},
     {label:'取消',returnValue:false},
   ]});

@@ -6,6 +6,7 @@
 | resource_kind | project/user scope | 发现路径 | 格式 | 支持级别 | 来源 | 实际验证 |
 |---|---|---|---|---|---|---|
 | skill | project | **`.agents/skills/<name>`（原生发现：CWD 向上扫描至仓库根，支持 symlink）**；`.codex/config.toml` `skills.config[].{path,enabled}` 为显式条目（path 指向 SKILL.md） | 目录 symlink + TOML | supported（AIL-041 起部署到原生目录；旧 `.ailoom/skills/` 由 sync 过期清理自动迁移） | build-skills（2026-09-16） | **真机 0.154.0 发现+调用通过（正向逐字标记 + 阴性对照 SKILL_NOT_FOUND）**；旧路径迁移回归 tests/adapters.rs::ail041_legacy_* |
+| skill | user | `~/.agents/skills/<name>`（`.agents` 规范的用户级目录，AILoom 全局部署与其他遵循该规范的 agent 共用） | 目录 symlink | 部署 supported（AIL-152 全局 Skill，不写 `~/.codex/config.toml`）；宿主加载待核实 | build-skills（用户级目录；2026-10-02 未重新核对） | 文件落盘自动化验证（tests/global_skills.rs）；真机发现与调用：**未验证** |
 | rule | project | 仓库根 `AGENTS.md`（就近优先） | Markdown | supported（受管片段） | agents.md | 片段落盘自动化验证；宿主加载：未验证 |
 | rule（条件 paths） | project | — | — | unsupported（片段无条件语义，显式报错） | AIL-010 | 自动化断言 Unsupported |
 | agent（自定义子代理） | project | — | — | **unknown**（官方文档未确认项目级自定义 Agent）→ AILoom 显式 Unsupported，不写用户级配置充数 | 未能核实 | 自动化断言 Unsupported |

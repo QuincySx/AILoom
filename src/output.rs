@@ -120,6 +120,16 @@ pub fn emit_personal(action: &str, v: &Value) {
             );
             print_notes(v);
         }
+        "plan" => {
+            match v["summary"].as_str().filter(|s| !s.is_empty()) {
+                Some(summary) => print!("{summary}"),
+                None => println!("没有待应用的改动"),
+            }
+            if v["has_conflicts"] == true {
+                println!("{}", crate::sync::plan::CONFLICT_HELP);
+            }
+            print_notes(v);
+        }
         "instructions" if v["cleared"] == true => {
             println!("已清除个人指令；运行 ailoom personal --action sync 从项目中移除");
         }
@@ -164,6 +174,134 @@ pub fn emit_personal(action: &str, v: &Value) {
                 println!("{hint}");
             }
             print_notes(v);
+        }
+        _ => emit_human(v),
+    }
+}
+
+/// `global` 的人类可读输出；没有专门格式的动作回落到 [`emit_human`]。
+pub fn emit_global(action: &str, v: &Value) {
+    let list = |k: &str| v[k].as_array().cloned().unwrap_or_default();
+    match action {
+        "status" => {
+            for t in list("targets") {
+                let state = if t["supported"] != true {
+                    "不在用户目录下，暂不支持"
+                } else if t["enabled"] == true {
+                    "开启"
+                } else {
+                    "关闭"
+                };
+                println!(
+                    "目标 {}：{}（{}）",
+                    t["label"].as_str().unwrap_or("?"),
+                    t["dir"].as_str().unwrap_or("?"),
+                    state
+                );
+            }
+            let skills = list("skills");
+            let on: Vec<_> = skills.iter().filter(|s| s["global"] == true).collect();
+            println!(
+                "全局启用 {} 个 Skill（可选 {} 个）：",
+                on.len(),
+                skills.len()
+            );
+            for s in &on {
+                println!("  {}", s["id"].as_str().unwrap_or("?"));
+            }
+            let foreign = list("foreign");
+            if !foreign.is_empty() {
+                println!("目录里已有（非 AILoom 管理，只列出不改动）：");
+            }
+            for f in foreign {
+                let loc = &f["location"];
+                let kind = match loc["kind"].as_str() {
+                    Some("link") => "链接",
+                    Some("dir") => "文件夹",
+                    Some("broken_link") => "失效链接",
+                    _ => "其他",
+                };
+                println!("  {}（{kind}）", f["name"].as_str().unwrap_or("?"));
+                println!("    位置：{}", f["path"].as_str().unwrap_or("?"));
+                for via in loc["via"].as_array().into_iter().flatten() {
+                    println!("    中间经过：{}", via.as_str().unwrap_or("?"));
+                }
+                match (loc["kind"].as_str(), loc["real_path"].as_str()) {
+                    (Some("link"), Some(real)) => println!("    真实目录：{real}"),
+                    (Some("dir"), Some(real)) => {
+                        println!("    真实目录：{real}（本身就是文件夹，不是链接）")
+                    }
+                    _ => {}
+                }
+                if let Some(id) = f["conflicts_with"].as_str() {
+                    println!("    与全局启用的 {id} 同名：可 takeover 接管");
+                }
+            }
+            if v["pending"].as_u64().unwrap_or(0) > 0 {
+                println!(
+                    "有 {} 项待应用：运行 ailoom global --action plan 预览、--action sync 应用",
+                    v["pending"]
+                );
+            }
+            print_notes(v);
+        }
+        "plan" => {
+            print!("{}", v["summary"].as_str().unwrap_or(""));
+            if v["has_conflicts"] == true {
+                println!("{}", crate::sync::plan::CONFLICT_HELP);
+                println!("全局目录中已有的同名条目可用 ailoom global --action takeover --target <claude|agents> --name <名字> 接管（原条目移入归档，可还原）");
+            }
+            print_notes(v);
+        }
+        "sync" => {
+            let len = |k: &str| v[k].as_array().map_or(0, Vec::len);
+            println!(
+                "全局同步完成：写入 {} 项，无变化 {} 项，冲突跳过 {} 项",
+                len("applied"),
+                v["noop"].as_u64().unwrap_or(0),
+                len("skipped_conflicts")
+            );
+            for path in list("skipped_conflicts") {
+                println!("  冲突 {}", path.as_str().unwrap_or("?"));
+            }
+            if let Some(next) = v["next"].as_str() {
+                println!("{next}");
+            }
+            print_notes(v);
+        }
+        "takeover" => {
+            let a = &v["archived"];
+            println!(
+                "已移入归档：{} → {}（归档 ID {}）",
+                a["original"].as_str().unwrap_or("?"),
+                a["archived"].as_str().unwrap_or("?"),
+                a["id"].as_str().unwrap_or("?")
+            );
+            if let Some(next) = v["next"].as_str() {
+                println!("{next}");
+            }
+        }
+        "restore" => println!(
+            "已还原：{}",
+            v["restored"]["original"].as_str().unwrap_or("?")
+        ),
+        "select" => {
+            let what = v["skill"]
+                .as_str()
+                .map(|s| format!("Skill {s}"))
+                .or_else(|| v["target"].as_str().map(|t| format!("目标 {t}")))
+                .unwrap_or_default();
+            println!(
+                "已{}全局{what}",
+                if v["enabled"] == true {
+                    "启用"
+                } else {
+                    "停用"
+                }
+            );
+            if let Some(next) = v["next"].as_str() {
+                println!("{next}");
+            }
         }
         _ => emit_human(v),
     }

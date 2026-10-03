@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod git_exclude;
 pub mod gitx;
+pub mod global_skills;
 pub mod ids;
 pub mod import;
 pub mod knowledge;

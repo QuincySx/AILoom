@@ -689,6 +689,17 @@ pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
             }
         }
     }
+    // 全局启用同样算引用：删除资源或移除合集前要先在全局页停用
+    for id in &profile.global.skills {
+        let matches = if id_or_prefix.ends_with('/') {
+            id.starts_with(id_or_prefix)
+        } else {
+            id == id_or_prefix
+        };
+        if matches {
+            refs.push(json!({"repo_id": null, "scope": "全局", "resource_id": id}));
+        }
+    }
     Ok(json!(refs))
 }
 

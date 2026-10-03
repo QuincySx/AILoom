@@ -30,7 +30,7 @@ ailoom service disable      # 关闭登录自启动
 - **原生文件**：在网页里直接编辑各宿主的 Rules / Agent 原生文件，见 [原生文件](docs/guide/NATIVE-FILES.md)。
 - **知识闭环**：经验贡献、中文检索与项目隔离召回；知识库位置迁移与换机恢复，见 [项目与知识库恢复](docs/guide/KNOWLEDGE-PORTABILITY.md)。
 - **观测**：Hook 事件、会话 / Token 聚合、摩擦提示、本地 loopback 看板。
-- **网页控制台**：目录优先的项目工作台、全局规则与 Agent、资源库、操作记录。
+- **网页控制台**：目录优先的项目工作台、全局配置（全局 Skill 与用户级 Rules / Agent）、资源库、操作记录。
 - **ORCA 接入层**（实验）：见 [plugins/orca](plugins/orca/README.md)。
 
 ## 文档

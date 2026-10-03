@@ -484,6 +484,26 @@ pub enum Command {
         #[arg(long)]
         repo: Option<std::path::PathBuf>,
     },
+    /// 全局 Skill：status | select | plan | sync | recover | takeover | restore（部署到用户级目录，所有项目可见）
+    Global {
+        #[arg(long, default_value = "status", value_parser = ["status", "select", "plan", "sync", "recover", "takeover", "restore"])]
+        action: String,
+        /// select：完整资源 ID（资源库或合集里的 Skill）
+        #[arg(long)]
+        skill: Option<String>,
+        /// select：目标目录开关 claude | agents；takeover：条目所在目标
+        #[arg(long, value_parser = ["claude", "agents"])]
+        target: Option<String>,
+        /// select：enable | disable
+        #[arg(long, value_parser = ["enable", "disable"])]
+        state: Option<String>,
+        /// takeover：全局目录里要接管的条目名
+        #[arg(long)]
+        name: Option<String>,
+        /// restore：接管时生成的归档 ID
+        #[arg(long)]
+        id: Option<String>,
+    },
     /// 资源合集：list | preview | apply | check | remove（添加/更新不启用资源）
     Collection {
         #[arg(long, default_value = "list", value_parser = ["list", "preview", "apply", "check", "remove"])]
