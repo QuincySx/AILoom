@@ -4,9 +4,7 @@
 //! 并在 `.codex/config.toml` skills.config 保留显式条目（path 指向 SKILL.md，可禁用）。
 //! 旧版 `.ailoom/skills/<name>` 部署由 sync 的过期清理迁移（旧条目 Delete → 新条目 Create）。
 
-use super::common::{
-    is_codex_managed_config_path, Artifact, ArtifactBody, CODEX_NATIVE_SKILLS_DIR,
-};
+use super::common::{Artifact, ArtifactBody, CODEX_NATIVE_SKILLS_DIR};
 use super::{Tool, UnsupportedItem};
 use crate::error::{code, Error, Result};
 use crate::resource::ResourceEntry;
@@ -59,9 +57,10 @@ pub fn render_at(
     }
     let skill_rel = store::skill_rel_under_root(Path::new(&entry.path), Path::new(skills_root))?;
     let store_root = store::resolve_store_root()?;
-    let entity = store::skill_entity_dir(&store_root, source_identity, &skill_rel);
     // 只计算期望摘要，不在 plan 阶段写 store（避免覆盖用户经软链的修改）
     let digest = store::dir_digest(&src_dir)?;
+    let source_identity = store::skill_revision_identity(source_identity, &digest);
+    let entity = store::skill_entity_dir(&store_root, &source_identity, &skill_rel);
 
     artifacts.push(Artifact {
         resource_id: entry.id.to_string(),
@@ -72,7 +71,7 @@ pub fn render_at(
             target: entity,
             content_digest: digest,
             source_dir: src_dir,
-            source_identity: source_identity.to_string(),
+            source_identity,
         },
     });
     Ok(())
@@ -82,39 +81,9 @@ pub fn render_at(
 /// 形态与官方 skills.config 示例一致；AILoom 托管旧条目 `.ailoom/skills/…` 一并清除迁移）。
 pub fn render_config(
     managed_skill_names: &[String],
-    ws_root: &Path,
+    _ws_root: &Path,
     artifacts: &mut Vec<Artifact>,
 ) -> Result<()> {
-    if managed_skill_names.is_empty() {
-        return Ok(());
-    }
-    let config_path = ws_root.join(".codex/config.toml");
-    let mut user_entries: Vec<toml::Value> = Vec::new();
-    if config_path.is_file() {
-        let text = std::fs::read_to_string(&config_path)?;
-        let value: toml::Value = text.parse().map_err(|e| {
-            Error::new(
-                code::USER_CONTENT_CONFLICT,
-                format!(".codex/config.toml 解析失败（保留原文件）: {e}"),
-            )
-        })?;
-        if let Some(arr) = value
-            .get("skills")
-            .and_then(|s| s.get("config"))
-            .and_then(|c| c.as_array())
-        {
-            for item in arr {
-                let path = item
-                    .get("path")
-                    .and_then(|p| p.as_str())
-                    .unwrap_or_default();
-                if !is_codex_managed_config_path(path) {
-                    user_entries.push(item.clone());
-                }
-            }
-        }
-    }
-    let mut merged: Vec<toml::Value> = user_entries;
     for name in managed_skill_names {
         let mut item = toml::Value::Table(Default::default());
         let t = item.as_table_mut().unwrap();
@@ -123,40 +92,17 @@ pub fn render_config(
             toml::Value::String(format!("{CODEX_NATIVE_SKILLS_DIR}/{name}/SKILL.md")),
         );
         t.insert("enabled".into(), toml::Value::Boolean(true));
-        merged.push(item);
+        artifacts.push(Artifact {
+            resource_id: "ailoom-builtin/codex-skills-config".into(),
+            target_tool: "codex".into(),
+            kind: "skill-config".into(),
+            path: PathBuf::from(".codex/config.toml"),
+            body: ArtifactBody::TomlArrayEntry {
+                table: "skills.config".into(),
+                key_field: "path".into(),
+                entry: item,
+            },
+        });
     }
-    let mut root = toml::Value::Table(Default::default());
-    let mut skills = toml::map::Map::new();
-    skills.insert("config".into(), toml::Value::Array(merged));
-    root.as_table_mut()
-        .unwrap()
-        .insert("skills".into(), toml::Value::Table(skills));
-    // 与旧逻辑一致：整文件托管片段不够，仍用 Full 写合并后的 skills 表——
-    // 这里保持原 render_config 的 Full 行为见下方；若文件还有其它键需保留则读改写。
-    let content = if config_path.is_file() {
-        let text = std::fs::read_to_string(&config_path)?;
-        let mut existing: toml::Value = text
-            .parse()
-            .unwrap_or_else(|_| toml::Value::Table(Default::default()));
-        let table = existing
-            .as_table_mut()
-            .ok_or_else(|| Error::new(code::USER_CONTENT_CONFLICT, "config.toml 根不是表"))?;
-        table.insert(
-            "skills".into(),
-            root.get("skills")
-                .cloned()
-                .unwrap_or(toml::Value::Table(Default::default())),
-        );
-        toml::to_string_pretty(&existing)?
-    } else {
-        toml::to_string_pretty(&root)?
-    };
-    artifacts.push(Artifact {
-        resource_id: "ailoom-builtin/codex-skills-config".into(),
-        target_tool: "codex".into(),
-        kind: "skill-config".into(),
-        path: PathBuf::from(".codex/config.toml"),
-        body: ArtifactBody::Full { content },
-    });
     Ok(())
 }

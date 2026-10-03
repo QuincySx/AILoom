@@ -321,6 +321,8 @@ fn recovery_protects_later_user_edits() {
         written_hash: format!("sha256:{}", ailoom::ids::sha256_hex(b"stale")),
         backup_file: None,
         backup_hash: None,
+        backup_symlink: false,
+        written_symlink: false,
         done: true,
     })
     .unwrap();
@@ -353,6 +355,8 @@ fn pending_journal_blocks_new_apply() {
         written_hash: "sha256:0".into(),
         backup_file: None,
         backup_hash: None,
+        backup_symlink: false,
+        written_symlink: false,
         done: true,
     })
     .unwrap();

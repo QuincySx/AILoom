@@ -6,15 +6,15 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
   const root=document.createElement('section');root.className='native-files';container.append(root);
   let alive=true,version=0,data={files:[],targets:[]},skills=[],filter='',search='',busy=false,editor=null;
   const q=s=>root.querySelector(s), request=body=>api.nativeFiles({scope,root:rootPath,...body});
-  root.innerHTML=`<div class="workspace-section-heading"><h2>${showSkills?'本地已有':'Rules 与 Agent'}</h2><div class="actions"><button data-refresh>刷新</button><button data-new>新建</button></div></div>
-    <div class="toolbar"><input data-search type="search" aria-label="搜索本地文件" placeholder="搜索名称、工具或路径…"><select data-kind aria-label="文件类型"><option value="">全部类型</option>${showSkills?'<option value="skill">Skill</option>':''}<option value="rule">Rules</option><option value="agent">Agent</option></select></div>
+  root.innerHTML=`<div class="workspace-section-heading"><h2>${showSkills?'本地已有':'规则与子代理'}</h2><div class="actions"><button data-refresh>刷新</button><button data-new>新建文件</button></div></div>
+    <div class="toolbar"><input data-search type="search" aria-label="搜索本地文件" placeholder="搜索名称、工具或路径…"><select data-kind aria-label="文件类型"><option value="">全部类型</option>${showSkills?'<option value="skill">技能 · Skill</option>':''}<option value="rule">规则</option><option value="agent">子代理</option></select></div>
     <p data-status role="status"></p><div data-list></div><details data-details hidden><summary>扫描范围与限制</summary><div data-notes></div></details>`;
   function message(s){if(alive)q('[data-status]').textContent=s;}
   function render(){
     const rows=[...data.files,...skills].filter(f=>(!filter||filter===f.kind)&&
       (!showSkills||!f.managed)&&!managedPaths.includes(f.path)&&`${f.label} ${f.tool||''} ${f.path}`.toLowerCase().includes(search.toLowerCase()));
-    if(!showSkills)q('h2').textContent=rows.length+' 个文件';
-    q('[data-list]').innerHTML=rows.length?rows.map((f,i)=>`<article class="native-file-row"><span class="badge">${f.kind==='rule'?'Rules':f.kind==='skill'?'Skill':'Agent'}</span><div><strong>${esc(f.label)}</strong><small>${esc(f.tool||'')} ${f.local_only?' · 仅本机生效':f.managed?' · AILoom 管理':f.created_by_ailoom?' · AILoom 创建':''} ${esc(f.note||'')}${f.missing?' · 文件缺失，个人副本仍保留':''}</small><p class="path"><ailoom-path title="${esc(f.path)}">${esc(f.path)}</ailoom-path></p>${f.description?'<p>'+esc(f.description)+'</p>':''}${f.error?'<p class="field-error">'+esc(f.error)+'</p>':''}</div>${f.kind==='skill'?'<span class="muted">'+(f.management==='managed'?'AILoom 管理':f.management==='external_link'?'链接':'本地')+'</span>'+(['unmanaged','external_link'].includes(f.management)?`<button data-takeover="${i}">接管说明…</button><button data-skill-delete="${i}" data-variant="destructive">删除…</button>`:''):`<button data-edit="${i}">编辑</button><button data-delete="${i}">${f.local_only?'恢复项目版本':'删除'}</button>`}</article>`).join(''):'<p class="muted">没有找到匹配的本地文件。</p>';
+    q('h2').textContent=(showSkills?'本地已有':'配置文件')+' · '+rows.length;
+    q('[data-list]').innerHTML=rows.length?rows.map((f,i)=>`<article class="native-file-row"><span class="badge">${f.kind==='rule'?'规则':f.kind==='skill'?'技能 · Skill':'子代理'}</span><div><strong>${esc(f.label)}</strong><small>${esc(f.tool||'')} ${f.local_only?' · 仅本机生效':f.managed?' · AILoom 管理':f.created_by_ailoom?' · AILoom 创建':''} ${esc(f.note||'')}${f.missing?' · 文件缺失，个人副本仍保留':''}</small><p class="path"><ailoom-path title="${esc(f.path)}">${esc(f.path)}</ailoom-path></p>${f.description?'<p>'+esc(f.description)+'</p>':''}${f.error?'<p class="field-error">'+esc(f.error)+'</p>':''}</div>${f.kind==='skill'?'<span class="muted">'+(f.management==='managed'?'AILoom 管理':f.management==='external_link'?'链接':'本地')+'</span>'+(['unmanaged','external_link'].includes(f.management)?`<button data-takeover="${i}">接管说明…</button><button data-skill-delete="${i}" data-variant="destructive">删除…</button>`:''):`<button data-edit="${i}">编辑</button><button data-delete="${i}">${f.local_only?'恢复项目版本':'删除'}</button>`}</article>`).join(''):'<p class="muted">没有找到匹配的本地文件。</p>';
     q('[data-list]').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>edit(rows[Number(b.dataset.edit)]));
     q('[data-list]').querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>remove(rows[Number(b.dataset.delete)]));
     q('[data-list]').querySelectorAll('[data-takeover]').forEach(b=>b.onclick=()=>{const f=rows[Number(b.dataset.takeover)];openSkillTakeover({path:f.path,name:f.label});});
@@ -37,7 +37,6 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
       q('[data-details]').hidden=!notes.length;
       q('[data-notes]').innerHTML=notes.map(s=>'<p>'+esc(s)+'</p>').join('');
       render();message('');q('[data-new]').disabled=false;
-      if(showSkills)q('h2').textContent='本地已有 · '+skills.length+' Skill · '+data.files.filter(f=>f.kind==='rule'&&!f.managed).length+' Rules · '+data.files.filter(f=>f.kind==='agent'&&!f.managed).length+' Agent';
     }catch(e){message(e.message);}
   }
   function template(t){
@@ -53,7 +52,7 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
       const current=file?await request({action:'read',target:file.target,name:file.name}):null;
       if(!alive)return;
       const body=document.createElement('form');
-      body.innerHTML=`${file?'':`<label>工具与类型<select name="target">${data.targets.map(t=>`<option value="${esc(t.id)}">${esc(t.tool)} · ${t.kind==='rule'?'Rules':'Agent'}${t.fixed?' · '+esc(t.id==='claude-dot-instructions'?'.claude/CLAUDE.md':t.path.split('/').pop()):''}</option>`).join('')}</select></label><label data-name>文件名<input name="name" required placeholder="my-rule.md"></label>`}
+      body.innerHTML=`${file?'':`<label>工具与类型<select name="target">${data.targets.map(t=>`<option value="${esc(t.id)}">${esc(t.tool)} · ${t.kind==='rule'?'规则':'子代理'}${t.fixed?' · '+esc(t.id==='claude-dot-instructions'?'.claude/CLAUDE.md':t.path.split('/').pop()):''}</option>`).join('')}</select></label><label data-name>文件名<input name="name" required placeholder="my-rule.md"></label>`}
         ${data.git_project||current?.local?.active?'<label>保存方式<select name="mode"><option value="project">修改项目文件</option><option value="local">仅本机生效</option></select></label><p class="muted" data-mode-note></p>':''}
         <p class="path" data-path></p><p class="muted" data-note></p><label>内容<textarea name="content" rows="18" spellcheck="false"></textarea></label><p class="field-error" data-error role="alert"></p><div class="actions"><button type="submit" class="primary">保存文件</button>${current?.local?.active?'<button type="button" data-restore>恢复项目版本</button>':''}${current?.local?.has_personal_copy&&!current.local.active?'<button type="button" data-personal>载入个人副本</button>':''}</div>`;
       let saving=false,saved=current?.content??(current?.local?.active?current.local.personal_content:'')??'',savedMode=current?.local?.active?'local':'project';

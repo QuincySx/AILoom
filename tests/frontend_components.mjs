@@ -197,6 +197,7 @@ async function collectionPanel(api) {
     querySelectorAll() { return []; }
     before() {}
     insertBefore(node) { this.children.push(node); }
+    addEventListener(name, listener) { this['on' + name] = listener; }
     removeAttribute(name) { delete this.attributes?.[name]; }
   }
   const context = vm.createContext({document:{createElement:tag => new PanelElement(tag)}});

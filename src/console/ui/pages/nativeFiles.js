@@ -1,10 +1,11 @@
 import {NativeFiles} from '../features/nativeFiles.js';
 import {GlobalSkills} from '../features/globalSkills.js';
 import {confirmAction} from '../components/dialog.js';
+import {libraryNavigation} from '../components/sectionNav.js';
 // AIL-152：全局配置 = 全局 Skill + 用户级 Rules / Agent 原生文件
 export function mount(container){
   const root=document.createElement('div');root.className='native-files-page';container.append(root);
-  root.innerHTML='<header class="page-head"><div><h1>全局配置</h1></div></header><nav class="project-tabs" aria-label="全局配置"><button data-tab="skills">Skill</button><button data-tab="files">规则与 Agent</button></nav><div data-content></div>';
+  root.innerHTML=libraryNavigation('global')+'<header class="page-head"><div><span class="kicker">适用于所有项目</span><h2>跨项目配置</h2></div></header><nav class="project-tabs" aria-label="跨项目配置"><button data-tab="skills">技能 · Skill</button><button data-tab="files">规则与子代理</button></nav><div data-content></div>';
   let tab='skills',panel=null;
   const content=root.querySelector('[data-content]');
   function show(next){

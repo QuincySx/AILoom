@@ -34,6 +34,24 @@ if [ "${1:-}" = "uninstall" ]; then
   exit 0
 fi
 
+# 升级后让正在运行的后台网页服务换成新版本（只处理默认数据目录；AILOOM_INSTALL_RESTART=0 跳过）。
+# 不重启的话，装好新版本后后台跑的仍是旧进程。
+restart_running_service() {
+  bin="$1"
+  [ "${AILOOM_INSTALL_RESTART:-1}" = "0" ] && return 0
+  state=$("$bin" --json service status 2>/dev/null || true)
+  case "$state" in
+    *'"state":"running"'*)
+      if "$bin" service restart >/dev/null 2>&1; then
+        say "网页服务已重启，现在运行的是新版本"
+      else
+        say "网页服务没能自动重启，请运行：ailoom service restart"
+      fi ;;
+    *'"state":"unmanaged"'*)
+      say "有一个旧版本启动的网页服务仍在运行，无法自动重启。运行 ailoom service status 查看它的 PID，结束后运行 ailoom web" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # 1) 源码构建路径
 # ---------------------------------------------------------------------------
@@ -41,7 +59,9 @@ if [ "$MODE" = "cargo" ] || { [ "$MODE" = "auto" ] && command -v cargo >/dev/nul
   [ "$MODE" = "cargo" ] || command -v cargo >/dev/null 2>&1 || die "cargo 不可用"
   say "使用 cargo 从源码构建并安装（cargo install --path .）…"
   cargo install --path . --locked
-  say "安装完成：$(command -v ailoom 2>/dev/null || echo '~/.cargo/bin/ailoom')"
+  installed="$(command -v ailoom 2>/dev/null || echo "$HOME/.cargo/bin/ailoom")"
+  say "安装完成：$installed"
+  restart_running_service "$installed"
   say "验证：ailoom version"
   exit 0
 fi
@@ -168,4 +188,5 @@ ln -sfn "$FINAL" "$LINK" || {
 }
 rm -f "$FINAL_BAK" "$SHA_BAK"
 say "安装完成：${LINK} → ${FINAL}（确保 $BIN_DIR 在 PATH 中）"
+restart_running_service "$LINK"
 say "验证：ailoom version"

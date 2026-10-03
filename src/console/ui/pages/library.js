@@ -7,12 +7,14 @@ import { Editor } from '../components/editor.js';
 import { CollectionsPanel } from '../features/collectionsPanel.js';
 import { notify } from '../state/store.js';
 import { Dialog, confirmAction } from '../components/dialog.js';
+import {libraryNavigation} from '../components/sectionNav.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
   root.className = 'library-page';
   container.appendChild(root);
   root.innerHTML = `
+    ${libraryNavigation()}
     <div data-collections></div>
       <div data-issues></div>
       <div data-editor class="hidden">
@@ -101,7 +103,8 @@ export function mount(container, ctx) {
   }
   // 导入区（AIL-126：搜索上下文跨页保留）
   const collections = CollectionsPanel(root.querySelector('[data-collections]'), {
-    title: '资源库',
+    title: '可复用能力',
+    headingLevel:2,
     compactLibrary: true,
     onEdit: async id=>{if(/^personal\/(rule|agent)\//.test(id)){await ManagedDefinition(root,{id});await refresh();await collections.refresh();}else await openResource(id);},
     onCreate: async()=>{const result=await ManagedDefinition(root);if(result){await refresh();await collections.refresh();}},

@@ -143,7 +143,10 @@ pub fn run(args: &StatusArgs, _json: bool, data_root: Option<&std::path::Path>) 
         }
     }
 
-    if let Ok(Some(managed)) = ManagedManifest::load(&ctx.layout.managed_manifest_path) {
+    if let Ok(Some(managed)) = ManagedManifest::load_for_workspace(
+        &ctx.layout.managed_manifest_path,
+        &ctx.workspace.workspace_root,
+    ) {
         for (key, reason) in
             crate::require::broken_skill_symlinks(&ctx.workspace.workspace_root, &managed)
         {

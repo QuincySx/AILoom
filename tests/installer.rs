@@ -634,3 +634,35 @@ fn installer_upgrade_final_switch_failure_restores_old_install() {
         "不应有 binary"
     );
 }
+
+/// 升级时正在运行的网页服务要换成新版本：安装后对新二进制执行 `service restart`；
+/// `AILOOM_INSTALL_RESTART=0` 跳过。假二进制汇报「运行中」并记录收到的命令。
+#[test]
+fn installer_restarts_a_running_service_after_upgrade() {
+    let fix = start_http_server();
+    let env = InstallerEnv::new();
+    let log = env.tmp.path().join("calls.log");
+    let fake = format!(
+        "#!/bin/sh\necho \"$*\" >> '{}'\ncase \"$*\" in *'service status'*) echo '{{\"result\":{{\"state\":\"running\"}}}}' ;; esac\n",
+        log.display()
+    );
+    publish(&fix, &format!("ailoom-{TRIPLE}"), &fake);
+    let (code, out, err) = env.run(&fix.base(), None, &[TRIPLE_ENV], &[]);
+    assert_eq!(code, 0, "{err}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.contains("service restart"), "安装后重启服务: {calls}");
+    assert!(out.contains("网页服务已重启"), "{out}");
+
+    std::fs::remove_file(&log).unwrap();
+    let (code, _, err) = env.run(
+        &fix.base(),
+        None,
+        &[TRIPLE_ENV, ("AILOOM_INSTALL_RESTART", "0")],
+        &[],
+    );
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        !log.exists() || !std::fs::read_to_string(&log).unwrap().contains("restart"),
+        "可以关闭自动重启"
+    );
+}

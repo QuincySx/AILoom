@@ -102,6 +102,7 @@ fn previously_untested_routes_respond_with_json_and_no_server_errors() {
         format!("/api/project/dirs?root={root}"),
         format!("/api/project/discover-directories?root={root}"),
         format!("/api/effective?root={root}"),
+        "/api/diagnose".to_string(),
         format!("/api/deploy-status?root={root}"),
         format!(
             "/api/fs/read?path={}",

@@ -154,7 +154,14 @@ pub fn run(
             let url = decl.source.url.clone().unwrap_or_default();
             let git_src = GitSource::new(&url, decl.source.ref_.as_deref())?;
             let cache_root = ctx.source_cache(&git_src.identity);
-            let snapshot = if args.refresh || old_entry.is_none() {
+            // 显式替换源是 init 的授权更新；没有显式替换时仍校验声明与源锁，
+            // 不能借普通 init 绕过被手改声明的身份冲突。
+            let source_replaced = (args.url.is_some() || args.local_path.is_some())
+                && old_entry
+                    .as_ref()
+                    .map(|o| o.identity != git_src.identity || o.kind != "git")
+                    .unwrap_or(false);
+            let snapshot = if args.refresh || old_entry.is_none() || source_replaced {
                 git_src.refresh(&cache_root)?
             } else {
                 git_src.resolve(&cache_root, old_entry.as_ref())?
@@ -220,7 +227,16 @@ pub fn run(
 
     // 额外订阅源：首次 init 或 --refresh 时获取并锁定（独立锁条目）
     let mut extra_lock_changed = false;
+    let mut source_identities =
+        std::collections::BTreeSet::from([resolved.snapshot.identity.clone()]);
+    let mut source_aliases = std::collections::BTreeSet::from([decl.source.name.clone()]);
     for es in &decl.extra_sources {
+        if !source_aliases.insert(es.name.clone()) {
+            return Err(Error::new(
+                code::SOURCE_CONFLICT,
+                format!("重复的源别名: {}", es.name),
+            ));
+        }
         let es_entry = lock.sources.get(&es.name).cloned();
         let snapshot = if es.kind == "git" {
             let src = GitSource::new(es.url.as_deref().unwrap_or_default(), es.ref_.as_deref())?;
@@ -239,6 +255,12 @@ pub fn run(
             };
             crate::source::LocalSource::new(&base)?.resolve()?
         };
+        if !source_identities.insert(snapshot.identity.clone()) {
+            return Err(Error::new(
+                code::SOURCE_CONFLICT,
+                format!("重复订阅同一来源: {}", snapshot.identity),
+            ));
+        }
         lock.sources.insert(
             es.name.clone(),
             crate::source::SourceLock {

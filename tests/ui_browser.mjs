@@ -168,6 +168,7 @@ if (mode === 'projects' || mode === 'design') {
   await evaluate("location.hash='#/projects/manage'");
   await waitFor("!!document.querySelector('[data-search]') && !!document.querySelector('[data-list] article')");
   if (mode === 'design') {
+    await evaluate("document.querySelector('.project-filters>summary').click()");
     await waitFor("!!document.querySelector('[data-filter]')?.parentElement.querySelector('[role=combobox]')");
     const fields = await evaluate("[document.querySelector('[data-search]'), document.querySelector('[data-filter]').parentElement.querySelector('[role=combobox]'), document.querySelector('[data-kind]').parentElement.querySelector('[role=combobox]')].map(e=>{const s=getComputedStyle(e);return [e.getBoundingClientRect().height,s.borderRadius,s.borderColor,s.backgroundColor,s.paddingLeft,s.fontSize,s.appearance]})");
     if (fields.some(f => JSON.stringify(f)!==JSON.stringify(fields[0]))) throw new Error('Search and select styles differ: '+JSON.stringify(fields));
@@ -208,7 +209,7 @@ if (mode === 'global') {
   await evaluate(`(async()=>{const {api}=await import('/ui/services/api.js');await api.approveDir(${JSON.stringify(skillDir)});await api.libraryImport(${JSON.stringify(skillDir)},null,true);})()`);
   await evaluate("location.hash='#/native-files'");
   await waitFor(`!!document.querySelector('[data-toggle="${id}"]')`);
-  if (!await evaluate("document.querySelector('nav.sidebar')?.textContent.includes('全局配置')")) throw new Error('导航未显示「全局配置」');
+  if (!await evaluate("document.querySelector('nav.sidebar')?.textContent.includes('资源库') && document.querySelector('.library-context [aria-current=page]')?.textContent==='跨项目配置'")) throw new Error('跨项目配置未归入资源库导航');
   await evaluate(`document.querySelector('[data-toggle="${id}"]').click()`);
   await waitFor(`document.querySelector('[data-toggle="${id}"]')?.textContent.trim()==='停用' && !document.querySelector('[data-apply]').disabled`);
   await evaluate("document.querySelector('[data-apply]').click()");
@@ -231,7 +232,7 @@ if (mode === 'global') {
 }
 if (mode === 'onboarding') {
   // 三步引导页只做讲解与直达入口，不承载配置动作。
-  for (const [index, target] of [[0, '#/projects/manage'], [1, '#/library'], [2, '#/projects']]) {
+  for (const [index, target] of [[0, '#/projects'], [1, '#/library'], [2, '#/projects']]) {
     await evaluate("location.hash='#/onboarding'");
     await waitFor("document.querySelectorAll('.wizard .step').length === 3 && document.querySelectorAll('.wizard .step button').length === 3");
     if (index === 0) await screenshot(output + '-onboarding.png');

@@ -2462,5 +2462,17 @@
     "size": "M",
     "depends_on": [],
     "file": "cards/AIL-152.md"
+  },
+  {
+    "id": "AIL-153",
+    "title": "软件配套：许可证、诊断、升级与安装文档",
+    "status": "In progress",
+    "priority": "P1",
+    "milestone": "IT-1 门禁与关卡",
+    "size": "M",
+    "depends_on": [
+      "AIL-147"
+    ],
+    "file": "cards/AIL-153.md"
   }
 ]

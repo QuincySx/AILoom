@@ -7,13 +7,16 @@
 import { esc } from '../services/api.js';
 import { Dialog } from '../components/dialog.js';
 
+const KIND_LABEL = {skill:'技能 · Skill',mcp:'工具连接 · MCP',rule:'规则',agent:'子代理',doc:'文档',learning:'经验',env:'环境',hook:'Hook',package:'依赖包'};
+
 export function ResourcePicker(container, { title, description, entries, isAdded, onSubmit, importResources, createResource }) {
   const body = document.createElement('div');
   body.innerHTML = `
     <input type="search" data-picker-search aria-label="搜索资源" placeholder="搜索名称、说明或来源…">
     <div data-picker-list class="picker-list" aria-label="可选资源"></div>
     <p data-picker-error class="field-error" role="alert"></p>
-    <footer class="dialog-actions"><span data-picker-count class="muted"></span>${createResource ? '<button type="button" data-picker-create>＋新建</button>' : ''}${importResources ? '<button type="button" class="primary" data-picker-import>＋导入</button>' : ''}<button type="button" data-picker-cancel>取消</button><button type="submit" class="primary" data-picker-submit disabled>添加所选</button></footer>`;
+    <div class="picker-library-actions">${createResource ? '<button type="button" data-picker-create>新建规则 / 子代理</button>' : ''}${importResources ? '<button type="button" data-picker-import>导入资源</button>' : ''}</div>
+    <footer class="dialog-actions"><span data-picker-count class="muted"></span><button type="button" data-picker-cancel>取消</button><button type="submit" class="primary" data-picker-submit disabled>添加所选</button></footer>`;
   const q = s => body.querySelector(s);
   let items = entries;
   let selected = new Set();
@@ -49,8 +52,8 @@ export function ResourcePicker(container, { title, description, entries, isAdded
         const added = isAdded(e.id);
         const na = e.unavailable;
         return `<label class="picker-row"><input type="checkbox" data-picker-item value="${esc(e.id)}" ${added || na ? 'disabled' : ''} ${selected.has(e.id) ? 'checked' : ''}>
-          <span><strong>${esc(e.name || e.id)}</strong>${added ? ' <span class="badge">已添加</span>' : ''}${na ? ` <span class="badge warn">${esc(na)}</span>` : ''}<br>
-          <span class="muted">${esc(e.description || '尚未提供说明')}</span>${e.hint?`<br><small class="muted">${esc(e.hint)}</small>`:''}<br>
+          <span><span class="picker-item-head"><strong>${esc(e.name || e.id)}</strong>${e.kind?`<span class="badge">${esc(KIND_LABEL[e.kind]||e.kind)}</span>`:''}${added ? ' <span class="badge">已添加</span>' : ''}</span>${na ? `<span class="field-error">${esc(na)}</span>` : ''}
+          ${e.description?`<span class="muted">${esc(e.description)}</span>`:''}${e.hint?`<br><small class="muted">${esc(e.hint)}</small>`:''}
           </span></label>`;
       }).join('')}</fieldset>`).join('')
       : `<p class="muted">${items.length ? '没有匹配的资源。' : '还没有可选资源。'}</p>`;

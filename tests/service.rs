@@ -352,3 +352,83 @@ fn graceful_stop_waits_for_background_jobs() {
     rx.recv_timeout(Duration::from_secs(3)).unwrap();
     worker.join().unwrap();
 }
+
+/// 升级回归：同一数据目录下由旧版本启动的服务（不写当前的运行记录、不持有运行锁）。
+/// 此前 status / stop 只看运行记录，误报「已停止」，start 还会对同一数据目录起第二个服务。
+#[cfg(unix)]
+#[test]
+fn service_started_by_an_older_version_is_reported_not_silently_ignored() {
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let f = Fixture::new();
+    fs::create_dir_all(&f.root).unwrap();
+    let root = f.root.canonicalize().unwrap();
+    // 模拟旧版本进程：命令行与真实服务一致（数据目录带空格），但什么都不注册
+    let argv0 = format!(
+        "/old/ailoom --data-root {} service run --port 47999",
+        root.display()
+    );
+    let legacy = KillOnDrop(
+        Command::new("bash")
+            .arg("-c")
+            .arg(format!("exec -a \"{argv0}\" sleep 60"))
+            .spawn()
+            .unwrap(),
+    );
+    let pid = legacy.0.id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        let v = run(&f.root, &["service", "status"]);
+        if v["state"] == "unmanaged" || Instant::now() > deadline {
+            break v;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(status["state"], "unmanaged", "{status}");
+    assert_eq!(status["pid"], pid, "{status}");
+    assert_eq!(status["port"], 47999, "{status}");
+
+    for args in [
+        &["service", "stop"][..],
+        &["service", "start", "--port", "0"][..],
+    ] {
+        let out = command(&f.root, args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{args:?} 不能假装成功: {stderr}");
+        assert!(
+            stderr.contains(&pid.to_string()) && stderr.contains("\"fix\""),
+            "{args:?}: {stderr}"
+        );
+    }
+    assert!(
+        !f.root.join("service/runtime.json").exists(),
+        "没有起第二个服务"
+    );
+
+    // 其他数据目录不受影响；旧进程结束后恢复正常
+    let other = Fixture::new();
+    assert_eq!(run(&other.root, &["service", "status"])["state"], "stopped");
+    drop(legacy);
+    assert_eq!(run(&f.root, &["service", "status"])["state"], "stopped");
+}
+
+/// 升级用：restart 换成新进程、沿用原端口；没在运行时等同于 start。
+#[test]
+fn restart_replaces_the_process_and_keeps_the_port() {
+    let f = Fixture::new();
+    let first = run(&f.root, &["service", "start", "--port", "0"]);
+    let restarted = run(&f.root, &["service", "restart"]);
+    assert_eq!(restarted["state"], "running", "{restarted}");
+    assert_eq!(restarted["restarted"], true);
+    assert_eq!(restarted["port"], first["port"], "沿用原端口");
+    assert_ne!(restarted["pid"], first["pid"], "换成新进程");
+    run(&f.root, &["service", "stop"]);
+    let cold = run(&f.root, &["service", "restart", "--port", "0"]);
+    assert_eq!(cold["state"], "running");
+    assert_eq!(cold["restarted"], false);
+}

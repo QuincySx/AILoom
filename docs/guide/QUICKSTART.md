@@ -170,7 +170,7 @@ ailoom init --url git@github.com:team/resources.git --project a --role dev
 - 生成可提交声明 `.ailoom/project.toml`（提交到业务仓库可选）。
 - 生成机器数据：绑定在平台数据目录；源锁在 `.ailoom/machine/`（自带 gitignore，勿提交）。
 - **零项目合法**：不传 `--project` 时只获得 shared 资源，绝不自动激活。
-- 重复 `init` 幂等；显式传参才覆盖。
+- 重复 `init` 幂等；显式传参才覆盖。显式更换 `--url` / `--local-path` 会重新锁定新源；只更新同一 Git 源的版本仍使用 `--refresh`。
 - **跨机器 clone 业务仓库后**：重新执行 `ailoom init` 即可恢复本机绑定。
 
 ## 2. 计划与同步

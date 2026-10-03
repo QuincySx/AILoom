@@ -16,24 +16,29 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
     <form data-form id="${formId}">
       <fieldset data-fields><div class="form-grid">
         <label>来源类型<select data-provider><option value="github">GitHub 仓库</option><option value="gitlab">GitLab / 自建 GitLab</option><option value="git">其他 Git 服务</option><option value="local">本地 Skill 文件夹</option><option value="entry">skills.sh</option></select></label>
-        <label data-name-label>显示名称<input data-name placeholder="例如：我的开发工具"></label>
-        <label class="full"><span data-url-label>仓库地址</span><input data-url required placeholder="https://github.com/owner/skills.git"><button type="button" data-pick hidden>浏览…</button></label>
-        <label data-ref-label>分支 / 标签（可选）<input data-ref placeholder="默认分支"></label>
+        <label class="full"><span data-url-label>仓库地址</span><div class="input-action"><input data-url required placeholder="https://github.com/owner/skills.git"><button type="button" data-pick hidden>选择文件夹…</button></div></label>
+        <details class="full"><summary>名称与版本选项（可选）</summary><div class="form-grid"><label data-name-label>显示名称<input data-name placeholder="例如：我的开发工具"></label><label data-ref-label>分支 / 标签<input data-ref placeholder="默认分支"></label></div></details>
       </div><p data-help class="muted">Skill 文件夹需包含 SKILL.md。</p>
       </fieldset>
-    </form><p data-import-msg class="inline-status muted" role="status"></p><div data-candidate></div>
-    <footer class="dialog-actions"><button type="button" data-close>取消</button><button type="submit" form="${formId}" class="primary" data-preview>预览</button></footer>`;
+    </form><p data-import-msg class="inline-status" role="status"></p><div data-candidate></div>
+    <footer class="dialog-actions"><button type="button" data-close>取消</button><button type="submit" form="${formId}" class="primary" data-preview>预览内容</button><button type="button" class="primary" data-confirm hidden>确认导入</button></footer>`;
   const q = s => root.querySelector(s);
   const modal = Dialog(container, { title, content: root, open: false, keepMounted: true, canClose: () => !busy, onClose: () => { invalidate(); if (!imported) onCancelled?.(); } });
-  function invalidate() { candidate = null; q('[data-candidate]').innerHTML = ''; }
-  function message(text) { if (alive) q('[data-import-msg]').textContent = text; }
+  function invalidate() { candidate = null; q('[data-candidate]').innerHTML = '';q('[data-preview]').hidden=false;q('[data-confirm]').hidden=true; }
+  function message(text,error=false) {
+    if(!alive)return;
+    const msg=q('[data-import-msg]');
+    msg.textContent=text;
+    msg.classList.toggle('field-error',error);
+    msg.setAttribute('role',error?'alert':'status');
+  }
   async function run(fn) {
     if (busy) return;
     busy = true;
     q('[data-fields]').disabled = true;
-    q('[data-preview]').disabled = q('[data-close]').disabled = true;
-    try { await fn(); } catch (e) { message(e.message); }
-    finally { busy = false; if (alive) { q('[data-fields]').disabled = false; q('[data-preview]').disabled = q('[data-close]').disabled = false; } }
+    q('[data-preview]').disabled = q('[data-confirm]').disabled = q('[data-close]').disabled = true;
+    try { await fn(); } catch (e) { message(e.message,true); }
+    finally { busy = false; if (alive) { q('[data-fields]').disabled = false; q('[data-preview]').disabled = q('[data-confirm]').disabled = q('[data-close]').disabled = false; } }
   }
   const provider = () => q('[data-provider]').value;
   function providerChanged() {
@@ -47,8 +52,8 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
     q('[data-url-label]').textContent = p === 'local' ? '本机 Skill 文件夹路径' : p === 'entry' ? 'skills.sh 链接' : 'Git 仓库克隆地址';
     q('[data-url]').value = '';
     q('[data-url]').placeholder = ({ github:'https://github.com/owner/skills.git', gitlab:'https://gitlab.com/group/skills.git', git:'https://git.example.com/team/skills.git', local:'/Users/me/my-skill', entry:'https://skills.sh/owner/repo/skill' })[p];
-    q('[data-preview]').textContent = p === 'local' ? '预览内容' : '预览';
-    q('[data-help]').textContent = copy ? '' : '填写仓库地址。';
+    q('[data-preview]').textContent = '预览内容';
+    q('[data-help]').textContent = p === 'local' ? '选择包含 SKILL.md 的文件夹。' : '';
     // 原生文件夹选择器仅桌面端可用；无头环境与其他平台保持手填路径。
     q('[data-pick]').hidden = p !== 'local' || !nativePicker;
   }
@@ -59,8 +64,8 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
   q('[data-pick]').onclick = async () => {
     const pick = q('[data-pick]');
     pick.disabled = true;
-    try { const r = await api.pickDirectory(); if (alive && r.path) q('[data-url]').value = r.path; }
-    catch (e) { message(e.message); }
+    try { const r = await api.pickDirectory(); if (alive && r.path) { q('[data-url]').value = r.path; invalidate(); } }
+    catch (e) { message(e.message,true); }
     finally { if (alive) pick.disabled = false; }
   };
   q('[data-provider]').onchange = providerChanged;
@@ -70,7 +75,7 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
     invalidate(); message('正在读取来源并检查资源…');
     const p = provider(), url = q('[data-url]').value.trim();
     if (!url) throw new Error('请填写来源地址。');
-    if (p === 'github' && !/^(https?:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/.test(url)) throw new Error('这不是 GitHub 仓库克隆地址；其他域名请选择 GitLab 或其他 Git 服务。');
+    if (p === 'github' && !/^(https?:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/.test(url)) throw new Error('请填写 GitHub 仓库地址，其他域名请选择“其他 Git 服务”。');
     let v;
     if (p === 'local') { await api.approveDir(url); v = await api.libraryImport(url, q('[data-name]').value.trim() || undefined, false); }
     else if (p === 'entry') { v = await api.libraryImportEntry(url, undefined, false); v = v.result ?? v; }
@@ -86,8 +91,9 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
     if (v.error || preview.error) throw new Error(v.error || preview.error);
     q('[data-candidate]').innerHTML = `<div class="resource-row"><h3>确认导入内容</h3>
       <p class="path">${esc(url)}</p><p>${resources.length ? resources.length + ' 项资源' : esc(preview.skill_name || 'Skill 副本')}</p>
-      ${resources.length ? '<ul>' + resources.map(r => '<li>' + esc(r.kind) + ' · ' + esc(r.name) + '</li>').join('') + '</ul>' : ''}
-      <p class="muted"></p><button data-confirm class="primary">确认导入</button></div>`;
+      ${resources.length ? '<ul>' + resources.map(r => '<li>' + esc(({skill:'技能',mcp:'工具连接',rule:'规则',agent:'子代理'})[r.kind]||r.kind) + ' · ' + esc(r.name) + '</li>').join('') + '</ul>' : ''}
+      </div>`;
+    q('[data-preview]').hidden=true;q('[data-confirm]').hidden=false;
     q('[data-confirm]').onclick = () => run(async () => {
       const c = candidate; if (!c) return;
       let result;
@@ -97,11 +103,11 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
       imported = true;
       invalidate(); modal.close();
       // 对话框已关闭，成功提示放到页面级 toast，否则用户看不到（AIL-140）。
-      notify('已加入资源库。下一步：在项目中选择要使用的 Skill / MCP。');
+      notify('已加入资源库，可在项目中添加使用。');
       onChanged?.();
       onImported?.(result);
     });
-    message('预览完成，请核对来源和内容。');
+    message('');
   }); };
   return {
     show: () => { message(''); modal.show(); },

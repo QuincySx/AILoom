@@ -198,6 +198,48 @@ pub fn remove_patterns(
 mod tests {
     use super::*;
 
+    /// 升级兼容：旧版本只记计数（每次同步 +1、从不减少）。新版本第一次同步时把旧条目
+    /// 交给当前所有者对账：仍部署的保留，已不部署的移除，用户行不动。
+    #[test]
+    fn legacy_refcount_state_migrates_on_first_sync() {
+        let tmp = tempfile::tempdir().unwrap();
+        let common = tmp.path().join("common");
+        std::fs::create_dir_all(common.join("info")).unwrap();
+        let data = tempfile::tempdir().unwrap();
+        // 旧版本留下的状态与 exclude 文件
+        add_patterns(
+            &common,
+            data.path(),
+            "repo",
+            &["keep.md".into(), "stale.md".into()],
+        )
+        .unwrap();
+        add_patterns(
+            &common,
+            data.path(),
+            "repo",
+            &["keep.md".into(), "stale.md".into()],
+        )
+        .unwrap();
+        let mut text = std::fs::read_to_string(exclude_file(&common)).unwrap();
+        text.insert_str(0, "*.log\n");
+        std::fs::write(exclude_file(&common), text).unwrap();
+
+        sync_patterns(&common, data.path(), "repo", "wt:", &["keep.md".into()]).unwrap();
+        let text = std::fs::read_to_string(exclude_file(&common)).unwrap();
+        assert!(
+            text.contains("keep.md") && !text.contains("stale.md"),
+            "{text}"
+        );
+        assert!(text.contains("*.log"), "用户行保留: {text}");
+        let state = load_state(data.path(), "repo").unwrap();
+        assert!(state.refcount.is_empty(), "旧计数已迁移");
+        sync_patterns(&common, data.path(), "repo", "wt:", &[]).unwrap();
+        assert!(!std::fs::read_to_string(exclude_file(&common))
+            .unwrap()
+            .contains(MARKER_BEGIN));
+    }
+
     #[test]
     fn user_lines_preserved_and_refcount_works() {
         let tmp = tempfile::tempdir().unwrap();

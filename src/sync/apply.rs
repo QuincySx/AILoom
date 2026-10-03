@@ -1,4 +1,4 @@
-//! 同步执行（AIL-008）：重查前置 → 整文件备份 → 原子写 → journal → 推进托管清单。
+//! 同步执行（AIL-008）：重查前置 → 备份与写入意图持久化 → 原子写 → 推进托管清单。
 //! 不承诺多文件事务；失败留下可检查恢复点；恢复保护后来的人为修改。
 
 use crate::adapters::common::{remove_fragment, upsert_fragment, Artifact, ArtifactBody};
@@ -12,6 +12,11 @@ use crate::sync::plan::{
 };
 use serde::Serialize;
 use std::path::Path;
+
+#[cfg(test)]
+thread_local! {
+    static CRASH_AFTER_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 #[derive(Debug, Serialize)]
 pub struct ApplyReport {
@@ -142,11 +147,27 @@ pub fn apply(
 /// 读取整个文件当前字节（供备份与哈希）。
 fn whole_file(ws_root: &Path, rel: &str) -> Result<Option<Vec<u8>>> {
     let f = ws_root.join(rel);
+    if f.symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Ok(Some(serde_json::to_vec(&std::fs::read_link(&f)?)?));
+    }
     if f.is_file() {
         Ok(Some(std::fs::read(&f)?))
     } else {
         Ok(None)
     }
+}
+
+fn journal_hash(bytes: &Option<Vec<u8>>, symlink: bool) -> String {
+    bytes
+        .as_ref()
+        .map(|b| {
+            let prefix = if symlink { "symlink:" } else { "sha256:" };
+            format!("{prefix}{}", crate::ids::sha256_hex(b))
+        })
+        .unwrap_or_default()
 }
 
 fn apply_action(
@@ -207,52 +228,91 @@ fn apply_action(
     let seq = run.next_seq();
     let rel_path = action.path.clone();
     let prior_bytes = whole_file(ws_root, &rel_path)?;
+    let backup_symlink = ws_root
+        .join(&rel_path)
+        .symlink_metadata()
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
     let prior_hash = prior_bytes
         .as_ref()
-        .map(|b| format!("sha256:{}", crate::ids::sha256_hex(b)));
+        .map(|_| journal_hash(&prior_bytes, backup_symlink));
     let backup_file = if let Some(bytes) = &prior_bytes {
         let name = format!(
             "{:06}-{}.bak",
             seq,
             crate::ids::sha256_prefix(rel_path.as_bytes(), 16)
         );
-        std::fs::write(run.backup_dir().join(&name), bytes)?;
+        crate::sync_common::atomic_write(&run.backup_dir().join(&name), bytes)?;
         Some(name)
     } else {
         None
     };
 
-    // 3. 执行写入/删除（按条目键删除，绝不误删整文件中的他人内容）
-    match action.action {
-        ActionKind::Delete => remove_by_key(ws_root, &action.item_key, &action.resource_id)?,
-        _ => {
-            let artifact = artifact.ok_or_else(|| {
-                Error::new(code::INTERNAL, format!("缺少执行产物: {}", action.path))
-            })?;
-            write_artifact(ws_root, artifact)?;
+    // 先在临时目录渲染完整结果。journal 必须在目标修改之前知道其确切摘要，
+    // 中断即使发生在写入后、完成记录前，也能安全判定并回滚。
+    let link_target = artifact
+        .and_then(|a| match &a.body {
+            ArtifactBody::Symlink { target, .. } | ArtifactBody::ExternalSymlink { target } => {
+                Some(target)
+            }
+            _ => None,
+        })
+        .filter(|_| action.action != ActionKind::Delete);
+    let written_symlink = link_target.is_some();
+    let after_bytes = if let Some(target) = link_target {
+        Some(serde_json::to_vec(target)?)
+    } else if backup_symlink && action.action == ActionKind::Delete {
+        None
+    } else {
+        let staging = tempfile::tempdir()?;
+        if let Some(bytes) = &prior_bytes {
+            crate::sync_common::atomic_write(&staging.path().join(&rel_path), bytes)?;
         }
-    }
-
-    // 4. 记录写入后的整文件哈希（恢复时校验当前内容是否仍是本次写入）
-    let after_bytes = whole_file(ws_root, &rel_path)?;
-    let written_hash = after_bytes
-        .as_ref()
-        .map(|b| format!("sha256:{}", crate::ids::sha256_hex(b)))
-        .unwrap_or_default();
-    run.append(&JournalEntry {
+        match action.action {
+            ActionKind::Delete => {
+                remove_by_key(staging.path(), &action.item_key, &action.resource_id)?
+            }
+            _ => write_artifact(
+                staging.path(),
+                artifact.ok_or_else(|| {
+                    Error::new(code::INTERNAL, format!("缺少执行产物: {}", action.path))
+                })?,
+            )?,
+        }
+        whole_file(staging.path(), &rel_path)?
+    };
+    let mut entry = JournalEntry {
         seq,
         item_key: action.item_key.clone(),
-        path: rel_path,
+        path: rel_path.clone(),
         action: serde_json::to_value(action.action)
             .ok()
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_else(|| "?".into()),
         resource_id: action.resource_id.clone(),
-        written_hash,
+        written_hash: journal_hash(&after_bytes, written_symlink),
         backup_file,
         backup_hash: prior_hash,
-        done: true,
-    })?;
+        backup_symlink,
+        written_symlink,
+        done: false,
+    };
+    run.append(&entry)?;
+    if written_symlink {
+        write_artifact(ws_root, artifact.unwrap())?;
+    } else if let Some(bytes) = &after_bytes {
+        crate::sync_common::atomic_write(&ws_root.join(&rel_path), bytes)?;
+    } else {
+        remove_by_key(ws_root, &action.item_key, &action.resource_id)?;
+    }
+    #[cfg(test)]
+    CRASH_AFTER_WRITE.with(|flag| {
+        if flag.replace(false) {
+            panic!("模拟目标写入后、完成记录前的中断");
+        }
+    });
+    entry.done = true;
+    run.append(&entry)?;
     Ok(())
 }
 
@@ -276,14 +336,13 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
                         "项目挂载位置已有普通文件或目录，拒绝覆盖",
                     ));
                 }
-                std::fs::remove_file(&file)?;
             }
             if let Some(parent) = file.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             #[cfg(unix)]
             {
-                std::os::unix::fs::symlink(target, &file)?;
+                atomic_symlink(target, &file)?;
                 Ok(())
             }
             #[cfg(not(unix))]
@@ -352,6 +411,7 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string();
+            crate::sync::plan::ensure_unique_toml_array_key(arr, key_field, &kv)?;
             if let Some(slot) = arr
                 .iter_mut()
                 .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(kv.as_str()))
@@ -424,17 +484,18 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             } else {
                 crate::store::materialize_skill_dir(&store_root, source_identity, rel, source_dir)?;
             }
-            // 清掉旧实体目录或旧链接
+            // 普通目录没有逐字节备份，不能在换链时销毁；链接以同盘 rename 原子替换。
             if let Ok(meta) = std::fs::symlink_metadata(&file) {
-                if meta.file_type().is_symlink() || meta.is_file() {
-                    std::fs::remove_file(&file)?;
-                } else if meta.is_dir() {
-                    crate::sync_common::remove_dir_all_guarded(&file)?;
+                if !meta.file_type().is_symlink() && meta.is_dir() {
+                    return Err(Error::new(
+                        code::USER_CONTENT_CONFLICT,
+                        "挂载位置为普通目录，保留原目录并拒绝覆盖",
+                    ));
                 }
             }
             #[cfg(unix)]
             {
-                std::os::unix::fs::symlink(target, &file).map_err(|e| {
+                atomic_symlink(target, &file).map_err(|e| {
                     Error::new(
                         code::WRITE_FAILED,
                         format!(
@@ -455,6 +516,17 @@ fn write_artifact(ws_root: &Path, artifact: &Artifact) -> Result<()> {
             Ok(())
         }
     }
+}
+
+#[cfg(unix)]
+fn atomic_symlink(target: &Path, file: &Path) -> std::io::Result<()> {
+    let temporary = file.with_file_name(format!(".ailoom-link-{}", new_id()));
+    std::os::unix::fs::symlink(target, &temporary)?;
+    if let Err(e) = std::fs::rename(&temporary, file) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// 删除文件后清理变空的父目录（不超过工作区根）。
@@ -606,6 +678,7 @@ pub fn remove_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Result<()>
                 if let Some(arr) = descend_mut(&mut root, &table.split('.').collect::<Vec<_>>())
                     .and_then(|v| v.as_array_mut())
                 {
+                    crate::sync::plan::ensure_unique_toml_array_key(arr, key_field, kv)?;
                     arr.retain(|item| item.get(key_field).and_then(|v| v.as_str()) != Some(kv));
                     crate::sync_common::atomic_write(
                         &file,
@@ -836,11 +909,14 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
             let file = ws_root.join(&entry.path);
             // 恢复写回的是 AILoom 写入前的备份字节（回滚自己的部分写入），
             // 即使路径后来被跟踪也只会回到公司原有内容——不属于改写
-            let current_hash = match std::fs::read(&file) {
-                Ok(bytes) => format!("sha256:{}", crate::ids::sha256_hex(&bytes)),
-                Err(_) if entry.written_hash.is_empty() => String::new(),
-                Err(_) => "missing".to_string(),
-            };
+            let current_symlink = file
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            let current_hash = journal_hash(&whole_file(ws_root, &entry.path)?, current_symlink);
+            if !entry.done && current_hash == entry.backup_hash.clone().unwrap_or_default() {
+                continue; // 意图已记录但目标尚未写入；已经是备份状态。
+            }
             if current_hash != entry.written_hash {
                 // 被人改过或已不在：跳过，保留后来的人为修改
                 report.skipped_user_modified.push(entry.path.clone());
@@ -854,12 +930,23 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
                         .then(|| std::fs::read(&backup_path))
                         .transpose()?
                         .map(|bytes| {
-                            format!("sha256:{}", crate::ids::sha256_hex(&bytes)) == *expected_hash
+                            journal_hash(&Some(bytes), entry.backup_symlink) == *expected_hash
                         });
                     match verified {
                         Some(true) => {
                             let bytes = std::fs::read(&backup_path)?;
-                            crate::sync_common::atomic_write(&file, bytes.as_slice())?;
+                            if entry.backup_symlink {
+                                let target: std::path::PathBuf = serde_json::from_slice(&bytes)?;
+                                #[cfg(unix)]
+                                atomic_symlink(&target, &file)?;
+                                #[cfg(not(unix))]
+                                return Err(Error::new(
+                                    code::JOURNAL_RESTORE_FAILED,
+                                    "当前平台不支持链接恢复",
+                                ));
+                            } else {
+                                crate::sync_common::atomic_write(&file, bytes.as_slice())?;
+                            }
                             report.recovered.push(entry.path.clone());
                         }
                         _ => {
@@ -896,6 +983,177 @@ pub fn recover(journal_root: &Path, ws_root: &Path) -> Result<RecoverReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn interruption_after_link_update_restores_previous_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let artifact = |version: &str| {
+            let target = tmp.path().join(version);
+            std::fs::create_dir_all(&target).unwrap();
+            std::fs::write(target.join("SKILL.md"), version).unwrap();
+            Artifact {
+                resource_id: "personal/skill/personal/r".into(),
+                target_tool: "claude".into(),
+                kind: "skill".into(),
+                path: "skill".into(),
+                body: ArtifactBody::ExternalSymlink {
+                    target: target.canonicalize().unwrap(),
+                },
+            }
+        };
+        let locks = tmp.path().join("locks");
+        let journal = tmp.path().join("journal");
+        let mut managed = ManagedManifest::new("test");
+        let old = artifact("old");
+        let plan =
+            crate::sync::plan::build_plan(std::slice::from_ref(&old), &managed, &ws, "test", None)
+                .unwrap();
+        apply(&plan, &[old], &mut managed, &ws, &locks, &journal, "test").unwrap();
+        let old_target = std::fs::read_link(ws.join("skill")).unwrap();
+        let new = artifact("new");
+        let plan =
+            crate::sync::plan::build_plan(std::slice::from_ref(&new), &managed, &ws, "test", None)
+                .unwrap();
+        CRASH_AFTER_WRITE.with(|flag| flag.set(true));
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            apply(&plan, &[new], &mut managed, &ws, &locks, &journal, "test").unwrap();
+        }))
+        .is_err());
+        assert_eq!(
+            std::fs::read_to_string(ws.join("skill/SKILL.md")).unwrap(),
+            "new"
+        );
+        let recovered = recover(&journal, &ws).unwrap();
+        assert!(recovered.ok, "{recovered:?}");
+        assert_eq!(std::fs::read_link(ws.join("skill")).unwrap(), old_target);
+        assert_eq!(
+            std::fs::read_to_string(ws.join("skill/SKILL.md")).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn interruption_after_write_recovers_create_update_delete_and_fragment() {
+        for mode in ["create", "update", "delete", "fragment"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = tmp.path().join("ws");
+            std::fs::create_dir_all(&ws).unwrap();
+            let mut managed = ManagedManifest::new("test");
+            let artifact = |body| Artifact {
+                resource_id: "team/rule/common/r".into(),
+                target_tool: "claude".into(),
+                kind: "rule".into(),
+                path: "rule.md".into(),
+                body,
+            };
+            let old = artifact(ArtifactBody::Full {
+                content: "old".into(),
+            });
+            let locks = tmp.path().join("locks");
+            let journal = tmp.path().join("journal");
+            if mode != "create" {
+                let plan = crate::sync::plan::build_plan(
+                    std::slice::from_ref(&old),
+                    &managed,
+                    &ws,
+                    "test",
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    apply(&plan, &[old], &mut managed, &ws, &locks, &journal, "test")
+                        .unwrap()
+                        .ok
+                );
+            }
+            let before = std::fs::read(ws.join("rule.md")).ok();
+            let artifacts = match mode {
+                "delete" => vec![],
+                "fragment" => vec![artifact(ArtifactBody::Fragment {
+                    content: "new\n".into(),
+                })],
+                _ => vec![artifact(ArtifactBody::Full {
+                    content: "new".into(),
+                })],
+            };
+            if mode == "fragment" {
+                managed.items.clear();
+            }
+            let plan =
+                crate::sync::plan::build_plan(&artifacts, &managed, &ws, "test", None).unwrap();
+            CRASH_AFTER_WRITE.with(|flag| flag.set(true));
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    apply(
+                        &plan,
+                        &artifacts,
+                        &mut managed,
+                        &ws,
+                        &locks,
+                        &journal,
+                        "test",
+                    )
+                    .unwrap();
+                }))
+                .is_err(),
+                "{mode}"
+            );
+            let pending = JournalRun::find_pending(&journal).unwrap();
+            let entries = crate::sync::journal::read_entries(&pending[0]).unwrap();
+            assert_eq!(entries.len(), 1);
+            assert!(!entries[0].done, "{mode}: 中断前只有已持久化的意图");
+            let report = recover(&journal, &ws).unwrap();
+            assert!(report.ok, "{mode}: {report:?}");
+            assert_eq!(report.recovered, ["rule.md"], "{mode}");
+            assert_eq!(std::fs::read(ws.join("rule.md")).ok(), before, "{mode}");
+            assert!(recover(&journal, &ws).unwrap().recovered.is_empty());
+            let retried =
+                crate::sync::plan::build_plan(&artifacts, &managed, &ws, "test", None).unwrap();
+            assert!(!retried.has_conflicts(), "{mode}");
+        }
+    }
+
+    #[test]
+    fn pending_intent_before_write_or_after_user_edit_preserves_current_bytes() {
+        for content in ["old", "user-edit"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let ws = tmp.path().join("ws");
+            std::fs::create_dir_all(&ws).unwrap();
+            std::fs::write(ws.join("rule.md"), content).unwrap();
+            let journal = tmp.path().join("journal");
+            let mut run = JournalRun::start(&journal, "pending").unwrap();
+            std::fs::create_dir_all(run.backup_dir()).unwrap();
+            std::fs::write(run.backup_dir().join("old.bak"), "old").unwrap();
+            run.append(&JournalEntry {
+                seq: 0,
+                item_key: "rule.md".into(),
+                path: "rule.md".into(),
+                action: "update".into(),
+                resource_id: "r".into(),
+                written_hash: journal_hash(&Some(b"new".to_vec()), false),
+                backup_file: Some("old.bak".into()),
+                backup_hash: Some(journal_hash(&Some(b"old".to_vec()), false)),
+                backup_symlink: false,
+                written_symlink: false,
+                done: false,
+            })
+            .unwrap();
+            drop(run);
+            let report = recover(&journal, &ws).unwrap();
+            assert!(report.recovered.is_empty());
+            assert_eq!(
+                report.skipped_user_modified.len(),
+                usize::from(content == "user-edit")
+            );
+            assert_eq!(
+                std::fs::read_to_string(ws.join("rule.md")).unwrap(),
+                content
+            );
+        }
+    }
 
     /// 并发 sync：另一进程持锁并已写出进行中的 journal 时，本次必须报 E4003（锁被持有），
     /// 而不是把它的 journal 当作崩溃遗留、提示用户 --recover。

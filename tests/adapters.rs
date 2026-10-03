@@ -601,10 +601,18 @@ fn ail041_legacy_codex_path_migrates_on_resync() {
     assert!(!legacy_item.is_null(), "原生条目应在清单中");
     manifest["items"][".ailoom/skills/a-deploy#symlink"] = legacy_item;
     // 旧版 sync 写入的 config 内容即 legacy_cfg：清单哈希与其一致（非用户篡改）
-    manifest["items"][".codex/config.toml"]["content_hash"] = serde_json::Value::String(format!(
+    let config_key =
+        ".codex/config.toml#tomlarr:skills.config:path:.agents/skills/a-deploy/SKILL.md";
+    let mut legacy_config_item = manifest["items"][config_key].clone();
+    legacy_config_item["content_hash"] = serde_json::Value::String(format!(
         "sha256:{}",
         ailoom::ids::sha256_hex(legacy_cfg.as_bytes())
     ));
+    manifest["items"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|key, _| !key.starts_with(".codex/config.toml#tomlarr:skills.config:"));
+    manifest["items"][".codex/config.toml"] = legacy_config_item;
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&manifest).unwrap(),

@@ -19,11 +19,11 @@ import * as pageNativeFiles from './pages/nativeFiles.js';
 import * as pageWorkspace from './pages/workspace.js';
 
 const ROUTES = {
-  '#/projects': { title: '我的目录', mount: pageWorkspace.mount },
+  '#/projects': { title: '项目', mount: pageProjects.mount },
   '#/projects/manage': { title: '管理目录', mount: pageProjects.mount, hidden: true },
   '#/samples': { title: '组件样例', mount: pageSamples.mount, hidden: true },
   '#/onboarding': { title: '开始使用', mount: pageOnboarding.mount, hidden: true },
-  '#/native-files': { title: '全局配置', mount: pageNativeFiles.mount },
+  '#/library/global': { title: '跨项目配置', mount: pageNativeFiles.mount, hidden:true },
   '#/library': { title: '资源库', mount: pageLibrary.mount },
   '#/tasks': { title: '操作记录', mount: pageTasks.mount, secondary: true },
 };
@@ -53,7 +53,7 @@ function shell() {
 function renderNav() {
   const nav = document.querySelector('#nav');
   if (!nav) return;
-  const isActive = (route) => location.hash === route || (route === '#/projects' && location.hash.startsWith('#/projects/'));
+  const isActive = (route) => location.hash === route || (['#/projects','#/library'].includes(route) && location.hash.startsWith(route+'/'));
   const button = (route, def) => {
     const b = document.createElement('button');
     b.textContent = def.title;
@@ -61,7 +61,7 @@ function renderNav() {
     b.onclick = () => { location.hash = route; };
     return b;
   };
-  nav.innerHTML = '<div class="brand">AILoom<span>你的 AI 资源工作台</span></div><div class="nav-label">工作空间</div>';
+  nav.innerHTML = '<a class="brand" href="#/projects" aria-label="AILoom 项目首页">AILoom</a>';
   for (const [route, def] of Object.entries(ROUTES)) {
     if (def.hidden || def.secondary) continue;
     nav.appendChild(button(route, def));
@@ -72,7 +72,9 @@ function renderNav() {
     nav.insertAdjacentHTML('beforeend', '<div class="nav-label">历史</div>');
     for (const [route, def] of auxiliary) nav.appendChild(button(route, def));
   }
-  nav.insertAdjacentHTML('beforeend', '<div class="sidebar-foot">本地运行 · 仅本机可访问<br>资源由你选择，项目由你确认。</div>');
+  const help = document.createElement('button');
+  help.className='help-menu-button';help.textContent='帮助';help.onclick=()=>{location.hash='#/onboarding';};nav.append(help);
+  if(location.hash==='#/onboarding'){help.classList.add('on');help.setAttribute('aria-current','page');}
   const service = document.createElement('button');
   service.className = 'service-menu-button';
   service.textContent = '服务';
@@ -92,11 +94,23 @@ async function openService() {
       <label><input type="checkbox" data-autostart ${state.autostart.enabled?'checked':''} ${state.autostart.supported?'':'disabled'}> 登录时自动启动</label>
       <p class="muted">关闭网页后仍在后台运行，CLI 可独立使用。</p>
       <p data-service-message role="status"></p>
+      <button data-diagnose>导出诊断信息</button>
       <button class="danger" data-stop-service>停止服务</button>`;
     const toggle = body.querySelector('[data-autostart]');
     const stop = body.querySelector('[data-stop-service]');
     const message = body.querySelector('[data-service-message]');
     if (!state.autostart.supported) message.textContent = '此系统暂不支持登录自启动。';
+    body.querySelector('[data-diagnose]').onclick = async () => {
+      try {
+        const report = await api.diagnose();
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], {type:'application/json'}));
+        link.download = `ailoom-diagnose-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        message.textContent = '已下载。反馈问题时附上这个文件即可，里面没有你的用户名和令牌。';
+      } catch(e) { message.textContent = e.message; }
+    };
     toggle.onchange = async () => {
       const enabled = toggle.checked;
       busy = true; toggle.disabled = true; stop.disabled = true;
@@ -150,11 +164,13 @@ async function route() {
   if (serviceStopped) return;
   const version = ++routeVersion;
   // 已下线的旧入口：保留重定向，旧书签不失效
+  if(location.hash==='#/projects/manage'){location.replace('#/projects');return;}
+  if(location.hash==='#/native-files'){location.replace('#/library/global');return;}
   if (['#/scopes','#/overview','#/sources','#/workflows','#/instructions'].includes(location.hash)) { location.replace('#/projects'); return; }
   // AIL-124：项目内共享设置子路由（#/projects/<id>/settings | /instructions）
-  const settingsMatch = location.hash.match(/^#\/projects\/([^/]+)\/(instructions|profile|knowledge)$/);
-  const legacyMatch = location.hash.match(/^#\/projects\/([^/]+)\/(settings|advanced)$/);
-  if (legacyMatch) { location.replace(`#/projects/${legacyMatch[1]}`); return; }
+  const settingsMatch = location.hash.match(/^#\/projects\/([^/]+)\/(instructions|profile|knowledge|settings|files)$/);
+  const legacyMatch = location.hash.match(/^#\/projects\/([^/]+)\/advanced$/);
+  if (legacyMatch) { location.replace(`#/projects/${legacyMatch[1]}/settings`); return; }
   const projectMatch = !ROUTES[location.hash] && !settingsMatch && location.hash.match(/^#\/projects\/([^/]+)$/);
   if (!projectMatch && !settingsMatch && (!location.hash || !ROUTES[location.hash])) { location.replace('#/projects'); return; }
   if (activeRoute === location.hash) return;
@@ -170,7 +186,7 @@ async function route() {
   currentPage?.destroy?.();
   currentPage = null;
   app.innerHTML = '';
-  app.classList.toggle('workspace-host', !!projectMatch || location.hash === '#/projects');
+  app.classList.toggle('workspace-host', !!projectMatch);
   if (settingsMatch) {
     currentPage = def.mount(app, {
       projectId: decodeURIComponent(settingsMatch[1]),

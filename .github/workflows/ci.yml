@@ -56,6 +56,6 @@ jobs:
         with:
           node-version: 22
       - name: Frontend components
-        run: node --experimental-vm-modules --test tests/frontend_components.mjs
+        run: node --experimental-vm-modules --test tests/frontend_components.mjs tests/global_skills_frontend.mjs
       - name: Docs check
         run: python3 scripts/docs_check.py

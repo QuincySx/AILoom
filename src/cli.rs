@@ -552,6 +552,12 @@ pub enum Command {
         action: ServiceCommand,
     },
     /// 工作区体检
+    /// 生成诊断报告（版本、系统、服务状态、日志末尾等；已脱敏），用于反馈问题
+    Diagnose {
+        /// 报告写入的目录，默认当前目录
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
     Doctor {
         /// 显式工作区根
         #[arg(long)]
@@ -581,6 +587,11 @@ pub enum ServiceCommand {
     },
     /// 等待现有任务完成后停止服务，不关闭登录自启动
     Stop,
+    /// 重启服务（升级后让后台服务换成新版本）；默认沿用当前端口
+    Restart {
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// 查看运行状态与登录自启动设置
     Status,
     /// 开启下次登录自启动；不改变当前运行状态

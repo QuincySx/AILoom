@@ -83,6 +83,19 @@ jobs:
     needs: build
     if: ${{ inputs.publish == true }}
     steps:
+      - uses: actions/checkout@v4
+      # tag 与 Cargo.toml 版本一致；Release 说明取 CHANGELOG.md 中该版本的段落，没有就不发布
+      - name: Version and release notes
+        id: meta
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          LC_ALL=C awk -v v="$version" 'index($0, "## " v) == 1 && (length($0) == length("## " v) || substr($0, length("## " v) + 1, 1) !~ /[0-9.]/) {f=1; next} /^## / {if (f) exit} f' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "CHANGELOG.md 中没有 $version 的段落，先补更新记录再发布" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -97,8 +110,10 @@ jobs:
           done
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          name: v${{ steps.meta.outputs.version }}
+          body_path: release-notes.md
           files: dist/*
-          generate_release_notes: true
           # GitHub RELEASE_TOKEN 需维护者配置；缺失时本步骤失败 = 未授权，符合默认不发布约定
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

@@ -9,8 +9,9 @@ import { ResourcePicker } from '../features/resourcePicker.js';
 import { DirectoryPicker } from '../features/directoryPicker.js';
 import { ImportDialog } from '../features/importDialog.js';
 import { ProjectDialog } from '../features/projectDialog.js';
+import {projectNavigation} from '../components/sectionNav.js';
 
-const names = {skill:'Skill',mcp:'MCP',agent:'Agent',rule:'Rules',doc:'文档',learning:'经验',env:'环境',hook:'Hook',package:'依赖包'};
+const names = {skill:'技能 · Skill',mcp:'工具连接 · MCP',agent:'子代理 · Agent',rule:'规则 · Rules',doc:'文档',learning:'经验',env:'环境',hook:'Hook',package:'依赖包'};
 const tools = {claude:'Claude Code',codex:'Codex CLI',grok:'Grok',pi:'Pi',opencode:'OpenCode',cursor:'Cursor'};
 const icons = {
   folder:'<path d="M3 7h6l2-3h4l2 3h4v13H3z"/>',
@@ -41,7 +42,7 @@ export function mount(container, {projectId}) {
   const scopeSets = folderCache;
   const scopeKey = (id, project=repo) => `${project.repo_id}:${id}`;
   let filter = '', search = '', showOff = false;
-  let notice = '', localPanel=null;
+  let notice = '', localPanel=null, localOpen=false;
   const dialogs = [];
   const controller = new AbortController();
   const q = selector => root.querySelector(selector);
@@ -55,17 +56,19 @@ export function mount(container, {projectId}) {
   function remember() {
     sessionStorage.setItem('ailoom-return-after-settings', JSON.stringify({repoId:repo.repo_id, wt:wtId, dir:relative || null, node:nodeKind, tab:0}));
   }
-  function settings(suffix = 'settings') { remember(); location.hash = `#/projects/${encodeURIComponent(repo.repo_id)}/${suffix}`; }
   function shell() {
-    root.innerHTML = `<aside class="workspace-rail" aria-label="目录导航">
-      <div class="workspace-rail-heading"><strong>我的目录</strong><button data-tree-options aria-label="目录显示选项" title="目录显示选项">···</button><button data-add-project aria-label="添加项目">${icon('plus')}</button></div>
+    root.innerHTML = `<div class="workspace-context">${projectNavigation({id:repo.repo_id,name:projectName(repo)})}</div><aside class="workspace-rail" aria-label="项目内的工作目录">
+      <button class="workspace-mobile-switch" data-switch-directory aria-expanded="false" aria-controls="workspace-directory-nav"><span data-mobile-directory></span><small>切换目录</small>${icon('chevron')}</button><div data-tree-panel id="workspace-directory-nav">
+      <div class="workspace-rail-heading"><strong>工作目录</strong><button data-tree-options aria-label="目录显示选项" title="目录显示选项">···</button><button data-add-directory aria-label="添加子目录环境">${icon('plus')}</button></div>
       <div data-folders role="tree" aria-label="项目目录"></div><p data-tree-error class="field-error" role="status"></p>
-      <a class="workspace-manage" href="#/projects/manage">管理项目</a></aside>
+      </div></aside>
       <section class="workspace-body" aria-label="当前目录的能力">
         <div data-workspace-head></div><p data-workspace-message class="workspace-message" role="status"></p>
         <div data-workspace-content></div>
       </section><footer class="workspace-applybar" data-workspace-footer></footer>`;
-    q('[data-add-project]').onclick=addProject;
+    q('[data-add-directory]').onclick=addEnvironment;
+    root.querySelectorAll('.project-context a').forEach(a=>{a.onclick=remember;});
+    q('[data-switch-directory]').onclick=()=>{const open=root.classList.toggle('tree-open');q('[data-switch-directory]').setAttribute('aria-expanded',String(open));};
   }
   function addProject() {
     dialogs.push(ProjectDialog(root,{onCreated:id=>{
@@ -84,7 +87,7 @@ export function mount(container, {projectId}) {
   };
   function parentNode() {
     if (nodeKind === 'project') return null;
-    if (!relative) return {kind:'project',rel:'',label:projectName(repo)};
+    if (!relative) return {kind:'project',rel:'',label:'共用默认能力'};
     const ancestors = configured(wtId).filter(d=>relative.startsWith(d.path+'/')).sort((a,b)=>b.path.length-a.path.length);
     if (ancestors.length) return {kind:'directory',rel:ancestors[0].path,label:ancestors[0].path};
     return {kind:isGit()?'worktree':'project',rel:'',label:isGit()?wtLabel(wtId):projectName(repo)};
@@ -93,9 +96,15 @@ export function mount(container, {projectId}) {
     if (relative) return configured(wtId).find(d=>d.path===relative)?.inherit_resources !== false;
     return scopeSets.get(scopeKey(wtId))?.root_inherits !== false;
   }
-  const primaryWorktree=p=>Object.keys(p.worktrees).find(k=>p.common_dir===p.worktrees[k].path+'/.git')||Object.keys(p.worktrees)[0];
+  const primaryWorktree=p=>Object.keys(p.worktrees).find(k=>p.worktrees[k].status!=='missing'&&p.common_dir===p.worktrees[k].path+'/.git')||Object.keys(p.worktrees).find(k=>p.worktrees[k].status!=='missing')||Object.keys(p.worktrees)[0];
   function openTreeNode(project, id, rel='', kind='project', add=false) {
     if(busy)return;
+    if(!add){
+      root.classList.remove('tree-open');
+      const switcher=q('[data-switch-directory]');
+      switcher.setAttribute('aria-expanded','false');
+      if(switcher.getBoundingClientRect().height)switcher.focus();
+    }
     if(project.repo_id===repo.repo_id){
       if(add)addEnvironment();else activate(rel,id,kind);
       return;
@@ -112,7 +121,7 @@ export function mount(container, {projectId}) {
     }
     return order(repos.map(project=>{
       const git=!project.repo_id.startsWith('nongit-'),wt=primaryWorktree(project);
-      return {key:JSON.stringify([project.repo_id]),project,wt,rel:'',kind:'project',label:projectName(project),type:git?'Git':'文件夹',children:git?order(Object.entries(project.worktrees).map(([id,w])=>({key:JSON.stringify([project.repo_id,id]),project,wt:id,rel:'',kind:'worktree',label:w.branch?.replace(/^refs\/heads\//,'')||w.path.split('/').pop(),type:w.status==='active'?'Worktree':'失联',children:directories(project,id)}))):directories(project,wt)};
+      return {key:JSON.stringify([project.repo_id]),project,wt,rel:'',kind:'project',label:git?'共用默认能力':projectName(project),type:git?'默认':'根目录',children:git?order(Object.entries(project.worktrees).map(([id,w])=>({key:JSON.stringify([project.repo_id,id]),project,wt:id,rel:'',kind:'worktree',label:w.branch?.replace(/^refs\/heads\//,'')||w.path.split('/').pop(),type:w.status==='active'?'分支':'失联',children:directories(project,id)}))):directories(project,wt)};
     }));
   }
   function renderTree() {
@@ -123,7 +132,7 @@ export function mount(container, {projectId}) {
         lookup.set(node.key,node);
         const selected=node.project.repo_id===repo.repo_id&&node.kind===nodeKind&&(node.kind==='project'||node.wt===wtId&&node.rel===relative);
         const expanded=!collapsed.has(node.key),hasChildren=node.children.length>0;
-        return `<div role="treeitem" tabindex="${selected?'0':'-1'}" aria-level="${depth+1}" aria-selected="${selected}" ${hasChildren?`aria-expanded="${expanded}"`:''} data-tree-key="${esc(node.key)}"><div class="navigation-tree-row ${selected?'selected':''}" style="--depth:${depth}">${hasChildren?`<button class="navigation-twist" data-tree-toggle="${esc(node.key)}" tabindex="-1" aria-label="${expanded?'收起':'展开'} ${esc(node.label)}">${icon('chevron')}</button>`:'<span class="navigation-twist"></span>'}<button class="navigation-node" data-tree-open="${esc(node.key)}" tabindex="-1" title="${esc(node.project.worktrees[node.wt]?.path||'')}${node.rel?'/'+esc(node.rel):''}">${icon('folder')}<span>${esc(node.label)}</span><small>${esc(node.type)}</small></button>${node.kind==='project'?`<button class="navigation-add" data-add-environment="${esc(node.project.repo_id)}" aria-label="为${esc(node.label)}添加子 Agent 环境" ${!node.wt?'disabled':''}>${icon('plus')}</button>`:''}</div>${hasChildren?`<div role="group" ${expanded?'':'hidden'}>${render(node.children,depth+1)}</div>`:''}</div>`;
+        return `<div role="treeitem" tabindex="${selected?'0':'-1'}" aria-level="${depth+1}" aria-selected="${selected}" ${hasChildren?`aria-expanded="${expanded}"`:''} data-tree-key="${esc(node.key)}"><div class="navigation-tree-row ${selected?'selected':''}" style="--depth:${depth}">${hasChildren?`<button class="navigation-twist" data-tree-toggle="${esc(node.key)}" tabindex="-1" aria-label="${expanded?'收起':'展开'} ${esc(node.label)}">${icon('chevron')}</button>`:'<span class="navigation-twist"></span>'}<button class="navigation-node" data-tree-open="${esc(node.key)}" tabindex="-1" title="${esc(node.project.worktrees[node.wt]?.path||'')}${node.rel?'/'+esc(node.rel):''}">${icon('folder')}<span>${esc(node.label)}</span><small>${esc(node.type)}</small></button>${node.kind==='project'?`<button class="navigation-add" data-add-environment="${esc(node.project.repo_id)}" aria-label="为${esc(node.label)}添加子目录环境" ${!node.wt?'disabled':''}>${icon('plus')}</button>`:''}</div>${hasChildren?`<div role="group" ${expanded?'':'hidden'}>${render(node.children,depth+1)}</div>`:''}</div>`;
       }).join('');
     }
     q('[data-folders]').innerHTML=render(nodes);
@@ -158,16 +167,16 @@ export function mount(container, {projectId}) {
   }
   function renderHead() {
     const parent=parentNode();
-    const type=nodeKind==='project'?(isGit()?'Git 项目 · 项目默认配置':'文件夹项目'):nodeKind==='worktree'?'Git Worktree':'子 Agent 环境';
-    q('[data-workspace-head]').innerHTML=`<div class="workspace-breadcrumb"><span class="badge">${type}</span>${parent?`<span>来自：<button data-parent-node>${esc(parent.label)}</button></span>`:''}</div>
-      <header class="workspace-heading"><div><h1>${esc(relative|| (nodeKind==='worktree'?wtLabel(wtId):projectName(repo)))}</h1><p class="workspace-path"><ailoom-path title="${esc(target.resolvedPath)}">${esc(target.resolvedPath)}</ailoom-path></p></div><button data-more>项目设置</button></header>
-      <div class="workspace-node-controls">${parent?`<label><input type="checkbox" data-inherit-resources ${inherits()?'checked':''} ${busy?'disabled':''}>沿用上级能力</label><span class="muted">${inherits()?'可在这里增减。':'仅使用这里选择的能力。'}</span>`:`<span class="muted">${isGit()?'各 Worktree 默认使用以下能力。':'子环境默认使用以下能力。'}</span>`}
-      ${isGit()&&nodeKind==='project'?'<button data-refresh-worktrees>刷新 Worktree</button>':''}</div>`;
-    q('[data-more]').onclick=openSettings;
+    q('[data-mobile-directory]').textContent=nodeName();
+    const type=nodeKind==='project'?(isGit()?'所有分支的默认能力':'项目根目录'):nodeKind==='worktree'?'工作目录 · '+wtLabel(wtId):'子目录环境';
+    q('[data-workspace-head]').innerHTML=`<div class="workspace-breadcrumb"><span class="badge">${esc(type)}</span>${parent?`<span>来自：<button data-parent-node>${esc(parent.label)}</button></span>`:''}</div>
+      <header class="workspace-heading"><div><h1>${esc(relative|| (isGit()&&nodeKind==='project'?'共用默认能力':projectName(repo)))}</h1><p class="workspace-path"><ailoom-path title="${esc(target.resolvedPath)}">${esc(target.resolvedPath)}</ailoom-path></p></div></header>
+      <div class="workspace-node-controls">${parent?`<label><input type="checkbox" data-inherit-resources ${inherits()?'checked':''} ${busy?'disabled':''}>沿用上级能力</label><span class="badge">${inherits()?'继承 + 本地调整':'独立选择'}</span>`:`<span class="muted">${isGit()?'各分支工作目录默认使用以下能力。':'选择的能力用于此项目。'}</span>`}
+      ${isGit()&&nodeKind==='project'?'<button data-refresh-worktrees>刷新分支目录</button>':''}</div>`;
     if(parent)q('[data-parent-node]').onclick=()=>{if(!busy)activate(parent.rel,wtId,parent.kind);};
     if(q('[data-inherit-resources]'))q('[data-inherit-resources]').onchange=changeInheritance;
     if(q('[data-refresh-worktrees]'))q('[data-refresh-worktrees]').onclick=async()=>{
-      try{await api.repoDiscover(target.rootPath);const state=await api.state();if(disposed)return;repos=state.repos;repo=repos.find(r=>r.repo_id===repo.repo_id);await loadFolders();renderHead();}catch(e){message(e.message);}
+      try{await api.repoDiscover(target.rootPath);const state=await api.state();if(disposed)return;const updated=state.repos.find(r=>r.repo_id===repo.repo_id);if(!updated)throw Error('项目已被移除。');repo=updated;repos=[repo];await loadFolders();renderHead();}catch(e){message(e.message);}
     };
   }
   async function loadFolders(projects=[repo], onlyMissing=false) {
@@ -198,13 +207,13 @@ export function mount(container, {projectId}) {
     let chosenWt=wtId, chosenRel='', saving=false, closed=false, scanVersion=0;
     const body=document.createElement('div');
     body.innerHTML=`
-      ${isGit()?`<label>所在 Worktree<select data-environment-worktree>${Object.entries(repo.worktrees).filter(([,w])=>w.status==='active').map(([id,w])=>`<option value="${esc(id)}" ${id===chosenWt?'selected':''}>${esc(wtLabel(id))} · ${esc(w.path)}</option>`).join('')}</select></label>`:''}
+      ${isGit()?`<label>所在分支工作目录<select data-environment-worktree>${Object.entries(repo.worktrees).filter(([,w])=>w.status==='active').map(([id,w])=>`<option value="${esc(id)}" ${id===chosenWt?'selected':''}>${esc(wtLabel(id))} · ${esc(w.path)}</option>`).join('')}</select></label>`:''}
       <button data-environment-browse>选择文件夹</button><p data-environment-path class="workspace-path">尚未选择文件夹</p>
-      <details><summary>发现已有 Agent 配置（可选）</summary><p class="muted">查找已有 Agent 配置的文件夹。</p><label>扫描深度<select data-environment-depth><option value="3">3 层</option><option value="2">2 层</option></select></label><button data-environment-discover>查找文件夹</button><div data-environment-candidates></div></details>
+      <details><summary>查找已有 AI 配置（可选）</summary><p class="muted"></p><label>扫描深度<select data-environment-depth><option value="3">3 层</option><option value="2">2 层</option></select></label><button data-environment-discover>查找文件夹</button><div data-environment-candidates></div></details>
       <p class="field-error" data-environment-error role="alert"></p>`;
     const field=s=>body.querySelector(s);
     const choose=rel=>{chosenRel=rel||'';field('[data-environment-path]').textContent=chosenRel?repo.worktrees[chosenWt].path+'/'+chosenRel:'请选择项目内的子文件夹，项目根目录已经存在。';};
-    const modal=Dialog(root,{title:'添加子 Agent 环境',content:body,canClose:()=>!saving,onClose:()=>{closed=true;scanVersion++;},actions:[{label:'取消',onAction:()=>!saving},{label:'添加环境',variant:'primary',onAction:async()=>{
+    const modal=Dialog(root,{title:'添加子目录环境',content:body,canClose:()=>!saving,onClose:()=>{closed=true;scanVersion++;},actions:[{label:'取消',onAction:()=>!saving},{label:'添加环境',variant:'primary',onAction:async()=>{
       if(!chosenRel){field('[data-environment-error]').textContent='请先选择一个子文件夹。';return false;}
       saving=true;
       const id=chosenWt,rel=chosenRel,path=repo.worktrees[id].path;
@@ -225,7 +234,7 @@ export function mount(container, {projectId}) {
         const id=chosenWt,path=repo.worktrees[id].path;
         await api.approveDir(path);
         if(closed||disposed)return;
-        const picker=DirectoryPicker(root,{title:'选择子 Agent 的文件夹',rootPath:path,rootLabel:projectName(repo),configuredDirs:configured(id),onPicked:rel=>{if(id===chosenWt)choose(rel);}});
+        const picker=DirectoryPicker(root,{title:'选择子目录',rootPath:path,rootLabel:projectName(repo),configuredDirs:configured(id),onPicked:rel=>{if(id===chosenWt)choose(rel);}});
         dialogs.push(picker);
       }catch(e){field('[data-environment-error]').textContent=e.message;}
     };
@@ -236,7 +245,7 @@ export function mount(container, {projectId}) {
         await api.approveDir(path);
         const result=await api.discoverDirectories(path,Number(field('[data-environment-depth]').value));
         if(closed||disposed||version!==scanVersion)return;
-        output.innerHTML=result.candidates.map((c,i)=>`<p><button data-candidate="${i}">${esc(c.path)}</button> <small>${c.agents.map(a=>esc(a.label)).join('、')}</small></p>`).join('')||'<p class="muted">未找到含 Agent 配置的文件夹。仍可手动选择。</p>';
+        output.innerHTML=result.candidates.map((c,i)=>`<p><button data-candidate="${i}">${esc(c.path)}</button> <small>${c.agents.map(a=>esc(a.label)).join('、')}</small></p>`).join('')||'<p class="muted">未找到含 AI 配置的文件夹，仍可手动选择。</p>';
         if(result.truncated||result.errors.length)output.insertAdjacentHTML('beforeend','<p class="muted">部分目录未扫描，请使用文件夹选择器继续查找。</p>');
         output.querySelectorAll('[data-candidate]').forEach(button=>{button.onclick=()=>choose(result.candidates[Number(button.dataset.candidate)].path);});
       }catch(e){if(version===scanVersion)output.textContent=e.message;}
@@ -265,15 +274,16 @@ export function mount(container, {projectId}) {
   }
   function renderContent() {
     localPanel?.destroy();
-    q('[data-workspace-content]').innerHTML = `<div class="workspace-tools"><span>用于这些 AI 工具</span>${Object.entries(tools).map(([id,label])=>`<button data-host="${id}" aria-pressed="${!!effective.hosts?.[id]?.enabled}" ${busy?'disabled':''}>${effective.hosts?.[id]?.enabled ? icon('check') : icon('plus')}${label}</button>`).join('')}</div>
-      <div class="workspace-section-heading"><div><h2>${target.viewKind==='project-shared'?'AILoom 管理 · 项目默认':'AILoom 管理'}</h2><p class="muted">${target.viewKind==='project-shared'?'':''}</p></div><button class="primary" data-add-capability>${icon('plus')}添加能力</button></div>
-      <div class="workspace-filters"><div role="group" aria-label="筛选能力类型">${[['','全部'],['skill','Skill'],['mcp','MCP'],['rule','Rules'],['agent','Agent']].map(([id,label])=>`<button data-kind="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div><input type="search" data-search-capability aria-label="搜索当前目录能力" placeholder="搜索能力…" value="${esc(search)}"></div>
-      <div data-capability-list></div><div data-disabled-list></div><div data-local-files></div>
+    const enabledTools=Object.entries(tools).filter(([id])=>effective.hosts?.[id]?.enabled);
+    q('[data-workspace-content]').innerHTML = `<details class="workspace-tool-section workspace-tool-choice" ${enabledTools.length?'':'open'}><summary><span class="step-number">1</span><span>${enabledTools.length?'AI 工具':'选择 AI 工具'}</span>${enabledTools.length?`<strong>${enabledTools.map(([,label])=>label).join('、')}</strong><span class="muted">更改</span>`:''}</summary><div class="workspace-tools" role="group" aria-label="使用哪些 AI 工具">${Object.entries(tools).map(([id,label])=>`<button data-host="${id}" aria-pressed="${!!effective.hosts?.[id]?.enabled}" ${busy?'disabled':''}>${effective.hosts?.[id]?.enabled ? icon('check') : icon('plus')}${label}</button>`).join('')}</div></details>
+      <div class="workspace-section-heading"><div><h2><span class="step-number">2</span>${target.viewKind==='project-shared'?'项目默认能力':'选择能力'}</h2></div><button class="primary" data-add-capability>${icon('plus')}添加能力</button></div>
+      <div class="workspace-filters"><div role="group" aria-label="筛选能力类型">${[['','全部'],['skill','技能'],['mcp','工具连接'],['rule','规则'],['agent','子代理']].map(([id,label])=>`<button data-kind="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div><input type="search" data-search-capability aria-label="搜索当前目录能力" placeholder="搜索能力…" value="${esc(search)}"></div>
+      <div data-capability-list></div><div data-disabled-list></div><details class="workspace-local" data-local-section ${localOpen?'open':''}><summary>本地配置文件 <span class="muted">查看或编辑已有文件</span></summary><div data-local-files></div></details>
 
-      <div class="workspace-secondary"><button data-project-notes>编辑项目说明</button></div>`;
+      `;
     localPanel=NativeFiles(q('[data-local-files]'),{rootPath:target.resolvedPath,scope:'project',showSkills:true,managedPaths:(deployment.items||[]).filter(i=>i.deployed).map(i=>target.resolvedPath.replace(/\/$/,'')+'/'+i.path)});
+    q('[data-local-section]').ontoggle=e=>{localOpen=e.target.open;};
     q('[data-add-capability]').onclick = () => addCapabilities();
-    q('[data-project-notes]').onclick = () => settings('instructions');
     root.querySelectorAll('[data-host]').forEach(b=>{b.onclick=async()=>{
       const id=b.dataset.host, enabled=!!effective.hosts?.[id]?.enabled;
       if (enabled && !await confirmAction(`不再为这个目录配置 ${tools[id]}？\n已写入的入口会在查看改动并应用后清理。`,{title:'停用 AI 工具',confirmLabel:'停用'})) return;
@@ -288,12 +298,13 @@ export function mount(container, {projectId}) {
     const matches=e=>(!filter||e.kind===filter)&&`${e.name} ${e.description || ''}`.toLowerCase().includes(search.toLowerCase());
     const active=entries.filter(e=>effective.resources[e.id].deployed && matches(e));
     const off=entries.filter(e=>!effective.resources[e.id].deployed && matches(e));
-    const kinds=filter?[filter]:[...new Set(['skill','mcp','rule','agent',...active.map(e=>e.kind)])];
-    q('[data-capability-list]').innerHTML=kinds.map(kind=>{
+    const kinds=filter?[filter]:[...new Set(active.map(e=>e.kind))];
+    q('[data-capability-list]').innerHTML=active.length?kinds.map(kind=>{
       const rows=active.filter(e=>e.kind===kind);
-      return `<section class="workspace-kind-group"><header><h3>${esc(names[kind]||kind)} <span>${rows.length}</span></h3><button data-add-kind="${esc(kind)}">＋ 添加 ${esc(names[kind]||kind)}</button></header>${rows.length?rows.map(e=>row(e,false)).join(''):(search?'<p class="workspace-kind-empty">没有匹配的能力。</p>':'')}</section>`;
-    }).join('');
-    root.querySelectorAll('[data-add-kind]').forEach(b=>{b.onclick=()=>addCapabilities(b.dataset.addKind);});
+      return `<section class="workspace-kind-group"><header><h3>${esc(names[kind]||kind)} <span>${rows.length}</span></h3></header>${rows.map(e=>row(e,false)).join('')}</section>`;
+    }).join(''):`<div class="workspace-empty workspace-capability-empty">${icon(filter||'skill')}<h3>${search?'没有匹配的能力':filter?'还未添加'+esc(names[filter]):'还没有选择能力'}</h3>${search?'<button data-clear-search>清除搜索</button>':filter?'<button data-empty-add>添加'+esc(names[filter])+'</button>':'<p>技能、工具连接、规则、子代理</p>'}</div>`;
+    q('[data-clear-search]')?.addEventListener('click',()=>{search='';q('[data-search-capability]').value='';renderRows();});
+    q('[data-empty-add]')?.addEventListener('click',()=>addCapabilities(filter));
     q('[data-disabled-list]').innerHTML=off.length?`<details ${showOff?'open':''}><summary>已停用 ${off.length} 项</summary>${off.map(e=>row(e,true)).join('')}</details>`:'';
     q('[data-disabled-list] details')?.addEventListener('toggle',e=>{showOff=e.target.open;});
     for(const id of effective.unresolved_references || []) {
@@ -324,17 +335,17 @@ export function mount(container, {projectId}) {
     const global=!off&&(effective.global_skills||[]).includes(entry.id);
     const status=target.viewKind==='project-shared'?'项目默认':global?'已全局启用':deployment.error?'状态未知':off?'已停用':issues.length?'需处理':applied?(extensions.length?'已配置':'已应用'):'待应用';
     const inherited=!diff.here&&diff.upstream?.choice==='enable';
-    return `<article class="workspace-resource"><span class="workspace-resource-icon">${icon(entry.kind)}</span><div class="workspace-resource-info"><button class="workspace-resource-title" data-resource-details="${esc(entry.id)}">${esc(entry.name || entry.id)}</button><p>${esc(entry.description || '暂无说明')}</p><small>${esc(names[entry.kind] || entry.kind)} · ${esc(entry.source_name || '本地能力')}${inherited?' · 来自上级':''}${extensions.length?' · 依赖官方扩展':''}</small></div><span class="workspace-resource-status ${(global||applied&&!off&&!extensions.length)?'current':''}" title="${esc([requirement,...issues.map(i=>`${tools[i.target_tool]||i.target_tool}：${i.reason}`)].filter(Boolean).join('；'))}">${status}</span><button data-resource-action="${esc(entry.id)}" ${busy||entry.kind==='package'?'disabled':''}>${off?'恢复':'移除'}</button></article>`;
+    return `<article class="workspace-resource"><span class="workspace-resource-icon">${icon(entry.kind)}</span><div class="workspace-resource-info"><button class="workspace-resource-title" data-resource-details="${esc(entry.id)}">${esc(entry.name || entry.id)}</button>${entry.description?`<p>${esc(entry.description)}</p>`:''}<small>${esc(entry.source_name || '本地能力')}${inherited?' · 来自上级':''}</small>${requirement?`<p class="workspace-requirement">${esc(requirement)}</p>`:''}${issues.map(i=>`<p class="field-error">${esc(tools[i.target_tool]||i.target_tool)}：${esc(i.reason)}</p>`).join('')}</div><span class="workspace-resource-status ${(global||applied&&!off&&!extensions.length)?'current':''}">${status}</span><button data-resource-action="${esc(entry.id)}" ${busy||entry.kind==='package'?'disabled':''}>${off?'恢复':'移除'}</button></article>`;
   }
   function renderFooter() {
     if(target.viewKind==='project-shared') {
-      q('[data-workspace-footer]').innerHTML='<div><strong>项目默认配置</strong><small>修改会立即保存；进入 Worktree 预览并应用文件改动。</small></div><button class="primary" data-open-worktree>选择 Worktree</button>';
+      q('[data-workspace-footer]').innerHTML='<div><strong>默认选择已保存</strong><small>到分支工作目录应用</small></div><button class="primary" data-open-worktree>选择分支目录</button>';
       q('[data-open-worktree]').textContent='进入 '+wtLabel(wtId);q('[data-open-worktree]').onclick=()=>activate('',wtId,'worktree');return;
     }
     const pending=effective.pending_actions || 0;
     const selected=Object.values(effective.resources || {}).some(v=>v.deployed);
     const noHost=!Object.values(effective.hosts || {}).some(h=>h.enabled);
-    q('[data-workspace-footer]').innerHTML=`<div><strong>${selected&&noHost?'先选择一个 AI 工具':pending?`${pending} 项文件改动待应用`:'当前目录没有待应用的改动'}</strong><small>${selected&&noHost?'在能力列表上方选择要使用的 AI 工具。':''}</small></div><button class="primary" data-review ${busy?'disabled':''}>查看改动 ${icon('chevron')}</button>`;
+    q('[data-workspace-footer]').innerHTML=`<div><strong>${pending?`${pending} 项改动待应用`:noHost?'先选择 AI 工具':!selected?'添加需要的能力':'暂无待应用改动'}</strong><small>${pending?'选择已保存 · 文件尚未更新':''}</small></div><button ${pending?'class="primary"':''} data-review ${busy||noHost&&!pending?'disabled':''}>${pending?'3 · 预览并应用':'检查文件状态'} ${icon('chevron')}</button>`;
     q('[data-review]').onclick=review;
   }
   async function write(entry,state) {
@@ -375,7 +386,6 @@ export function mount(container, {projectId}) {
       }finally{busy=false;if(!disposed){renderFooter();}}
     }});dialogs.push(picker);picker.show();
   }
-  function openSettings() { settings('profile'); }
 
   async function details(entry) {
     const body=document.createElement('div');
@@ -383,7 +393,7 @@ export function mount(container, {projectId}) {
     const diff=diffOf(effective.resources?.[entry.id]?.trace,layerOfTarget(target));
     const actions=[{label:'关闭'}];
     if(entry.id.startsWith('personal/')&&['rule','agent'].includes(entry.kind))actions.unshift({label:'编辑',onAction:async()=>{await ManagedDefinition(root,{id:entry.id,kind:entry.kind});if(!disposed)await refresh();}});
-    if(diff.here)actions.unshift({label:'恢复上级选择',onAction:async()=>{
+    if(diff.here&&diff.upstream)actions.unshift({label:'恢复上级选择',onAction:async()=>{
       const outcome=diff.upstream?.choice==='enable'?'恢复后继续使用此能力。':'恢复后不再使用此能力。';
       if(!await confirmAction(outcome+'\n文件变化仍需查看并应用。',{title:'恢复上级选择',confirmLabel:'恢复'}))return false;
       await write({resource:entry.id},'inherit');
@@ -405,7 +415,7 @@ export function mount(container, {projectId}) {
       planId=job.job_id;
       const changes=(done.result?.actions||[]).filter(a=>a.action!=='noop');
       const words={create:'添加',restore:'恢复',update:'更新',delete:'移除',conflict:'存在冲突',unsupported:'暂不支持'};
-      content.innerHTML=changes.length?changes.map(a=>`<div class="workspace-change"><span class="badge ${['conflict','unsupported'].includes(a.action)?'warn':''}">${words[a.action]||esc(a.action)}</span><div><strong>${esc(catalog.entries?.find(e=>e.id===a.resource_id)?.name||a.resource_id||a.path)}</strong><p>${esc(tools[a.target_tool]||a.target_tool)} · ${esc(a.path)}</p>${['conflict','unsupported'].includes(a.action)?`<p class="field-error">${esc(a.reason)}</p>`:''}</div></div>`).join(''):'<div class="workspace-empty"><h3>已经是最新状态</h3><p>这个目录没有需要写入或清理的文件。</p></div>';
+      content.innerHTML=changes.length?changes.map(a=>`<div class="workspace-change"><span class="badge ${['conflict','unsupported'].includes(a.action)?'warn':''}">${words[a.action]||esc(a.action)}</span><div><strong>${esc(catalog.entries?.find(e=>e.id===a.resource_id)?.name||(a.resource_id?.startsWith('ailoom-personal/instructions/')?'项目说明':a.resource_id)||a.path)}</strong><p>${esc(tools[a.target_tool]||a.target_tool)} · ${esc(a.path)}</p>${['conflict','unsupported'].includes(a.action)?`<p class="field-error">${esc(a.reason)}</p>`:''}</div></div>`).join(''):'<div class="workspace-empty"><h3>已经是最新状态</h3><p>这个目录没有需要写入或清理的文件。</p></div>';
       if((done.result?.skipped_company_files||[]).length)content.innerHTML+='<p class="muted">部分已有文件受保护，已跳过。详见下方文件明细。</p>';
       content.innerHTML+=`<details><summary>技术详情</summary><pre>${esc(done.result?.summary||'无改动')}</pre><p class="muted">${esc((done.result?.notes||[]).join('；'))}</p><pre>${esc(JSON.stringify(done.result?.skipped_company_files||[],null,2))}</pre></details>`;
       apply.disabled=!changes.some(a=>!['conflict','unsupported'].includes(a.action));
@@ -440,12 +450,14 @@ export function mount(container, {projectId}) {
       let back,recent;
       try{recent=JSON.parse(sessionStorage.getItem('ailoom-directory-view'));back=JSON.parse(sessionStorage.getItem('ailoom-return-after-settings'));sessionStorage.removeItem('ailoom-return-after-settings');}catch{}
       repo=repos.find(r=>r.repo_id===(projectId||recent?.repoId))||(!projectId?repos[0]:null);
-      if(!repo&&projectId&&repos.length){root.innerHTML='<section class="workspace-empty"><h1>找不到这个项目</h1><p>它可能已被移除，或链接已过期。</p><button data-back class="primary">返回我的目录</button></section>';q('[data-back]').onclick=()=>{location.hash='#/projects';};return;}
-      if(!repo){root.innerHTML='<section class="workspace-empty"><h1>添加你的第一个目录</h1><p>选择本机文件夹，再为它添加需要的能力。</p><button data-add-project class="primary">添加项目</button></section>';q('[data-add-project]').onclick=addProject;return;}
+      if(!repo&&projectId){root.innerHTML='<section class="workspace-empty"><h1>找不到这个项目</h1><p>它可能已被移除，或链接已过期。</p><button data-back class="primary">返回项目列表</button></section>';q('[data-back]').onclick=()=>{location.hash='#/projects';};return;}
+      if(!repo){root.classList.add('workspace-start');root.innerHTML=`<section class="workspace-welcome"><span class="welcome-icon">${icon('folder')}</span><h1>为你的项目配好 AI</h1><p>从一个本机文件夹开始。</p><button data-add-project class="primary">${icon('plus')}添加第一个项目</button><ol class="welcome-steps"><li><span>1</span>选择项目文件夹</li><li><span>2</span>添加需要的能力</li><li><span>3</span>预览并应用</li></ol><a href="#/onboarding">查看上手指南</a></section>`;q('[data-add-project]').onclick=addProject;return;}
+      root.classList.remove('workspace-start');
+      repos=[repo];
       back=back?.repoId===repo.repo_id?back:recent?.repoId===repo.repo_id?recent:null;
-      wtId=back?.repoId===repo.repo_id&&repo.worktrees[back.wt]?back.wt:Object.keys(repo.worktrees).find(k=>repo.common_dir===repo.worktrees[k].path+'/.git')||Object.keys(repo.worktrees)[0];
+      wtId=back?.repoId===repo.repo_id&&repo.worktrees[back.wt]?back.wt:primaryWorktree(repo);
       relative=back?.repoId===repo.repo_id?back.dir||'':'';
-      nodeKind=back?.repoId===repo.repo_id?(back.node||(relative?'directory':'project')):'project';
+      nodeKind=back?.repoId===repo.repo_id?(back.node||(relative?'directory':isGit()?'worktree':'project')):isGit()?'worktree':'project';
       if(!wtId)throw Error('这个项目没有可用目录。');
       shell();renderTree();await loadFolders(repos,true);await activate(relative,wtId,nodeKind);
       if(!disposed&&pendingEnvironmentProject===repo.repo_id){pendingEnvironmentProject=null;addEnvironment();}

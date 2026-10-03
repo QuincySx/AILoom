@@ -214,7 +214,10 @@ pub fn run(args: &DoctorArgs, _json: bool, data_root: Option<&std::path::Path>) 
     }
 
     // 5. 托管清单与目标漂移
-    match ManagedManifest::load(&ctx.layout.managed_manifest_path) {
+    match ManagedManifest::load_for_workspace(
+        &ctx.layout.managed_manifest_path,
+        &ctx.workspace.workspace_root,
+    ) {
         Err(e) => push(
             &mut checks,
             "managed-manifest",

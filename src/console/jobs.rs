@@ -49,6 +49,18 @@ pub struct UndoEntry {
     /// 应用前是符号链接（previous 为链接目标）：删除后撤销需要重建链接而不是写文件
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub was_link: bool,
+    /// Skill 链接撤销时恢复同一条托管记账；旧任务无此字段，保持原撤销兼容。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_skill: Option<UndoManagedSkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoManagedSkill {
+    pub manifest_path: PathBuf,
+    pub item_key: String,
+    pub previous: Option<crate::sync::manifest::ManagedItem>,
+    pub before_hash: Option<String>,
+    pub after_hash: Option<String>,
 }
 
 /// 应用后路径不存在（删除动作）时记录的指纹：撤销只在路径仍不存在时重建。
@@ -451,7 +463,7 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
         return;
     }
     // 记录撤销前像：仅本任务将写入的目标（AIL-120：捕获逻辑抽为共用函数）
-    let mut undo = capture_undo_entries(&root, &prepared.plan);
+    let mut undo = capture_undo_entries(&root, &prepared);
     // 应用：复用 personal::apply_prepared_personal（相同 lock/journal 管道），但要捕获其结果——
     // 这里直接调用库路径以保证 undo 语义
     set_status(state, id, JobStatus::Running, "应用计划");
@@ -609,9 +621,12 @@ fn push_event(state: &ServerState, event: Value) {
 /// AIL-053：可重入——UndoPartial 后可再次撤销，仅重试剩余未处理项；
 /// 已恢复项从清单移除，绝不重复覆盖。
 /// 捕获撤销前像：仅统计将写入（Create/Update/Restore）的目标。
-fn capture_undo_entries(root: &Path, plan: &crate::sync::plan::SyncPlan) -> Vec<UndoEntry> {
+fn capture_undo_entries(
+    root: &Path,
+    prepared: &crate::commands::personal::PersonalPrepare,
+) -> Vec<UndoEntry> {
     let mut undo: Vec<UndoEntry> = Vec::new();
-    for a in &plan.actions {
+    for a in &prepared.plan.actions {
         if !matches!(
             a.action,
             crate::sync::plan::ActionKind::Create
@@ -644,6 +659,14 @@ fn capture_undo_entries(root: &Path, plan: &crate::sync::plan::SyncPlan) -> Vec<
             previous,
             after_hash: None,
             was_link,
+            managed_skill: a.item_key.ends_with("#symlink").then(|| UndoManagedSkill {
+                manifest_path: prepared.managed_path.clone(),
+                item_key: a.item_key.clone(),
+                previous: prepared.managed.items.get(&a.item_key).cloned(),
+                before_hash: a.precondition_hash.clone(),
+                after_hash: (a.action != crate::sync::plan::ActionKind::Delete)
+                    .then(|| a.desired_hash.clone()),
+            }),
         });
     }
     undo
@@ -736,7 +759,7 @@ pub fn cli_sync(
     )?;
     // Plan paths are relative to the discovered workspace, not the invoking subdirectory.
     let root = prepared.ctx.workspace.workspace_root.as_path();
-    let mut undo = capture_undo_entries(root, &prepared.plan);
+    let mut undo = capture_undo_entries(root, &prepared);
     let report = crate::commands::personal::apply_prepared_personal(&prepared)?;
     if report.ok {
         for entry in &mut undo {
@@ -842,6 +865,75 @@ pub fn undo(state: &Arc<ServerState>, id: &str) -> std::result::Result<Value, St
 /// 单条撤销（AIL-053）：指纹校验 + 类型保持的前像恢复。
 /// 返回 Err(冲突原因) 表示该项保留、进入可重试剩余清单。
 fn undo_single(root: &Path, entry: &UndoEntry) -> std::result::Result<(), String> {
+    let Some(owned) = &entry.managed_skill else {
+        return undo_path(root, entry);
+    };
+    let manifest_dir = owned.manifest_path.parent().ok_or("托管清单缺少父目录")?;
+    let lock = crate::sync::lock::SyncLock::acquire(&manifest_dir.join("locks"), "undo")
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        let mut manifest = crate::sync::manifest::ManagedManifest::load(&owned.manifest_path)
+            .map_err(|e| e.to_string())?
+            .ok_or("托管清单已消失，无法安全撤销")?;
+        let current = manifest.items.get(&owned.item_key);
+        if current.map(|item| &item.content_hash) != owned.after_hash.as_ref() {
+            return Err(format!("{}（托管记账已变化，冲突保留）", entry.path));
+        }
+        let current_hash = crate::sync::plan::current_hash_by_key(root, &owned.item_key, "")
+            .map_err(|e| e.to_string())?;
+        if current_hash != owned.after_hash {
+            return Err(format!(
+                "{}（应用后 Skill 内容已变化，冲突保留）",
+                entry.path
+            ));
+        }
+        // 旧实体也可能经其他项目的链接被用户修改；这种情况下不能声称恢复旧内容。
+        if entry.was_link {
+            let prior_hash = entry.previous.as_ref().and_then(|bytes| {
+                let link = PathBuf::from(String::from_utf8_lossy(bytes).as_ref());
+                let abs = if link.is_absolute() {
+                    link
+                } else {
+                    root.join(&entry.path).parent()?.join(link)
+                };
+                if !abs.is_dir() {
+                    return None;
+                }
+                let digest = crate::store::dir_digest(&abs).ok()?;
+                Some(format!(
+                    "sha256:{}",
+                    sha256_hex(format!("{}|{digest}", abs.display()).as_bytes())
+                ))
+            });
+            if prior_hash != owned.before_hash {
+                return Err(format!("{}（旧 Skill 实体已变化，冲突保留）", entry.path));
+            }
+        }
+        undo_path(root, entry)?;
+        let restored_hash = crate::sync::plan::current_hash_by_key(root, &owned.item_key, "")
+            .map_err(|e| e.to_string())?;
+        if restored_hash != owned.before_hash {
+            return Err(format!(
+                "{}（恢复后 Skill 摘要不符，未改托管记账）",
+                entry.path
+            ));
+        }
+        if let Some(previous) = &owned.previous {
+            manifest
+                .items
+                .insert(owned.item_key.clone(), previous.clone());
+        } else {
+            manifest.items.remove(&owned.item_key);
+        }
+        manifest
+            .save(&owned.manifest_path)
+            .map_err(|e| e.to_string())
+    })();
+    let released = lock.release().map_err(|e| e.to_string());
+    result.and(released)
+}
+
+fn undo_path(root: &Path, entry: &UndoEntry) -> std::result::Result<(), String> {
     let target = root.join(&entry.path);
     // 守卫一（AIL-052）：本任务「新建」的路径后来被 Git 跟踪 → 撤销的删除会
     // 销毁公司内容，拒绝；已存在文件恢复前像只是回到公司原有内容，允许。
@@ -976,6 +1068,7 @@ pub fn test_support_undo_entry(
         previous,
         after_hash,
         was_link: false,
+        managed_skill: None,
     }
 }
 

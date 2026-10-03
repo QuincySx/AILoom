@@ -886,6 +886,9 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     v
                 }
                 ServiceCommand::Stop => ailoom::service::stop(&root)?,
+                ServiceCommand::Restart { port } => {
+                    ailoom::service::restart(&root, *port, ailoom::console::DEFAULT_PORT)?
+                }
                 ServiceCommand::Status => ailoom::service::status(&root)?,
                 ServiceCommand::Enable { port } => {
                     ailoom::service::set_autostart(&root, true, *port)?
@@ -910,6 +913,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                             Some("running") => "运行中",
                             Some("stopping") => "正在停止，等待任务完成",
                             Some("unreachable") => "暂时无响应",
+                            Some("unmanaged") => "运行中，但不是由当前版本启动的（无法自动管理）",
                             _ => "已停止",
                         };
                         println!("网页服务：{state}");
@@ -940,6 +944,17 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 open_browser: !*no_open,
             };
             ailoom::console::run_blocking(&opts)
+        }
+        Some(Command::Diagnose { out }) => {
+            let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
+            let value = ailoom::commands::diagnose::run(&data, out.as_deref())?;
+            if cli.json {
+                output::emit_json(&value);
+            } else {
+                println!("诊断报告：{}", value["path"].as_str().unwrap_or_default());
+                println!("{}", value["note"].as_str().unwrap_or_default());
+            }
+            Ok(())
         }
         Some(Command::Doctor { root, strict }) => {
             let args = ailoom::commands::doctor::DoctorArgs { root: root.clone() };

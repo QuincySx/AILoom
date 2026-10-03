@@ -8,10 +8,10 @@ import { ImportDialog } from './importDialog.js';
 
 // One visual vocabulary for every capability type in the library.
 const capabilityTypes = {
-  skill: ['Skill', '<path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/>'],
-  mcp: ['MCP', '<path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/>'],
-  agent: ['Agent', '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M8 12h1m6 0h1M9 16h6"/>'],
-  rule: ['Rules', '<path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1"/>'],
+  skill: ['技能 · Skill', '<path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/>'],
+  mcp: ['工具连接 · MCP', '<path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/>'],
+  agent: ['子代理', '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M8 12h1m6 0h1M9 16h6"/>'],
+  rule: ['规则', '<path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1"/>'],
   doc: ['文档', '<path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h8"/>'],
   learning: ['经验', '<path d="M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4zM12 6v15"/>'],
   env: ['环境', '<path d="M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4"/>'],
@@ -51,12 +51,13 @@ export function CollectionsPanel(container, options = {}) {
   let libraryEntries = []; // Personal copies may also have a Git origin.
   let referenceDialog = null;
   root.innerHTML = `
-    <header class="page-head"><div><h1>${esc(options.title || (options.updatesOnly ? '来源更新' : '资源库'))}</h1>
+    <header class="page-head"><div><${options.headingLevel===2?'h2':'h1'}>${esc(options.title || (options.updatesOnly ? '来源更新' : '资源库'))}</${options.headingLevel===2?'h2':'h1'}>
       <p>${esc(options.description || (options.updatesOnly ? '先检查上游，再确认资源库版本。哪些项目使用新版，由你决定。' : '把自己的合集与第三方资源放在一起管理，按需引用到项目。'))}</p></div>
-      <div class="actions">${options.onCreate?'<button data-create>新建 Rules / Agent</button>':''}<button data-cc-switch>从 CC Switch 迁移</button><button data-add class="primary">导入资源</button></div></header>
-    <div class="toolbar"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索来源、Skill 或 MCP…"><div><button data-check>检查全部更新</button><button data-update disabled>更新全部可用版本</button></div></div>
+      <div class="actions">${options.onCreate?'<button data-create>新建规则 / 子代理</button>':''}<button data-add class="primary">导入资源</button></div></header>
+    <div class="toolbar"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索资源名称或用途…"><div></div></div>
     <p data-msg class="inline-status muted" role="status" aria-live="polite"></p>
-    <div data-sources><p class="muted">正在读取资源库…</p></div>`;
+    <div data-sources><p class="muted">正在读取资源库…</p></div>
+    <details class="library-maintenance"><summary>更新与迁移</summary><div class="actions"><button data-check>检查全部更新</button><button data-update disabled>更新可用版本</button><button data-cc-switch>从 CC Switch 迁移</button></div></details>`;
   const q = s => root.querySelector(s);
   if(options.onCreate)q('[data-create]').onclick=options.onCreate;
   if(options.compactLibrary) {
@@ -163,7 +164,10 @@ export function CollectionsPanel(container, options = {}) {
       for(const g of shown)for(const source of g.sources)for(const resource of source.visibleResources)unique.set(resource.id,{...resource,sourceLabel:label(g),sourceId:source.id,updateState:source.update?.state});
       for(const resource of localEntries)unique.set(resource.id,{...resource,sourceLabel:resource.can_check_update?'上游来源':'本地',editable:!!options.onEdit});
       const entries=[...unique.values()].filter(e=>!kind||e.kind===kind);
-      q('[data-capability-catalog]').innerHTML=entries.length?`<ul class="repository-resources">${entries.map(e=>`<li class="repository-resource">${capabilityBadge(e.kind)}<div><h3>${esc(e.name||e.id)} ${e.sourceId?`<button class="library-entry-source" data-catalog-source="${esc(e.sourceId)}">${esc(e.sourceLabel)}</button>`:`<small class="library-entry-source">${esc(e.sourceLabel)}</small>`}${e.updateState==='available'?'<span class="badge ok">可更新</span>':''}</h3><p>${esc(e.description||'')}</p></div><div class="actions">${skillControls(e)}${e.editable?`<button data-catalog-edit="${esc(e.id)}">编辑</button>`:''}<button data-catalog-usage="${esc(e.id)}">使用项目</button></div></li>`).join('')}</ul>`:'<p class="muted">没有匹配的能力。可搜索其他名称或导入新能力。</p>';
+      const hasResources=libraryEntries.length||sources.some(s=>s.resources?.length);
+      q('[data-capability-catalog]').innerHTML=entries.length?`<ul class="repository-resources">${entries.map(e=>`<li class="repository-resource">${capabilityBadge(e.kind)}<div><h3>${esc(e.name||e.id)} ${e.sourceId?`<button class="library-entry-source" data-catalog-source="${esc(e.sourceId)}">${esc(e.sourceLabel)}</button>`:`<small class="library-entry-source">${esc(e.sourceLabel)}</small>`}${e.updateState==='available'?'<span class="badge ok">可更新</span>':''}</h3><p>${esc(e.description||'')}</p></div><div class="actions">${skillControls(e)}${e.editable?`<button data-catalog-edit="${esc(e.id)}">编辑</button>`:''}<button data-catalog-usage="${esc(e.id)}">使用位置</button></div></li>`).join('')}</ul>`:`<div class="empty-state"><h2>${hasResources?'没有匹配的资源':'把常用的 AI 能力放在这里'}</h2>${hasResources?'<button data-clear-filters>清除筛选</button>':'<p>技能、工具连接、规则、子代理</p><button data-first class="primary">导入第一个资源</button>'}</div>`;
+      q('[data-first]')?.addEventListener('click',()=>importDialog.show());
+      q('[data-clear-filters]')?.addEventListener('click',()=>{q('[data-search]').value='';q('[data-library-kind]').value='';q('[data-library-kind]').dispatchEvent(new Event('change',{bubbles:true}));q('[data-search]').dispatchEvent(new Event('input',{bubbles:true}));});
       q('[data-capability-catalog]').querySelectorAll('[data-catalog-source]').forEach(b=>{b.onclick=()=>showSource(b.dataset.catalogSource);});
       q('[data-capability-catalog]').querySelectorAll('[data-catalog-edit]').forEach(b=>{b.onclick=()=>options.onEdit?.(b.dataset.catalogEdit);});
       q('[data-capability-catalog]').querySelectorAll('[data-catalog-usage]').forEach(b=>{b.onclick=()=>{

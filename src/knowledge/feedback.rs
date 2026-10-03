@@ -46,11 +46,13 @@ fn save(ctx: &AppContext, r: &UsageRecord) -> Result<()> {
 
 /// 记录一次真实召回使用（由 recall 命令返回结果后调用）。
 pub fn record_recall_hits(ctx: &AppContext, ids: &[String]) -> Result<()> {
-    let mut r = load(ctx);
-    for id in ids {
-        *r.usage.entry(id.clone()).or_insert(0) += 1;
-    }
-    save(ctx, &r)
+    crate::source::with_file_lock(&ctx.layout.ws_dir.join("knowledge-usage.lock"), || {
+        let mut r = load(ctx);
+        for id in ids {
+            *r.usage.entry(id.clone()).or_insert(0) += 1;
+        }
+        save(ctx, &r)
+    })
 }
 
 /// 记录显式反馈（有用/无用）。幂等语义：调用方提供稳定 `feedback_id`（如
@@ -61,26 +63,54 @@ pub fn record_feedback(
     useful: bool,
     feedback_id: Option<&str>,
 ) -> Result<()> {
-    let mut r = load(ctx);
-    let event_id = feedback_id
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("fb-{}", crate::ids::new_id()));
-    let direction = if useful { "useful" } else { "not-useful" };
-    let event_key = format!("{id}:{direction}");
-    if let Some(seen) = r.feedback_events.get(&event_id) {
-        if seen == &event_key {
-            // 同一反馈事件重试：幂等跳过
-            return Ok(());
+    record_feedback_once(ctx, id, useful, feedback_id).map(|_| ())
+}
+
+/// 返回是否为重试；校验、计数与返回值都在同一把锁内，避免并发重复计票。
+fn record_feedback_once(
+    ctx: &AppContext,
+    id: &str,
+    useful: bool,
+    feedback_id: Option<&str>,
+) -> Result<bool> {
+    crate::source::with_file_lock(&ctx.layout.ws_dir.join("knowledge-usage.lock"), || {
+        let mut r = load(ctx);
+        if !r.usage.contains_key(id) {
+            return Err(Error::new(
+                code::USAGE,
+                format!("`{id}` 未在本工作区召回过，不能反馈"),
+            ));
         }
-    }
-    r.feedback_events.insert(event_id, event_key);
-    let entry = r.feedback.entry(id.to_string()).or_insert((0, 0));
-    if useful {
-        entry.0 += 1;
-    } else {
-        entry.1 += 1;
-    }
-    save(ctx, &r)
+        let event_id = feedback_id
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("fb-{}", crate::ids::new_id()));
+        let direction = if useful { "useful" } else { "not-useful" };
+        let event_key = format!("{id}:{direction}");
+        if let Some(seen) = r.feedback_events.get(&event_id) {
+            if seen == &event_key {
+                return Ok(true);
+            }
+            return Err(Error::new(
+                code::KNOWLEDGE_STATE_CONFLICT,
+                format!("反馈事件 `{event_id}` 已用于不同的知识或反馈方向"),
+            )
+            .context(serde_json::json!({
+                "feedback_id": event_id,
+                "original": seen,
+                "requested": event_key,
+            }))
+            .fix("保持原反馈内容重试；新反馈使用新的 --feedback-id"));
+        }
+        r.feedback_events.insert(event_id, event_key);
+        let entry = r.feedback.entry(id.to_string()).or_insert((0, 0));
+        if useful {
+            entry.0 += 1;
+        } else {
+            entry.1 += 1;
+        }
+        save(ctx, &r)?;
+        Ok(false)
+    })
 }
 
 /// 归档清单路径：`<ws_dir>/archived-learnings.json`（字符串数组）。
@@ -251,25 +281,8 @@ pub fn run(args: &KnowledgeArgs, json: bool, data_root: Option<&std::path::Path>
                 .id
                 .as_deref()
                 .ok_or_else(|| Error::new(code::USAGE, "feedback 需要 --id <learning id>"))?;
-            // 仅允许对真实召回过的 ID 反馈（未召回 ID 投票不增加使用量）
-            let r = load(&ctx);
-            if !r.usage.contains_key(id) {
-                return Err(Error::new(
-                    code::USAGE,
-                    format!("`{id}` 未在本工作区召回过，不能反馈"),
-                ));
-            }
-            let duplicated = match args.feedback_id.as_deref() {
-                Some(fid) => {
-                    let direction = if args.useful { "useful" } else { "not-useful" };
-                    r.feedback_events
-                        .get(fid)
-                        .map(|seen| seen == &format!("{id}:{direction}"))
-                        .unwrap_or(false)
-                }
-                None => false,
-            };
-            record_feedback(&ctx, id, args.useful, args.feedback_id.as_deref())?;
+            let duplicated =
+                record_feedback_once(&ctx, id, args.useful, args.feedback_id.as_deref())?;
             Ok(serde_json::json!({
                 "id": id,
                 "useful": args.useful,

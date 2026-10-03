@@ -177,6 +177,9 @@ pub fn current_state(ws_root: &Path, artifact: &Artifact) -> Result<Option<Strin
                 ));
             };
             let key = desired_entry.get(key_field).and_then(|v| v.as_str());
+            if let Some(key) = key {
+                ensure_unique_toml_array_key(arr, key_field, key)?;
+            }
             let Some(found) = key.and_then(|k| {
                 arr.iter()
                     .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(k))
@@ -477,6 +480,7 @@ pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Resu
                     "TOML 数组表路径不是数组",
                 )
             })?;
+            ensure_unique_toml_array_key(arr, key_field, kv)?;
             let found = arr
                 .iter()
                 .find(|item| item.get(key_field).and_then(|v| v.as_str()) == Some(kv));
@@ -591,6 +595,25 @@ pub fn current_hash_by_key(ws_root: &Path, key: &str, resource_id: &str) -> Resu
             format!("未知托管清单条目模式: {other}"),
         )),
     }
+}
+
+pub(crate) fn ensure_unique_toml_array_key(
+    entries: &[toml::Value],
+    field: &str,
+    key: &str,
+) -> Result<()> {
+    if entries
+        .iter()
+        .filter(|entry| entry.get(field).and_then(|v| v.as_str()) == Some(key))
+        .count()
+        > 1
+    {
+        return Err(crate::error::Error::new(
+            crate::error::code::USER_CONTENT_CONFLICT,
+            format!("TOML 数组中存在重复 {field}={key}，保留全部条目并拒绝改写"),
+        ));
+    }
+    Ok(())
 }
 
 fn plan_action(

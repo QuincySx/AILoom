@@ -285,6 +285,22 @@ pub fn skip_globally_deployed(
     if codex_names.is_empty() {
         return skipped;
     }
+    artifacts.retain(|a| {
+        if a.resource_id != "ailoom-builtin/codex-skills-config" {
+            return true;
+        }
+        match &a.body {
+            ArtifactBody::TomlArrayEntry {
+                table,
+                key_field,
+                entry,
+            } if table == "skills.config" && key_field == "path" => !entry
+                .get("path")
+                .and_then(|p| p.as_str())
+                .is_some_and(|path| codex_names.iter().any(|n| n == path)),
+            _ => true,
+        }
+    });
     for a in artifacts.iter_mut() {
         if a.resource_id != "ailoom-builtin/codex-skills-config" {
             continue;
@@ -609,6 +625,9 @@ pub fn takeover(data_root: &Path, target: &str, name: &str) -> Result<Value> {
             format!("条目名非法: {name}"),
         ));
     }
+    let layout = Layout::new(data_root);
+    let device = crate::config::device_id(data_root)?;
+    let _lock = crate::sync::lock::SyncLock::acquire(&layout.locks(), &device)?;
     let p = prepare(data_root)?;
     let t = target_by_key(&p, target)?;
     let rel = t.rel.as_ref().ok_or_else(|| {
@@ -642,24 +661,27 @@ pub fn takeover(data_root: &Path, target: &str, name: &str) -> Result<Value> {
     let dir = Layout::new(data_root).archive().join(&id);
     std::fs::create_dir_all(&dir)?;
     let archived = dir.join(name);
-    std::fs::rename(&path, &archived).map_err(|e| {
-        Error::new(
-            code::WRITE_FAILED,
-            format!("移入归档失败（原条目未改动）: {e}"),
-        )
-    })?;
     let record = json!({
         "id": id, "target": target, "name": name, "original": path,
-        "archived": archived, "link_target": std::fs::read_link(&archived).ok(),
+        "archived": archived, "link_target": std::fs::read_link(&path).ok(),
         "location": location,
         "at": crate::ids::now_iso(), "restored": false,
     });
-    crate::sync_common::atomic_write(
-        &dir.join("record.json"),
-        serde_json::to_vec_pretty(&record)?.as_slice(),
-    )?;
+    let bytes = serde_json::to_vec_pretty(&record)?;
+    let moved = move_entry_with_record(&path, &archived, || {
+        crate::sync_common::atomic_write(&dir.join("record.json"), &bytes)
+    });
+    let notes = match moved {
+        Ok(notes) => notes,
+        Err(e) => {
+            // 只删除空归档；回滚异常时保留其中的原条目供恢复。
+            let _ = std::fs::remove_dir(&dir);
+            return Err(e);
+        }
+    };
     Ok(json!({
         "archived": record,
+        "notes": notes,
         "next": "运行 ailoom global --action sync 由 AILoom 部署该位置；需要还原时 ailoom global --action restore --id <id>",
     }))
 }
@@ -669,7 +691,10 @@ pub fn restore(data_root: &Path, id: &str) -> Result<Value> {
     if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(Error::new(code::USAGE, format!("归档 ID 非法: {id}")));
     }
-    let dir = Layout::new(data_root).archive().join(id);
+    let layout = Layout::new(data_root);
+    let device = crate::config::device_id(data_root)?;
+    let _lock = crate::sync::lock::SyncLock::acquire(&layout.locks(), &device)?;
+    let dir = layout.archive().join(id);
     let text = std::fs::read_to_string(dir.join("record.json"))
         .map_err(|_| Error::new(code::UNKNOWN_REFERENCE, format!("归档不存在: {id}")))?;
     let mut record: Value = serde_json::from_str(&text)?;
@@ -688,13 +713,227 @@ pub fn restore(data_root: &Path, id: &str) -> Result<Value> {
     if let Some(parent) = original.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::rename(&archived, &original)?;
     record["restored"] = json!(true);
-    crate::sync_common::atomic_write(
-        &dir.join("record.json"),
-        serde_json::to_vec_pretty(&record)?.as_slice(),
-    )?;
-    Ok(json!({ "restored": record }))
+    let bytes = serde_json::to_vec_pretty(&record)?;
+    let notes = move_entry_with_record(&archived, &original, || {
+        crate::sync_common::atomic_write(&dir.join("record.json"), &bytes)
+    })?;
+    Ok(json!({ "restored": record, "notes": notes }))
+}
+
+/// 同盘直接移动；跨盘先复制到目标盘暂存，再把原条目改名留在原盘。
+/// 在恢复记录落盘前不删除原条目，记录失败时可以原样改名回滚。
+fn move_entry_with_record(
+    from: &Path,
+    to: &Path,
+    save_record: impl FnOnce() -> Result<()>,
+) -> Result<Vec<String>> {
+    match to.symlink_metadata() {
+        Ok(_) => return Err(Error::new(code::TARGET_CONFLICT, "移动目标已存在，不覆盖")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    match std::fs::rename(from, to) {
+        Ok(()) => {
+            if let Err(e) = save_record() {
+                rollback_move(to, from)?;
+                return Err(e);
+            }
+            Ok(Vec::new())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+            copy_entry_with_record(from, to, save_record)
+        }
+        Err(e) => Err(Error::new(
+            code::WRITE_FAILED,
+            format!("移动失败，原条目保留: {e}"),
+        )),
+    }
+}
+
+fn rollback_move(from: &Path, to: &Path) -> Result<()> {
+    if to.symlink_metadata().is_ok() {
+        return Err(Error::new(
+            code::JOURNAL_RESTORE_FAILED,
+            "回滚位置被占用，原条目保留在暂存位置",
+        )
+        .context(json!({ "preserved": from, "original": to })));
+    }
+    std::fs::rename(from, to).map_err(|e| {
+        Error::new(
+            code::JOURNAL_RESTORE_FAILED,
+            format!("回滚失败，原条目保留: {e}"),
+        )
+        .context(json!({ "preserved": from, "original": to }))
+    })
+}
+
+fn copy_entry_with_record(
+    from: &Path,
+    to: &Path,
+    save_record: impl FnOnce() -> Result<()>,
+) -> Result<Vec<String>> {
+    let suffix = crate::ids::new_id();
+    let stage = to.with_file_name(format!(".ailoom-copy-{suffix}"));
+    let held = from.with_file_name(format!(".ailoom-move-{suffix}"));
+    if let Err(e) = copy_entry(from, &stage) {
+        let _ = remove_copied_entry(&stage);
+        return Err(Error::new(
+            code::WRITE_FAILED,
+            format!("跨盘复制失败，原条目未改动: {e}"),
+        ));
+    }
+    if let Err(e) = std::fs::rename(from, &held) {
+        let _ = remove_copied_entry(&stage);
+        return Err(Error::new(
+            code::WRITE_FAILED,
+            format!("暂存原条目失败，原条目未改动: {e}"),
+        ));
+    }
+    // 复制期间原内容可能改变；复核留在原盘的本体，不跟随任何符号链接。
+    let copied =
+        entry_digest(&held).and_then(|original| entry_digest(&stage).map(|copy| original == copy));
+    let publish = match copied {
+        Ok(true) if to.symlink_metadata().is_err() => std::fs::rename(&stage, to),
+        Ok(_) => Err(std::io::Error::other("条目在复制期间变化或目标被占用")),
+        Err(e) => Err(e),
+    };
+    if let Err(e) = publish {
+        rollback_move(&held, from)?;
+        let _ = remove_copied_entry(&stage);
+        return Err(Error::new(
+            code::WRITE_FAILED,
+            format!("跨盘移动失败，原条目已放回: {e}"),
+        ));
+    }
+    if let Err(e) = save_record() {
+        // 原本体仍在 held；即使副本清理失败，也先把原本体放回。
+        let cleanup = remove_copied_entry(to);
+        rollback_move(&held, from)?;
+        if let Err(cleanup) = cleanup {
+            return Err(Error::new(
+                code::WRITE_FAILED,
+                format!("{e}；原条目已放回，副本清理失败: {cleanup}"),
+            )
+            .context(json!({ "copy": to })));
+        }
+        return Err(e);
+    }
+    // 记录已经提交；清理失败不能再把成功的还原/归档误报为未执行。
+    match remove_copied_entry(&held) {
+        Ok(()) => Ok(Vec::new()),
+        Err(e) => Ok(vec![format!(
+            "移动已完成，原盘暂存副本尚未清理: {}（{e}）",
+            held.display()
+        )]),
+    }
+}
+
+fn copy_entry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let metadata = from.symlink_metadata()?;
+    if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(from)?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, to)?;
+        #[cfg(not(unix))]
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "当前平台不支持跨盘复制符号链接",
+        ));
+    } else if metadata.is_dir() {
+        std::fs::create_dir(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_entry(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        std::fs::set_permissions(to, metadata.permissions())?;
+    } else if metadata.is_file() {
+        let mut source = std::fs::File::open(from)?;
+        let mut destination = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(to)?;
+        std::io::copy(&mut source, &mut destination)?;
+        destination.sync_all()?;
+        std::fs::set_permissions(to, metadata.permissions())?;
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "不能跨盘移动特殊文件",
+        ));
+    }
+    Ok(())
+}
+
+fn entry_digest(path: &Path) -> std::io::Result<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let metadata = path.symlink_metadata()?;
+    let mut hash = Sha256::new();
+    if metadata.file_type().is_symlink() {
+        hash.update(b"link");
+        hash.update(std::fs::read_link(path)?.as_os_str().as_encoded_bytes());
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            hash.update(metadata.permissions().mode().to_le_bytes());
+        }
+        if metadata.is_dir() {
+            hash.update(b"dir");
+            let mut entries = std::fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?;
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let name = entry.file_name();
+                let bytes = name.as_encoded_bytes();
+                hash.update(bytes.len().to_le_bytes());
+                hash.update(bytes);
+                hash.update(entry_digest(&entry.path())?);
+            }
+        } else if metadata.is_file() {
+            hash.update(b"file");
+            let mut file = std::fs::File::open(path)?;
+            let mut buf = [0; 65536];
+            loop {
+                let n = file.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buf[..n]);
+            }
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "不能跨盘移动特殊文件",
+            ));
+        }
+    }
+    Ok(hash.finalize().to_vec())
+}
+
+/// 只用于本次创建的副本/已提交后的暂存本体；不遍历链接目标。
+fn remove_copied_entry(path: &Path) -> std::io::Result<()> {
+    let metadata = match path.symlink_metadata() {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if metadata.is_dir() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                path,
+                std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+            )?;
+        }
+        for entry in std::fs::read_dir(path)? {
+            remove_copied_entry(&entry?.path())?;
+        }
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    }
 }
 
 #[cfg(test)]
@@ -797,5 +1036,181 @@ mod tests {
             !content.contains("skills/g/") && content.contains("skills/p/"),
             "{content}"
         );
+        // 新配置按 path 拥有各条目；只过滤被全局覆盖的那一个。
+        let entry = |name: &str| ArtifactBody::TomlArrayEntry {
+            table: "skills.config".into(),
+            key_field: "path".into(),
+            entry: toml::Value::try_from(
+                json!({"path": format!(".agents/skills/{name}/SKILL.md"), "enabled": true}),
+            )
+            .unwrap(),
+        };
+        let mut artifacts = vec![
+            artifact(
+                "personal/skill/personal/g",
+                "codex",
+                "skill",
+                ".agents/skills/g",
+                link(),
+            ),
+            artifact(
+                "personal/skill/personal/p",
+                "codex",
+                "skill",
+                ".agents/skills/p",
+                link(),
+            ),
+            artifact(
+                "ailoom-builtin/codex-skills-config",
+                "codex",
+                "skill-config",
+                ".codex/config.toml",
+                entry("g"),
+            ),
+            artifact(
+                "ailoom-builtin/codex-skills-config",
+                "codex",
+                "skill-config",
+                ".codex/config.toml",
+                entry("p"),
+            ),
+        ];
+        skip_globally_deployed(tmp.path(), &mut artifacts);
+        let entries: Vec<_> = artifacts
+            .iter()
+            .filter_map(|a| match &a.body {
+                ArtifactBody::TomlArrayEntry { entry, .. } => {
+                    entry.get("path").and_then(|v| v.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(entries, vec![".agents/skills/p/SKILL.md"]);
+    }
+
+    #[cfg(unix)]
+    fn fixture_tree(path: &Path) {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        std::fs::create_dir_all(path.join("nested")).unwrap();
+        std::fs::write(path.join("nested/file"), b"original\0bytes").unwrap();
+        std::fs::set_permissions(
+            path.join("nested/file"),
+            std::fs::Permissions::from_mode(0o751),
+        )
+        .unwrap();
+        symlink("nested/file", path.join("relative-link")).unwrap();
+        symlink("missing", path.join("broken-link")).unwrap();
+        std::fs::set_permissions(path.join("nested"), std::fs::Permissions::from_mode(0o500))
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_copy_preserves_entry_types_bytes_and_permissions_both_ways() {
+        let tmp = tempfile::tempdir().unwrap();
+        let original = tmp.path().join("original");
+        let archived = tmp.path().join("archived");
+        fixture_tree(&original);
+        let digest = entry_digest(&original).unwrap();
+        copy_entry_with_record(&original, &archived, || Ok(())).unwrap();
+        assert_eq!(entry_digest(&archived).unwrap(), digest);
+        assert!(original.symlink_metadata().is_err());
+        copy_entry_with_record(&archived, &original, || Ok(())).unwrap();
+        assert_eq!(entry_digest(&original).unwrap(), digest);
+        assert!(archived.symlink_metadata().is_err());
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            1,
+            "无暂存残留"
+        );
+        remove_copied_entry(&original).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_record_failure_rolls_back_takeover_and_restore_without_deleting_original() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = tempfile::tempdir().unwrap();
+        for restoring in [false, true] {
+            let from = tmp
+                .path()
+                .join(if restoring { "archived" } else { "original" });
+            let to = tmp
+                .path()
+                .join(if restoring { "original" } else { "archived" });
+            fixture_tree(&from);
+            let inode = from.symlink_metadata().unwrap().ino();
+            let digest = entry_digest(&from).unwrap();
+            // 模拟真实 record.json 原子替换被目录阻塞，而非无关字符串断言。
+            let record = tmp.path().join("record.json");
+            std::fs::create_dir(&record).unwrap();
+            let e = copy_entry_with_record(&from, &to, || {
+                crate::sync_common::atomic_write(&record, b"new record")
+            })
+            .unwrap_err();
+            assert_eq!(e.code, code::WRITE_FAILED);
+            assert_eq!(
+                from.symlink_metadata().unwrap().ino(),
+                inode,
+                "本体改名放回"
+            );
+            assert_eq!(entry_digest(&from).unwrap(), digest);
+            assert!(to.symlink_metadata().is_err());
+            assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 2);
+            remove_copied_entry(&from).unwrap();
+            std::fs::remove_dir(record).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cross_device_copy_failure_preserves_source_and_removes_partial_copy() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let from = tmp.path().join("original");
+        let to = tmp.path().join("archived");
+        std::fs::create_dir(&from).unwrap();
+        std::fs::write(from.join("file"), "untouched").unwrap();
+        let fifo = std::ffi::CString::new(from.join("fifo").as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let mut saved = false;
+        let e = copy_entry_with_record(&from, &to, || {
+            saved = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(e.code, code::WRITE_FAILED);
+        assert!(!saved);
+        assert_eq!(
+            std::fs::read_to_string(from.join("file")).unwrap(),
+            "untouched"
+        );
+        assert!(from.join("fifo").symlink_metadata().is_ok());
+        assert!(!to.exists());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn same_device_record_failure_rolls_back_and_occupied_target_is_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let from = tmp.path().join("original");
+        let to = tmp.path().join("archived");
+        std::fs::write(&from, "original").unwrap();
+        let e = move_entry_with_record(&from, &to, || {
+            Err(Error::new(code::WRITE_FAILED, "record failed"))
+        })
+        .unwrap_err();
+        assert_eq!(e.code, code::WRITE_FAILED);
+        assert_eq!(std::fs::read_to_string(&from).unwrap(), "original");
+        assert!(!to.exists());
+        std::fs::write(&to, "occupied").unwrap();
+        assert_eq!(
+            move_entry_with_record(&from, &to, || Ok(()))
+                .unwrap_err()
+                .code,
+            code::TARGET_CONFLICT
+        );
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "occupied");
+        assert_eq!(std::fs::read_to_string(&from).unwrap(), "original");
     }
 }

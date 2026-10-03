@@ -22,8 +22,9 @@ pub fn run(args: &UninstallArgs, json: bool, data_root: Option<&std::path::Path>
     let cwd = std::env::current_dir()?;
     let ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
     let managed_path = ctx.layout.managed_manifest_path.clone();
-    let mut managed = ManagedManifest::load(&managed_path)?
-        .unwrap_or_else(|| ManagedManifest::new(&ctx.workspace.workspace_id));
+    let mut managed =
+        ManagedManifest::load_for_workspace(&managed_path, &ctx.workspace.workspace_root)?
+            .unwrap_or_else(|| ManagedManifest::new(&ctx.workspace.workspace_id));
 
     // 损坏的清单已在 load 报错；此处按清单生成删除计划
     let mut actions: Vec<PlanAction> = Vec::new();

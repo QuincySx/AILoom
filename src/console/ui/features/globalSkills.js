@@ -2,7 +2,7 @@
 // 只管理 AILoom 部署的条目；目录里已有的同名条目保留，用户确认后替换（原条目移入归档，可还原）。
 
 import { api, esc } from '../services/api.js';
-import { confirmAction } from '../components/dialog.js';
+import { Dialog, confirmAction } from '../components/dialog.js';
 import { notify } from '../state/store.js';
 
 const ACTION_LABEL = { create: '新增', update: '更新', delete: '移除', restore: '恢复', conflict: '跳过（同名）' };
@@ -24,9 +24,8 @@ export function GlobalSkills(container) {
   container.append(root);
   let alive = true, version = 0, data = null, search = '', busy = false;
   const q = (s) => root.querySelector(s);
-  root.innerHTML = `<div class="workspace-section-heading"><h2>全局 Skill</h2><div class="actions"><button data-refresh>刷新</button><button class="primary" data-apply disabled>应用</button></div></div>
-    <p class="muted">在这里启用的 Skill，所有项目都能用。</p>
-    <div data-targets></div>
+  root.innerHTML = `<fieldset class="global-target-section"><legend><span class="step-number">1</span>选择 AI 工具</legend><div data-targets></div></fieldset>
+    <div class="workspace-section-heading"><h2><span class="step-number">2</span>选择全局技能</h2><div class="actions"><button data-refresh>刷新</button><button class="primary" data-apply disabled>应用</button></div></div>
     <div class="toolbar"><input data-search type="search" aria-label="搜索 Skill" placeholder="搜索 Skill"></div>
     <p data-status role="status"></p>
     <div data-list></div>
@@ -43,12 +42,12 @@ export function GlobalSkills(container) {
   }
 
   function render() {
-    q('[data-targets]').innerHTML = (data.targets || []).map((t) => `<label class="global-target"><input type="checkbox" data-target="${esc(t.key)}" ${t.enabled ? 'checked' : ''} ${t.supported && !busy ? '' : 'disabled'}><span><strong>${esc(t.label)}</strong><small>${esc(tilde(t.dir, data.home))}${t.supported ? '' : ' · 不在用户目录下，无法使用'}</small></span></label>`).join('');
+    q('[data-targets]').innerHTML = (data.targets || []).map((t) => `<label class="global-target"><input type="checkbox" data-target="${esc(t.key)}" ${t.enabled ? 'checked' : ''} ${t.supported && !busy ? '' : 'disabled'}><span><strong>${esc(t.label)}</strong><small>${t.enabled?'已选择':'未选择'}${t.supported ? '' : ' · 目录不受支持'}</small><details><summary>存储位置</summary><span class="path">${esc(tilde(t.dir, data.home))}</span></details></span></label>`).join('');
     const rows = (data.skills || []).filter((s) => `${s.name} ${s.id} ${s.source}`.toLowerCase().includes(search.toLowerCase()));
     q('[data-list]').innerHTML = rows.length ? rows.map((s) => {
       const [state, cls] = s.global ? deployedState(s.id) : ['', ''];
-      return `<article class="native-file-row"><span class="badge">Skill</span><div><strong>${esc(s.name || s.id)}</strong><small>${esc(s.source || '')}</small>${s.description ? `<p class="muted">${esc(s.description)}</p>` : ''}</div>${state ? `<span class="workspace-resource-status ${cls}">${state}</span>` : '<span></span>'}<button data-toggle="${esc(s.id)}" ${busy ? 'disabled' : ''}>${s.global ? '停用' : '启用'}</button></article>`;
-    }).join('') : `<p class="muted">${(data.skills || []).length ? '没有匹配的 Skill' : '还没有 Skill，先到「资源库」导入'}</p>`;
+      return `<article class="native-file-row"><div><strong>${esc(s.name || s.id)}</strong><small>${esc(s.source || '')}</small>${s.description ? `<p class="muted">${esc(s.description)}</p>` : ''}</div>${state ? `<span class="workspace-resource-status ${cls}">${state}</span>` : '<span></span>'}<button data-toggle="${esc(s.id)}" ${busy ? 'disabled' : ''}>${s.global ? '停用' : '启用'}</button></article>`;
+    }).join('') : `<div class="empty-state"><h3>${(data.skills || []).length ? '没有匹配的技能' : '还没有可用技能'}</h3>${(data.skills || []).length?'':'<a href="#/library">到资源库导入技能</a>'}</div>`;
     const foreign = data.foreign || [];
     const home = data.home;
     const t = (p) => esc(tilde(p, home));
@@ -58,15 +57,17 @@ export function GlobalSkills(container) {
       if (loc?.kind === 'broken_link') return `<span class="warn-text">${t(loc.points_to)} 不存在</span>` + via;
       return t(loc?.real_path || path);
     };
-    const table = (rows, cells, head) => `<table class="location-table"><colgroup><col class="c-name"><col class="c-path"><col class="c-kind"><col class="c-path"><col class="c-act"></colgroup><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(cells).join('')}</tbody></table>`;
     const foreignShown = foreign.filter((f) => `${f.name} ${f.path} ${f.location?.real_path || ''}`.toLowerCase().includes(search.toLowerCase()));
-    const groups = (data.targets || []).map((tg) => [tg, foreignShown.filter((f) => f.target === tg.key)]).filter(([, rows]) => rows.length);
-    q('[data-foreign]').innerHTML = foreign.length ? `<h3>其他来源的 Skill</h3><p class="muted">这些由其他工具安装，AILoom 不会改动。</p>${groups.map(([tg, rows]) => `<h4>${esc(tg.label)} · ${t(tg.dir)} · ${rows.length} 项</h4>${table(rows, (f) => `<tr><td><strong>${esc(f.name)}</strong>${f.conflicts_with ? `<small class="warn-text">与你启用的 Skill 同名</small>` : ''}</td><td data-label="位置">${t(f.path)}</td><td data-label="类型">${kindChip(f.location)}</td><td data-label="真实目录">${realCell(f.location, f.path)}</td><td>${f.conflicts_with ? `<button data-takeover="${foreign.indexOf(f)}" ${busy ? 'disabled' : ''}>替换…</button>` : ''}</td></tr>`, ['名称', '位置', '类型', '真实目录', ''])}`).join('') || '<p class="muted">没有匹配的条目</p>'}` : '';
+    const conflictRows=foreignShown.filter(f=>f.conflicts_with),otherRows=foreignShown.filter(f=>!f.conflicts_with);
+    const locationDetails=(loc,path)=>`<details><summary>查看位置</summary><dl><dt>安装位置</dt><dd>${t(path)}</dd><dt>文件类型</dt><dd>${kindChip(loc)}</dd><dt>实际位置</dt><dd>${realCell(loc,path)}</dd></dl></details>`;
+    const foreignRow=f=>`<article class="global-location-row ${f.conflicts_with?'global-conflict':''}"><div><strong>${esc(f.name)}</strong><p>${esc((data.targets||[]).find(tg=>tg.key===f.target)?.label||f.target)}${f.conflicts_with?' · 与所选技能同名':''}</p>${locationDetails(f.location,f.path)}</div>${f.conflicts_with?`<button data-takeover="${foreign.indexOf(f)}" ${busy?'disabled':''}>替换为所选技能…</button>`:''}</article>`;
+    q('[data-foreign]').innerHTML = `${conflictRows.length?`<section class="global-conflicts"><h3>需要处理 · ${conflictRows.length} 个同名技能</h3>${conflictRows.map(foreignRow).join('')}</section>`:''}${foreign.length?`<details class="global-other"><summary>其他工具安装的技能 <span class="badge">${otherRows.length}</span></summary>${otherRows.map(foreignRow).join('')||'<p class="muted">没有匹配的条目</p>'}</details>`:''}`;
     const archive = data.archive || [];
-    q('[data-archive]').innerHTML = archive.length ? `<h3>已替换的（可还原）</h3>${table(archive, (a, i) => `<tr><td><strong>${esc(a.name)}</strong><small>${esc(when(a.at))}</small></td><td data-label="原位置">${t(a.original)}</td><td data-label="类型">${kindChip(a.location)}</td><td data-label="真实目录">${realCell(a.location, a.original)}</td><td><button data-restore="${i}" ${busy ? 'disabled' : ''}>还原</button></td></tr>`, ['名称', '原位置', '类型', '真实目录', ''])}` : '';
+    q('[data-archive]').innerHTML = archive.length ? `<section class="global-archive"><h3>原有技能备份 · ${archive.length}</h3>${archive.map((a,i)=>`<article class="global-location-row"><div><strong>${esc(a.name)}</strong><p>${esc(when(a.at))}</p>${locationDetails(a.location,a.original)}</div><button data-restore="${i}" ${busy?'disabled':''}>还原原有技能</button></article>`).join('')}</section>` : '';
     const pending = data.pending || 0;
     q('[data-apply]').disabled = busy || !pending;
-    q('[data-apply]').textContent = pending ? `应用（${pending}）` : '已是最新';
+    const hasConflicts=(data.actions||[]).some(a=>a.action==='conflict');
+    q('[data-apply]').textContent = pending ? `预览并应用（${pending}）` : hasConflicts ? '有同名冲突' : (data.deployed||[]).length ? '已同步' : '暂无待应用改动';
     bind(rows, foreign, archive);
   }
 
@@ -79,12 +80,29 @@ export function GlobalSkills(container) {
       };
     });
     root.querySelectorAll('[data-takeover]').forEach((b) => {
-      b.onclick = async () => {
+      b.onclick = () => {
         const f = foreign[Number(b.dataset.takeover)];
         const loc = f.location || {};
         const keep = loc.kind === 'link' ? `\n只移走链接，${tilde(loc.real_path, data.home)} 不受影响。` : '';
-        const ok = await confirmAction(`用你启用的 ${f.name} 替换 ${tilde(f.path, data.home)}？${keep}\n原来的可以随时还原。`, { title: '替换同名 Skill', confirmLabel: '替换' });
-        if (ok) act(() => api.globalTakeover(f.target, f.name), '已移开原来的，点「应用」完成替换');
+        const content = document.createElement('div');
+        const text = document.createElement('div');
+        text.className = 'confirmation-message';
+        text.innerHTML = `<strong>${esc(f.name)}</strong><span class="replacement-flow"><span>当前版本</span><span aria-hidden="true">→</span><span>资源库版本</span></span><span class="muted">原有版本保留，可还原。${esc(keep)}</span><details><summary>原有文件位置</summary><span class="path">${esc(tilde(f.path,data.home))}</span></details>`;
+        const error = document.createElement('p');
+        error.className = 'field-error';
+        error.setAttribute('role', 'alert');
+        content.append(text, error);
+        Dialog(document.body, {
+          title: '替换同名 Skill', content, canClose: () => !busy,
+          actions: [
+            { label: '取消', onAction: () => !busy },
+            { label: '替换', variant: 'default', onAction: async () => {
+              const ok = await act(() => api.globalTakeover(f.target, f.name), '已移开原来的，点「应用」完成替换');
+              if (!ok) error.textContent = q('[data-status]').textContent;
+              return ok;
+            } },
+          ],
+        });
       };
     });
     root.querySelectorAll('[data-restore]').forEach((b) => {
@@ -96,11 +114,13 @@ export function GlobalSkills(container) {
   }
 
   async function act(fn, done) {
-    if (busy) return;
+    if (busy) return false;
     busy = true; render();
-    try { await fn(); if (done) notify(done); } catch (e) { message(e.message); }
+    let error = '';
+    try { await fn(); if (done) notify(done); } catch (e) { error = e.message; }
     busy = false;
-    await load();
+    await load(error);
+    return !error;
   }
 
   async function apply() {
@@ -112,16 +132,17 @@ export function GlobalSkills(container) {
     const ok = await confirmAction(lines.join('\n'), { title: '应用全局 Skill', confirmLabel: '应用' });
     if (!ok) return;
     busy = true; render();
+    let error = '';
     try {
       const r = await api.globalApply();
       const skipped = (r.skipped_conflicts || []).length;
       notify(`已应用${skipped ? `，${skipped} 个同名的已跳过` : ''}。新开会话后生效。`);
-    } catch (e) { message(e.message); }
+    } catch (e) { error = e.message; }
     busy = false;
-    await load();
+    await load(error);
   }
 
-  async function load() {
+  async function load(error = '') {
     const n = ++version;
     message('正在读取…');
     try {
@@ -129,13 +150,13 @@ export function GlobalSkills(container) {
       if (!alive || n !== version) return;
       data = v;
       render();
-      message((v.notes || []).join('；'));
+      message(error || (v.notes || []).join('；'));
     } catch (e) {
-      if (alive) message('读取失败：' + e.message);
+      if (alive && n === version) message([error, '读取失败：' + e.message].filter(Boolean).join('；'));
     }
   }
 
-  q('[data-refresh]').onclick = load;
+  q('[data-refresh]').onclick = () => load();
   q('[data-apply]').onclick = apply;
   q('[data-search]').oninput = (e) => { search = e.target.value; if (data) render(); };
   load();

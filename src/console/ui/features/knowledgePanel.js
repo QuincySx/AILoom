@@ -20,7 +20,7 @@ export function KnowledgePanel(container, {rootPath}) {
   function render(){
     const loc=state.location, recovery=!loc&&state.recovery;
     root.innerHTML=`<p><strong>${state.initialized?'项目知识库':'设置项目知识库'}</strong>${state.initialized?` · ${esc(state.files)} 个文件`:''}</p>
-      <p class="muted">此项目的 Worktree 和子目录共用。</p>
+      <p class="muted">此项目的所有工作目录共用这个保存位置。</p>
       <form data-form>
         ${recoveryFields(recovery)}
         <label>保存位置<div class="input-action"><input name="path" required value="${esc(loc?.path || (recovery ? recovery.suggested_path||'' : state.default_path))}"><button type="button" data-pick>选择文件夹…</button></div></label>

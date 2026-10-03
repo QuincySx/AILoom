@@ -6,17 +6,18 @@ import { Dialog } from '../components/dialog.js';
 // All project-entry points share this form. Inspection never registers a project.
 export function ProjectDialog(container, {onCreated} = {}) {
   const form = document.createElement('form');
+  form.className = 'project-create-form';
   let alive=true, busy=false, generation=0, inspected=null, inspectedPath='', createdId=null, autoName='', recoveryPreview=null;
   form.innerHTML = `<fieldset data-project-fields>
     <label>项目文件夹<div class="input-action"><input name="root" required placeholder="选择文件夹或输入绝对路径"><button type="button" data-pick-root>选择文件夹…</button></div></label>
-    <p class="muted" data-project-state>选择目录后显示知识库的默认位置。</p>
+    <p class="muted" data-project-state></p>
   </fieldset>
   <div class="form-grid"><label>名称<input name="name" required maxlength="120"></label><label>分类（可选）<input name="category" maxlength="80"></label></div>
-  <fieldset data-knowledge disabled><legend>知识库</legend>
+  <details class="project-create-storage" data-storage-details><summary>知识库存储 <span class="muted">使用默认位置</span></summary><fieldset data-knowledge disabled>
     <div data-recovery-fields></div><label>保存目录<div class="input-action"><input name="path" required placeholder="先选择项目文件夹"><button type="button" data-pick-knowledge>选择文件夹…</button></div></label>
     <p class="muted" data-directory-info></p>
     <p class="muted" data-knowledge-note>此项目的 Worktree 和子目录共用。</p>
-  </fieldset>
+  </fieldset></details>
   <p data-preview role="status"></p>
   <p class="field-error" data-error role="alert"></p>
   <footer class="dialog-actions"><button type="button" data-cancel>取消</button><button type="submit" class="primary" disabled>添加项目</button></footer>`;
@@ -43,7 +44,11 @@ export function ProjectDialog(container, {onCreated} = {}) {
   }
   f('path').oninput=()=>{recoveryPreview=null;q('[data-preview]').textContent='';controls();directoryVersion++;q('[data-directory-info]').textContent='';};
   f('path').onchange=inspectDirectory;
-  f('root').oninput=()=>{generation++;inspected=null;inspectedPath='';f('path').value='';q('[data-project-state]').textContent='选择目录后显示知识库的默认位置。';controls();};
+  f('path').addEventListener('invalid',()=>{
+    q('[data-storage-details]').open=true;
+    message('请选择知识库的保存目录。');
+  });
+  f('root').oninput=()=>{generation++;inspected=null;inspectedPath='';f('path').value='';q('[data-project-state]').textContent='';controls();};
   async function inspect() {
     const path=f('root').value.trim(), version=++generation;
     inspected=null;inspectedPath='';controls();message('');
@@ -54,6 +59,8 @@ export function ProjectDialog(container, {onCreated} = {}) {
       const [result,state]=await Promise.all([api.knowledge({action:'status',root:path}),api.state()]);
       if(!alive||version!==generation)return;
       inspected=result;inspectedPath=path;
+      q('[data-storage-details]').open=!!result.recovery&&!result.initialized;
+      q('[data-storage-details] summary span').textContent=result.recovery&&!result.initialized?'发现可恢复的知识库':result.initialized?'沿用已有位置':'使用默认位置';
       const registered=state.repos.find(r=>r.repo_id===result.project_id);
       const name=registered?.project?.name || result.project_root.split('/').filter(Boolean).pop();
       if(!f('category').value)f('category').value=registered?.project?.category||'';

@@ -11,22 +11,23 @@ export function InstructionsPanel(container, props) {
   wrap.className = 'step';
   container.appendChild(wrap);
   wrap.innerHTML = `
-    <h2>项目说明</h2>
+    ${props.hideHeading?'':'<h2>项目说明</h2>'}
     <p class="muted" data-scope-line>读取项目信息…</p>
 
     <p data-editor></p>
     <p><button data-save>保存说明</button>
        <button data-clear>清除我的说明…</button>
-       <span data-msg class="muted"></span></p>
+       <span data-msg class="muted"></span></p><a class="instructions-next" data-next hidden href="#/projects/${encodeURIComponent(props.target?.projectId||props.target?.repo_id||'')}">去预览并应用 →</a>
     <details><summary>查看团队说明</summary><div data-baseline class="muted"></div></details>`;
   const editorSlot = wrap.querySelector('[data-editor]');
   const msg = wrap.querySelector('[data-msg]');
   const baseline = wrap.querySelector('[data-baseline]');
   const scopeLine = wrap.querySelector('[data-scope-line]');
   const field = Field(editorSlot, {
-    label: '个人补充（Markdown）',
+    label: '我的补充说明',
     multi: true,
-    placeholder: '- 个人：回答用中文',
+    placeholder: '例如：回答用中文；修改代码前先查看相关测试。',
+    onChange:()=>{wrap.querySelector('[data-next]').hidden=true;},
   });
   let cur = props;
   let saved = '';
@@ -76,6 +77,7 @@ export function InstructionsPanel(container, props) {
       saved = content;
       revision = r.revision ?? revision;
       msg.textContent = '已保存。到项目中应用后，新开 AI 会话使用。';
+      wrap.querySelector('[data-next]').hidden=false;
       cur.onChanged?.();
     } catch (e) {
       if (e.kind === 'conflict' && e.data?.current_revision) {
@@ -112,6 +114,7 @@ export function InstructionsPanel(container, props) {
       revision = r.revision ?? null;
       field.setValue('');
       msg.textContent = '已清除。到项目中应用改动。';
+      wrap.querySelector('[data-next]').hidden=false;
       cur.onChanged?.();
     } catch (e) {
       msg.textContent = '失败：' + e.message;

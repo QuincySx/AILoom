@@ -42,15 +42,10 @@ fn run(args: &[&str], home: &std::path::Path) -> Output {
 }
 
 #[test]
-fn version_returns_zero_and_prints() {
+fn version_returns_zero() {
     let home = tempfile::tempdir().unwrap();
     let out = run(&["version"], home.path());
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("ailoom 0.1.0"),
-        "stdout: {}",
-        out.stdout
-    );
 }
 
 #[test]

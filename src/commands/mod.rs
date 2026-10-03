@@ -1,6 +1,7 @@
 //! 命令实现。子模块与卡片一一对应。
 
 pub mod contribute;
+pub mod diagnose;
 pub mod discover_directories;
 pub mod doctor;
 pub mod hook_reg;

@@ -8,7 +8,7 @@ const H = () => ({ 'X-AILoom-Session': TOKEN, 'Content-Type': 'application/json'
 
 export class ApiError extends Error {
   constructor(kind, status, data) {
-    super(data?.error || `${kind} (${status ?? 'network'})`);
+    super(status===401 ? '页面连接已失效，请刷新页面后重试。' : data?.error || `${kind} (${status ?? 'network'})`);
     this.kind = kind; // 'conflict'|'validation'|'auth'|'offline'|'server'
     this.status = status;
     this.data = data ?? {};
@@ -93,6 +93,7 @@ export const api = {
   collectionApply: (previewId) => request('POST', '/api/collections/apply', { preview_id: previewId }),
   libraryImport: (dir, name, execute) => request('POST', '/api/library/import', { dir, name, execute }),
   libraryImportEntry: (entry, name, execute) => request('POST', '/api/library/import-entry', { entry, name, execute }),
+  diagnose: () => request('GET', '/api/diagnose'),
   // AIL-152：全局 Skill
   globalSkills: () => request('GET', '/api/global/skills'),
   globalSelect: (body) => request('POST', '/api/global/select', body),

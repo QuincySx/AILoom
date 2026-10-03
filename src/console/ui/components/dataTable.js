@@ -31,7 +31,7 @@ export function DataTable(container, props) {
         const tds = cols
           .map((c, column) => {
             const content = c.render ? c.render(row) : esc(row[c.key]);
-            return `<td>${p.onSelect && column === 0 ? `<button type="button" class="table-row-action">${content}</button>` : content}</td>`;
+            return `<td data-label="${esc(c.label)}">${p.onSelect && column === 0 ? `<button type="button" class="table-row-action">${content}</button>` : content}</td>`;
           })
           .join('');
         return `<tr data-key="${key}" data-index="${index}">${tds}</tr>`;
@@ -42,7 +42,10 @@ export function DataTable(container, props) {
       wrap.querySelectorAll('tbody tr').forEach((tr) => {
         tr.onclick = () => {
           const row = rows[Number(tr.dataset.index)];
-          if (row) p.onSelect(row);
+          if (row) {
+            wrap.querySelectorAll('tbody tr').forEach(r=>r.classList.toggle('selected',r===tr));
+            p.onSelect(row);
+          }
         };
       });
     }

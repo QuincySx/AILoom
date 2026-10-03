@@ -66,4 +66,59 @@ impl ManagedManifest {
     pub fn save(&self, path: &Path) -> Result<()> {
         crate::sync_common::atomic_write(path, serde_json::to_vec_pretty(self)?.as_slice())
     }
+
+    /// 旧版 Codex Skill 配置曾以整文件记账。仅把有托管 Skill 链接佐证的
+    /// 标准条目转换为独立所有权；其余配置保持用户所有，读取本身不写盘。
+    pub fn load_for_workspace(path: &Path, ws_root: &Path) -> Result<Option<Self>> {
+        let Some(mut managed) = Self::load(path)? else {
+            return Ok(None);
+        };
+        let key = ".codex/config.toml";
+        let Some(legacy) = managed.items.get(key).cloned().filter(|item| {
+            item.resource_id == "ailoom-builtin/codex-skills-config" && item.kind == "skill-config"
+        }) else {
+            return Ok(Some(managed));
+        };
+        let file = ws_root.join(key);
+        if file.is_file() {
+            let config: toml::Value = std::fs::read_to_string(&file)?.parse()?;
+            if let Some(entries) = config
+                .get("skills")
+                .and_then(|v| v.get("config"))
+                .and_then(|v| v.as_array())
+            {
+                for entry in entries {
+                    let Some(skill_path) = entry.get("path").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let link_path = skill_path.strip_suffix("/SKILL.md").unwrap_or(skill_path);
+                    let owned = managed.items.iter().any(|(key, item)| {
+                        crate::sync::plan::split_key(key).0 == link_path
+                            && item.target_tool == "codex"
+                            && item.kind == "skill"
+                    });
+                    if !owned || !crate::adapters::common::is_codex_managed_config_path(skill_path)
+                    {
+                        continue;
+                    }
+                    // 使用旧版生成值，而非当前值：手动禁用/新增字段仍表现为漂移。
+                    let expected = toml::Value::Table(toml::map::Map::from_iter([
+                        ("path".into(), toml::Value::String(skill_path.into())),
+                        ("enabled".into(), toml::Value::Boolean(true)),
+                    ]));
+                    let mut item = legacy.clone();
+                    item.content_hash = format!(
+                        "sha256:{}",
+                        crate::ids::sha256_hex(&serde_json::to_vec(&expected)?)
+                    );
+                    managed
+                        .items
+                        .entry(format!("{key}#tomlarr:skills.config:path:{skill_path}"))
+                        .or_insert(item);
+                }
+            }
+        }
+        managed.items.remove(key);
+        Ok(Some(managed))
+    }
 }

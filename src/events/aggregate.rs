@@ -486,12 +486,25 @@ pub fn parse_claude_transcript(
         let get = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
         out.push(Event {
             schema_version: crate::events::schema::EVENT_SCHEMA_VERSION,
-            event_id: crate::ids::new_id(),
+            // 相同 transcript 行在重导、换文件名或追加导入时仍是同一事件；
+            // 用完整规范化记录区分相同 token 数量的不同真实消息。
+            event_id: format!(
+                "transcript-{}",
+                crate::ids::sha256_hex(&serde_json::to_vec(&serde_json::json!([
+                    workspace_id,
+                    device_id,
+                    v
+                ]))?)
+            ),
             session_id: session_id.to_string(),
             workspace_id: workspace_id.to_string(),
             device_id: device_id.to_string(),
             tool: "claude".into(),
-            time: crate::ids::now_iso(),
+            time: v
+                .get("timestamp")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(crate::ids::now_iso),
             kind: "stop".into(),
             tool_name: None,
             exit_code: None,

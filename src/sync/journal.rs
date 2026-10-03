@@ -19,7 +19,11 @@ pub struct JournalEntry {
     /// 旧内容哈希；create 为 None（恢复=删除）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_hash: Option<String>,
-    /// 目标为空文件且无实际内容的标记
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backup_symlink: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub written_symlink: bool,
+    /// 意图已持久化后，目标写入是否完成。
     pub done: bool,
 }
 
@@ -61,6 +65,7 @@ impl JournalRun {
         line.push('\n');
         self.writer.write_all(line.as_bytes())?;
         self.writer.flush()?;
+        self.writer.get_ref().sync_all()?;
         Ok(())
     }
 
@@ -90,13 +95,69 @@ impl JournalRun {
 
 /// 读取一次运行的全部条目（按 seq）。
 pub fn read_entries(run_dir: &Path) -> Result<Vec<JournalEntry>> {
-    let text = std::fs::read_to_string(run_dir.join("journal.jsonl"))?;
-    let mut entries = Vec::new();
-    for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let e: JournalEntry = serde_json::from_str(line).map_err(|e| {
+    let bytes = std::fs::read(run_dir.join("journal.jsonl"))?;
+    let mut entries = std::collections::BTreeMap::new();
+    // 最后一个未换行的记录可能是在写 journal 时被杀死；写入意图尚未
+    // flush+sync 就不会改目标，完成记录前也已有完整意图可供恢复。
+    for line in bytes
+        .split_inclusive(|byte| *byte == b'\n')
+        .filter(|line| line.last() == Some(&b'\n') && !line.iter().all(u8::is_ascii_whitespace))
+    {
+        let e: JournalEntry = serde_json::from_slice(line).map_err(|e| {
             Error::new(code::JOURNAL_RESTORE_FAILED, format!("journal 行损坏: {e}"))
         })?;
-        entries.push(e);
+        entries.insert(e.seq, e);
     }
-    Ok(entries)
+    Ok(entries.into_values().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn incomplete_completion_retains_durable_intent_and_bad_complete_line_fails() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut run = JournalRun::start(tmp.path(), "test").unwrap();
+        let entry = JournalEntry {
+            seq: 0,
+            item_key: "r.md".into(),
+            path: "r.md".into(),
+            action: "create".into(),
+            resource_id: "r".into(),
+            written_hash: "sha256:new".into(),
+            backup_file: None,
+            backup_hash: None,
+            backup_symlink: false,
+            written_symlink: false,
+            done: false,
+        };
+        run.append(&entry).unwrap();
+        let path = run.dir.join("journal.jsonl");
+        let dir = run.dir.clone();
+        drop(run);
+        let durable = std::fs::read(&path).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"seq\":0,\"done\":")
+            .unwrap();
+        let entries = read_entries(&dir).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].done);
+        std::fs::write(
+            &path,
+            [durable.as_slice(), b"{\"path\":\"\xe4\xb8"].concat(),
+        )
+        .unwrap();
+        let entries = read_entries(&dir).unwrap();
+        assert_eq!(entries.len(), 1, "UTF-8 中途截断也保留完整意图");
+        assert!(!entries[0].done);
+        std::fs::write(&path, [durable.as_slice(), b"{invalid}\n"].concat()).unwrap();
+        assert_eq!(
+            read_entries(&dir).unwrap_err().code,
+            code::JOURNAL_RESTORE_FAILED
+        );
+    }
 }

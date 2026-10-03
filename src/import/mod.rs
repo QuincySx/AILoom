@@ -504,25 +504,9 @@ pub fn run(args: &ImportArgs, json: bool, data_root: Option<&std::path::Path>) -
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&dest, doc.as_bytes())?;
-            crate::gitx::git(&wt.path, &["add", "--", &rel])?;
             staged.push(rel);
         }
         let message = format!("ailoom: 批量导入 {} 篇（{}）", staged.len(), target);
-        crate::gitx::git(
-            &wt.path,
-            &[
-                "-c",
-                "user.name=ailoom-import",
-                "-c",
-                "user.email=import@ailoom.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-q",
-                "-m",
-                &message,
-            ],
-        )?;
         crate::contribution::commit_and_push(
             crate::contribution::PushEnv {
                 ctx: &req.ctx,

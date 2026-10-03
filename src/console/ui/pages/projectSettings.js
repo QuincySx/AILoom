@@ -7,17 +7,18 @@ import { setTarget, sharedSettingsTarget } from '../state/target.js';
 import { InstructionsPanel } from '../features/instructionsPanel.js';
 import { NativeFiles } from '../features/nativeFiles.js';
 import { KnowledgePanel } from '../features/knowledgePanel.js';
-import { confirmAction } from '../components/dialog.js';
+import {projectNavigation} from '../components/sectionNav.js';
 
 const RETURN_KEY = 'ailoom-return-after-settings';
 
 export function mount(container, ctx = {}) {
   const root = document.createElement('div');
+  root.className='project-config-page';
   container.append(root);
   let disposed = false;
   let children = [];
   let dirty = () => false;
-  let tab = ctx.tab === 'knowledge' ? 3 : ctx.tab === 'instructions' ? 1 : 2;
+  let tab = ctx.tab === 'knowledge' ? 3 : ctx.tab === 'instructions' ? 1 : ctx.tab === 'files' ? 4 : 2;
   let repo = null;
   let target = null;
   let renderVersion = 0;
@@ -53,15 +54,13 @@ export function mount(container, ctx = {}) {
   }
 
   function renderShell() {
-    root.innerHTML = `<a href="#/projects/${encodeURIComponent(repo.repo_id)}" data-back>返回 ${esc(repo.project?.name || repo.repo_id)} · 当前目录</a>
-      <header class="project-heading"><div><h1>${esc(repo.project?.name || repo.repo_id)} · 项目设置</h1>
-        <p class="muted"></p></div></header>
+    root.innerHTML = `${projectNavigation({id:repo.repo_id,name:repo.project?.name||repo.repo_id,active:tab===1?'instructions':'settings'})}
+      <header class="project-heading"><div><h1>${tab===1?'项目说明':'设置'}</h1></div></header>
       <p data-message role="status"></p>
-      <nav class="project-tabs" aria-label="项目设置">${[[2,'项目与目录'],[1,'项目说明'],[3,'知识库'],[4,'Rules 与 Agent']].map(([id,label]) => `<button data-tab="${id}">${label}</button>`).join('')}</nav>
+      ${tab!==1?'<nav class="project-tabs" aria-label="项目设置"><button data-tab="2">基本信息</button><button data-tab="3">知识库位置</button><button data-tab="4">本地文件</button></nav>':''}
       <div data-content></div>`;
-    root.querySelectorAll('[data-tab]').forEach(b => { b.onclick = async () => {
-      if (dirty() && !await confirmAction('放弃未保存的修改？', {title:'离开当前设置', confirmLabel:'放弃并离开'})) return;
-      tab = Number(b.dataset.tab); renderTab();
+    root.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => {
+      location.hash=`#/projects/${encodeURIComponent(repo.repo_id)}/${b.dataset.tab==='4'?'files':b.dataset.tab==='3'?'knowledge':'settings'}`;
     }; });
   }
 
@@ -75,7 +74,7 @@ export function mount(container, ctx = {}) {
       if (disposed || version !== renderVersion) return;
       slot.innerHTML = '';
       if (tab === 1) {
-        const panel = InstructionsPanel(slot, {target, onChanged: () => setTarget(target)});
+        const panel = InstructionsPanel(slot, {target, hideHeading:true,onChanged: () => setTarget(target)});
         children.push(panel); dirty = () => panel.isDirty(); return;
       }
       if (tab === 2) { renderProfile(slot); return; }
@@ -95,7 +94,7 @@ export function mount(container, ctx = {}) {
       <p data-form-error class="field-error" role="alert"></p>
     </form>
     <section class="project-settings-directories">
-      <div class="tab-actions"><h2>${isGit ? 'Worktree 与子目录' : '项目与子目录'}</h2>${isGit ? '<button data-refresh>刷新 Worktree</button>' : ''}</div>
+      <div class="tab-actions"><h2>工作目录</h2>${isGit ? '<button data-refresh>刷新分支目录</button>' : ''}</div>
       <div data-directories role="status">正在读取目录…</div>
     </section>`;
     const form = slot.querySelector('form');
@@ -114,8 +113,7 @@ export function mount(container, ctx = {}) {
         if (disposed) return;
         repo.project = saved;
         name.value = saved.name || ''; category.value = saved.category || '';
-        root.querySelector('h1').textContent = `${saved.name} · 项目设置`;
-        root.querySelector('[data-back]').textContent = `返回 ${saved.name} · 当前目录`;
+        root.querySelector('.context-breadcrumb strong').textContent = saved.name;
         root.querySelector('[data-message]').textContent = '已保存';
         slot.querySelectorAll('[data-root-name]').forEach(el => el.textContent = saved.name);
       } catch (e) { if (!disposed) form.querySelector('[data-form-error]').textContent = e.message; }

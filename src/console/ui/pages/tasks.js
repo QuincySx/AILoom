@@ -21,14 +21,15 @@ const timeLabel = (iso) => { const d = iso ? new Date(iso) : null; return d && !
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
+  root.className = 'tasks-page';
   container.appendChild(root);
   root.innerHTML = `
     <header class="page-head"><div><h1>操作记录</h1>
       <p class="muted">查看改动记录，或撤销一次应用。</p></div>
       <p><button data-refresh>刷新</button></p></header>
     <div data-table></div>
-    <section data-detail hidden class="step"><h2>所选记录详情</h2><div data-detail-body></div>
-      <p><button data-undo disabled>撤销这次应用…</button> <span class="muted">只回滚该次应用写入的文件；你事后修改过的文件会冲突保留。</span></p></section>
+    <section data-detail hidden class="step" tabindex="-1"><h2>操作详情</h2><div data-detail-body></div>
+      <p data-undo-actions><button data-undo disabled>撤销这次应用…</button> <span class="muted">只回滚该次应用写入的文件；你事后修改过的文件会冲突保留。</span></p></section>
     <div data-msg class="muted" role="status" aria-live="polite"></div>`;
   const table = DataTable(root.querySelector('[data-table]'), { loading: true });
   const msg = root.querySelector('[data-msg]');
@@ -40,31 +41,28 @@ export function mount(container, ctx) {
 
   function canUndo(j) { return j.kind === 'apply' && (j.status === 'success' || j.status === 'undo_partial'); }
 
-  function showDetail(j) {
+  function showDetail(j,announce=true) {
     selected = j;
     detail.hidden = false;
     undoBtn.disabled = !canUndo(j);
-    const rows = [
-      ['操作类型', kindLabel(j.kind)],
-      ['状态', statusLabel(j.status)],
-      ['目标目录', j.root],
-      ['子目录', j.scope || '根目录'],
-      ['创建时间', timeLabel(j.created_at)],
-      ['更新时间', timeLabel(j.updated_at)],
-      ['错误', j.error || '—'],
-    ].map(([k, v]) => `<tr><th scope="row">${esc(k)}</th><td class="path">${esc(v)}</td></tr>`).join('');
+    root.querySelector('[data-undo-actions]').hidden=!canUndo(j);
     const progress = (j.progress ?? []).length ? `<p>进度：</p><pre class="log">${esc(j.progress.join('\n'))}</pre>` : '';
-    detailBody.innerHTML = `<table>${rows}</table><details><summary>技术详情</summary><p class="path">${esc(j.id)}</p>${progress}</details>`;
-    msg.textContent = `已选 ${kindLabel(j.kind)} · ${statusLabel(j.status)}。`;
+    detailBody.innerHTML = `<div class="task-summary"><strong>${esc(kindLabel(j.kind))}</strong><span class="badge ${STATUS_TONE[j.status]||''}">${esc(statusLabel(j.status))}</span></div><p class="path">${esc(j.root)}${j.scope?'/'+esc(j.scope):''}</p><p class="muted">${esc(timeLabel(j.updated_at))}</p>${j.error?`<p class="field-error" role="alert">${esc(j.error)}</p>`:''}<details><summary>技术详情</summary><dl><dt>记录 ID</dt><dd>${esc(j.id)}</dd><dt>创建时间</dt><dd>${esc(timeLabel(j.created_at))}</dd><dt>子目录</dt><dd>${esc(j.scope||'根目录')}</dd></dl>${progress}</details>`;
+    if(announce)msg.textContent = `已选 ${kindLabel(j.kind)} · ${statusLabel(j.status)}。`;
+    detail.scrollIntoView({block:'nearest'});
   }
 
   async function refresh() {
     try {
-      const v = await api.jobs();
-      jobs = v.jobs ?? [];
+      const [v,state] = await Promise.all([api.jobs(),api.state().catch(()=>({repos:[]}))]);
+      jobs = [...(v.jobs ?? [])].sort((a,b)=>new Date(b.updated_at)-new Date(a.updated_at));
+      const projectLabel=job=>{
+        const repo=(state.repos||[]).find(r=>Object.values(r.worktrees||{}).some(w=>w.path===job.root));
+        return repo?.project?.name||pathLeaf(job.root);
+      };
       const rows = jobs.map((j) => ({
         j, kind: kindLabel(j.kind), status: statusLabel(j.status),
-        project: pathLeaf(j.root), updated: timeLabel(j.updated_at),
+        project: projectLabel(j), updated: timeLabel(j.updated_at),
       }));
       table.update({
         rows,
@@ -100,7 +98,7 @@ export function mount(container, ctx) {
       if (conflicts.length) notify('冲突保留：' + conflicts.join('；'));
       await refresh();
       const again = jobs.find((x) => x.id === j.id);
-      if (again) showDetail(again);
+      if (again) showDetail(again,false);
     } catch (e) {
       notify('撤销失败：' + e.message);
       undoBtn.disabled = false;

@@ -178,10 +178,78 @@ fn healthy(root: &Path) -> Result<(Runtime, Value)> {
 }
 
 /// No token in routine status or service logs. Only `web` returns a login URL.
+/// 同一数据目录下、不由当前版本管理的服务进程（典型：升级前用旧版本启动、仍在运行）。
+/// 旧版本不写当前的运行记录也不持有运行锁，只看记录会误报「已停止」，
+/// 再启动就会对同一数据目录起第二个服务。按进程命令行里的 `--data-root … service run` 识别。
+fn unmanaged_service(root: &Path) -> Option<Value> {
+    #[cfg(unix)]
+    {
+        let out = Command::new("ps")
+            .args(["-axww", "-o", "pid=,command="])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let canon = |p: &str| {
+            Path::new(p)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(p))
+        };
+        for line in text.lines() {
+            let line = line.trim_start();
+            let Some((pid, command)) = line.split_once(' ') else {
+                continue;
+            };
+            let Ok(pid) = pid.parse::<u32>() else {
+                continue;
+            };
+            if pid == std::process::id() {
+                continue;
+            }
+            let Some(start) = command.find("--data-root ") else {
+                continue;
+            };
+            let rest = &command[start + "--data-root ".len()..];
+            let Some(end) = rest.find(" service run") else {
+                continue;
+            };
+            if canon(rest[..end].trim()) != root {
+                continue;
+            }
+            let port = rest[end..]
+                .split_once("--port ")
+                .and_then(|(_, p)| p.split_whitespace().next())
+                .and_then(|p| p.parse::<u16>().ok());
+            return Some(json!({ "pid": pid, "port": port }));
+        }
+        None
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        None
+    }
+}
+
+fn unmanaged_error(found: &Value) -> Error {
+    let pid = &found["pid"];
+    failure(format!(
+        "这个数据目录已有一个网页服务在运行（PID {pid}），但不是由当前版本启动的（通常是升级前的旧版本），无法自动停止"
+    ))
+    .fix(format!("结束该进程（kill {pid}）后再运行 ailoom web"))
+    .context(found.clone())
+}
+
 pub fn status(root: &Path) -> Result<Value> {
     let root = root_path(root, false)?;
     let startup = autostart::status(&root)?;
     if !held(&root)? {
+        if let Some(found) = unmanaged_service(&root) {
+            return Ok(
+                json!({"state":"unmanaged", "running":true, "pid":found["pid"],
+                "port":found["port"], "data_root":root, "autostart":startup,
+                "message":unmanaged_error(&found).message}),
+            );
+        }
         return Ok(
             json!({"state":"stopped", "running":false, "data_root":root, "autostart":startup}),
         );
@@ -201,6 +269,11 @@ pub fn status(root: &Path) -> Result<Value> {
 pub fn start(root: &Path, port: u16) -> Result<Value> {
     let root = prepare(root)?;
     let _control = management_lock(&root)?;
+    if !held(&root)? {
+        if let Some(found) = unmanaged_service(&root) {
+            return Err(unmanaged_error(&found));
+        }
+    }
     if held(&root)? {
         let (_, probe) = healthy(&root)
             .map_err(|_| failure("已有服务正在启动、停止或无响应，请稍后查看 service status"))?;
@@ -280,9 +353,18 @@ pub fn start(root: &Path, port: u16) -> Result<Value> {
 pub fn stop(root: &Path) -> Result<Value> {
     let root = root_path(root, false)?;
     if !root.join("service").exists() {
+        // 没有当前版本的状态目录也可能有旧版本服务在跑：不能直接报「已停止」
+        if let Some(found) = unmanaged_service(&root) {
+            return Err(unmanaged_error(&found));
+        }
         return status(&root);
     }
     let _control = management_lock(&root)?;
+    if !held(&root)? {
+        if let Some(found) = unmanaged_service(&root) {
+            return Err(unmanaged_error(&found));
+        }
+    }
     if held(&root)? {
         let (r, _) =
             healthy(&root).map_err(|_| failure("服务暂时无响应，未按 PID 强制终止；请稍后重试"))?;
@@ -298,6 +380,18 @@ pub fn stop(root: &Path) -> Result<Value> {
         }
     }
     status(&root)
+}
+
+/// 停止后按原端口重新启动（升级后换成新版本的二进制）。没在运行时等同于 start。
+pub fn restart(root: &Path, port: Option<u16>, default_port: u16) -> Result<Value> {
+    let before = status(root)?;
+    let port = port
+        .or_else(|| before["port"].as_u64().and_then(|p| u16::try_from(p).ok()))
+        .unwrap_or(default_port);
+    stop(root)?;
+    let mut v = start(root, port)?;
+    v["restarted"] = json!(before["running"] == true);
+    Ok(v)
 }
 
 pub fn web(root: &Path, port: u16, open: bool) -> Result<Value> {

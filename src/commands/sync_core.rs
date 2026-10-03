@@ -227,8 +227,9 @@ pub fn prepare(
     }
 
     let managed_path = ctx.layout.managed_manifest_path.clone();
-    let managed = ManagedManifest::load(&managed_path)?
-        .unwrap_or_else(|| ManagedManifest::new(&ctx.workspace.workspace_id));
+    let managed =
+        ManagedManifest::load_for_workspace(&managed_path, &ctx.workspace.workspace_root)?
+            .unwrap_or_else(|| ManagedManifest::new(&ctx.workspace.workspace_id));
     let mut plan = build_plan(
         &artifacts,
         &managed,

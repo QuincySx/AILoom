@@ -1,6 +1,13 @@
 # 发布检查单（RELEASE-CHECKLIST）
 
-> 初版未发布（AIL-029 决定分发方式）。本清单供未来发布前逐项勾选。
+> 每次发版前逐项核对。0.2.0（2026-10-02）是第一个打 tag 的测试版，尚未对外发布制品。
+
+## 0. 版本
+
+- [ ] `Cargo.toml` 的 `version` 已更新（`Cargo.lock` 只应改这一行，锁文件格式不要跟着新 cargo 升级）
+- [ ] `CHANGELOG.md` 有该版本的段落，写用户能感知的新增、修复与已知限制；发布流水线以它作为 Release 说明，缺失时拒绝发布
+- [ ] 打签名 tag：`git tag -s v<版本> -m "v<版本>"`
+- [ ] 发布流水线（`.github/workflows/release.yml`，手动触发）：先不勾 `publish` 只构建制品；确认后再勾选创建 GitHub Release（需要仓库配置 `RELEASE_TOKEN`）
 
 ## 1. 质量门
 
@@ -27,10 +34,15 @@
 ## 4. 打包（AIL-029 落地后）
 
 - [ ] 干净环境安装→version 一致→卸载不删用户配置
+- [ ] 升级安装：网页服务在运行时，安装后自动重启为新版本（`AILOOM_INSTALL_RESTART=0` 可关闭）；`tests/installer.rs` 覆盖
+- [ ] macOS 二进制签名与公证：需要 Apple Developer ID 证书与公证账号（尚未配置）；未签名的下载版会被 Gatekeeper 拦截，源码安装不受影响
 - [ ] 制品无开发机路径/秘密；hash 校验清单随包发布
 - [ ] npm 包名可用性重新核实；未经明确发布指令不实际 `npm publish` / 推公开仓库
 
 ## 5. 文档
+
+- [ ] `docs/guide/INSTALL.md` 的安装、升级、数据位置、卸载与诊断说明与实际一致
+- [ ] 仓库根目录有 `LICENSE`；`.ailoom/team/THIRD_PARTY.md` 中第三方 Skill 的许可证在公开推送前补齐
 
 - [ ] docs/QUICKSTART.md、docs/SUPPORT.md 与实际命令行一致（help 输出比对）
 - [ ] docs/CONTRACTS.md 变更记录已更新；受影响卡片已同步

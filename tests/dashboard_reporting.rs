@@ -148,21 +148,23 @@ fn dashboard_state_matches_cli_metrics() {
     let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = port_probe.local_addr().unwrap().port();
     drop(port_probe);
-    let mut server = Command::new(bin())
-        .args([
-            "--json",
-            "--data-root",
-            dr.as_str(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&ws)
-        .envs(common::isolated_child_env(c.tmp.path()))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Server(
+        Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                dr.as_str(),
+                "dashboard",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(&ws)
+            .envs(common::isolated_child_env(c.tmp.path()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     // 等待端口就绪
     let mut connected = false;
     for _ in 0..40 {
@@ -635,23 +637,45 @@ fn http_get(port: u16, path: &str) -> String {
     body
 }
 
-fn spawn_dashboard(c: &Ctx, ws: &Path, port: u16) -> std::process::Child {
+/// dashboard 子进程：测试中途 panic 也要结束并回收（此前只在测试末尾 kill，失败时进程泄漏）。
+struct Server(std::process::Child);
+impl std::ops::Deref for Server {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Server {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn spawn_dashboard(c: &Ctx, ws: &Path, port: u16) -> Server {
     let dr = c.dr();
-    Command::new(bin())
-        .args([
-            "--json",
-            "--data-root",
-            dr.as_str(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(ws)
-        .envs(common::isolated_child_env(c.tmp.path()))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap()
+    Server(
+        Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                dr.as_str(),
+                "dashboard",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(ws)
+            .envs(common::isolated_child_env(c.tmp.path()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 fn wait_port(port: u16) {
@@ -915,21 +939,23 @@ fn same_session_across_devices_distinct_in_metrics_and_dashboard() {
     let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = port_probe.local_addr().unwrap().port();
     drop(port_probe);
-    let mut server = Command::new(bin())
-        .args([
-            "--json",
-            "--data-root",
-            &c.dr(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&ws)
-        .envs(common::isolated_child_env(c.tmp.path()))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Server(
+        Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                &c.dr(),
+                "dashboard",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(&ws)
+            .envs(common::isolated_child_env(c.tmp.path()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let mut connected = false;
     for _ in 0..40 {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -1009,21 +1035,23 @@ fn dashboard_state_follows_latest_lifecycle_event() {
     let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = port_probe.local_addr().unwrap().port();
     drop(port_probe);
-    let mut server = Command::new(bin())
-        .args([
-            "--json",
-            "--data-root",
-            &c.dr(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&ws)
-        .envs(common::isolated_child_env(c.tmp.path()))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Server(
+        Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                &c.dr(),
+                "dashboard",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(&ws)
+            .envs(common::isolated_child_env(c.tmp.path()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let mut connected = false;
     for _ in 0..40 {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -1074,8 +1102,9 @@ fn dashboard_state_follows_latest_lifecycle_event() {
 /// /api/events 在不刷新页面的情况下从 idle → running → idle。
 fn read_sse_frames(stream: &mut TcpStream, frames: usize) -> String {
     use std::io::Read;
+    // 单独运行 2~3 秒即可；全量并行时负载高，8 秒曾偶发超时
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(8)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
         .unwrap();
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -1138,21 +1167,23 @@ fn dashboard_sse_pushes_state_transitions_without_page_refresh() {
     let port_probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = port_probe.local_addr().unwrap().port();
     drop(port_probe);
-    let mut server = Command::new(bin())
-        .args([
-            "--json",
-            "--data-root",
-            &c.dr(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(&ws)
-        .envs(common::isolated_child_env(c.tmp.path()))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut server = Server(
+        Command::new(bin())
+            .args([
+                "--json",
+                "--data-root",
+                &c.dr(),
+                "dashboard",
+                "--port",
+                &port.to_string(),
+            ])
+            .current_dir(&ws)
+            .envs(common::isolated_child_env(c.tmp.path()))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let mut connected = false;
     for _ in 0..40 {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {

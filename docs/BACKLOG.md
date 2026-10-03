@@ -15,7 +15,7 @@
 ## 卡片总表
 
 <!-- cards:begin -->
-**152 张主卡：7 Backlog、19 In progress、5 Blocked、109 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
+**153 张主卡：7 Backlog、20 In progress、5 Blocked、109 Done、12 Superseded。**（由 `scripts/docs_check.py --write` 从 cards.json 生成）
 
 | 卡片 | 任务 | 里程碑 | 优先级 | 规模 | 状态 | 前置 |
 |---|---|---|---|---|---|---|
@@ -171,6 +171,7 @@
 | [AIL-150](cards/AIL-150.md) | 修复：坏资源拖垮计划、部分失败误报与无法撤回 | IT-1 门禁与关卡 | P1 | M | Done | — |
 | [AIL-151](cards/AIL-151.md) | 修复：项目说明并发覆盖与配置损坏的诊断 | IT-1 门禁与关卡 | P1 | S | Done | — |
 | [AIL-152](cards/AIL-152.md) | 全局 Skill：部署到用户级目录，所有项目可见 | IT-1 门禁与关卡 | P1 | M | In progress | — |
+| [AIL-153](cards/AIL-153.md) | 软件配套：许可证、诊断、升级与安装文档 | IT-1 门禁与关卡 | P1 | M | In progress | AIL-147 |
 <!-- cards:end -->
 
 ## 后续范围：统一插件管理

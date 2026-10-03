@@ -24,7 +24,7 @@ export function mount(container, ctx) {
         <section class="step ${hasRepos ? '' : 'active'}">
           <h2>① 添加项目</h2>
           <p class="muted">选择本地文件夹或 Git 仓库。</p>
-          <div data-go="#/projects/manage" data-primary="${hasRepos ? '' : '1'}"></div>
+          <div data-go="#/projects" data-primary="${hasRepos ? '' : '1'}"></div>
         </section>
         <section class="step">
           <h2>② 导入能力</h2>
@@ -41,8 +41,7 @@ export function mount(container, ctx) {
 
     root.querySelectorAll('[data-go]').forEach((slot) => {
       Button(slot, {
-        label: slot.dataset.go === '#/projects/manage' ? (slot.dataset.primary ? '添加项目' : '管理项目')
-          : slot.dataset.go === '#/library' ? '打开资源库' : '打开我的目录',
+        label: slot.dataset.go === '#/library' ? '打开资源库' : '打开项目',
         variant: slot.dataset.primary ? 'default' : 'outline',
         onPress: () => { location.hash = slot.dataset.go; },
       });

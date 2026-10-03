@@ -374,10 +374,12 @@ fn git_clone_restores_subdirectory_without_commits_or_hooks() {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "knowledge"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
+    // git 会再启动 git-daemon；直接持有监听进程，避免只终止外层 git 后遗留子进程。
+    let daemon_exe = Path::new(&git(&repo, &["--exec-path"]))
+        .join(format!("git-daemon{}", std::env::consts::EXE_SUFFIX));
     let daemon = Daemon(
-        std::process::Command::new("git")
+        std::process::Command::new(daemon_exe)
             .args([
-                "daemon",
                 "--export-all",
                 "--listen=127.0.0.1",
                 &format!("--port={port}"),
@@ -489,6 +491,10 @@ fn git_clone_restores_subdirectory_without_commits_or_hooks() {
     );
     run(&new_data, &new_root, "checkpoint", None);
     drop(daemon);
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "测试结束后 Git daemon 必须释放监听端口 {port}"
+    );
 }
 #[test]
 fn missing_local_binding_location_can_be_recovered() {

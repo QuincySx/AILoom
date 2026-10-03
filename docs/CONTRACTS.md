@@ -195,7 +195,7 @@ name = "team"                # 本工作区内的源别名 [a-z0-9-]{1,32}
 type = "git"                 # git | local（v1 不含 self，见 AIL-036）
 url = "https://example.com/team/resources.git"  # 禁止内嵌凭据
 ref = "main"                 # 可选；缺省 = HEAD of default branch
-path = ""                    # 仅 local 源：相对工作区根的路径
+path = ""                    # 仅 local 源：相对工作区根的路径，可使用 ../ 指向邻接资源仓
 
 [targets]
 claude = true
@@ -214,7 +214,7 @@ Agent 人设（可选）`.ailoom/agents/<name>.toml`：
 skills = ["common-greet"]
 ```
 
-非法示例（`docs/fixtures/contract/invalid/`）：绝对机器路径、`$SECRET` 字面量值、未知 schema_version、路径穿越 `path = "../x"`、重复项目。
+非法示例（`docs/fixtures/contract/invalid/`）：绝对机器路径、`$SECRET` 字面量值、未知 schema_version、资源或生成产物路径含 `..`、重复项目。local 源声明的 `source.path` 可使用 `../team-src`；该限制不适用于资源源目录。
 
 ### 4.4 本机绑定 `.ailoom/machine/binding.json`（不提交）
 

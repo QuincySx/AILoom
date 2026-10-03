@@ -266,6 +266,7 @@ const KNOWN_PATHS: &[&str] = &[
     "/api/collections/remove",
     "/api/collections/update",
     "/api/deploy-status",
+    "/api/diagnose",
     "/api/draft",
     "/api/effective",
     "/api/events",
@@ -447,6 +448,15 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         }
         ("GET", "/api/library/list") => api_library_list(state),
         ("GET", "/api/global/skills") => global::get_global_skills(state),
+        // 诊断报告（已脱敏）：只有版本、状态与日志末尾，不含资源正文或配置内容
+        ("GET", "/api/diagnose") => {
+            match crate::commands::diagnose::redacted_report(&state.data_root)
+                .and_then(|t| Ok(serde_json::from_str::<serde_json::Value>(&t)?))
+            {
+                Ok(v) => Response::json(200, v),
+                Err(e) => Response::error(500, &e),
+            }
+        }
         ("GET", "/api/global/plan") => global::get_global_plan(state),
         ("POST", "/api/global/select") => global::post_global_select(state, req),
         ("POST", "/api/global/apply") => global::post_global_apply(state),

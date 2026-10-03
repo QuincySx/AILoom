@@ -5,6 +5,7 @@
 
 use crate::error::{code, Error, Result};
 use crate::ids::sha256_hex;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -214,6 +215,20 @@ pub fn skill_entity_dir(store_root: &Path, identity: &str, skill_rel: &Path) -> 
     source_bucket(store_root, identity).join(skill_rel)
 }
 
+/// 可变本地源按单个 Skill 的内容固定版本；Git revision 与旧实体路径保持可读。
+/// 渲染只计算地址，旧 working 实体保留供其他项目与撤销使用。
+pub fn skill_revision_identity(identity: &str, digest: &str) -> String {
+    let (source, revision) = identity.rsplit_once('#').unwrap_or((identity, "working"));
+    if revision.is_empty() || revision == "working" {
+        format!(
+            "{source}#sha256-{}",
+            digest.strip_prefix("sha256:").unwrap_or(digest)
+        )
+    } else {
+        identity.to_string()
+    }
+}
+
 pub fn write_source_meta(store_root: &Path, identity: &str) -> Result<()> {
     let norm = normalize_identity(identity);
     let key = source_key(&norm);
@@ -229,7 +244,7 @@ pub fn write_source_meta(store_root: &Path, identity: &str) -> Result<()> {
     )
 }
 
-/// 将源仓中的 skill 目录同步到 store 实体目录；返回实体绝对路径与内容摘要。
+/// 发布不可变 Skill 实体：同摘要复用，异摘要保留并拒绝覆盖。
 pub fn materialize_skill_dir(
     store_root: &Path,
     identity: &str,
@@ -242,18 +257,67 @@ pub fn materialize_skill_dir(
             format!("技能源目录不存在: {}", src_dir.display()),
         ));
     }
-    write_source_meta(store_root, identity)?;
-    let dest = skill_entity_dir(store_root, identity, skill_rel);
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).map_err(|e| {
-            Error::new(
-                code::WRITE_FAILED,
-                format!("无法清理 store 旧实体 {}: {e}", dest.display()),
-            )
-        })?;
+    let digest = dir_digest(src_dir)?;
+    if let Some(expected) = identity
+        .rsplit_once('#')
+        .and_then(|(_, rev)| rev.strip_prefix("sha256-"))
+    {
+        if digest != format!("sha256:{expected}") {
+            return Err(Error::new(
+                code::PRECONDITION_FAILED,
+                "技能源内容在计划后变化，请重新生成计划",
+            ));
+        }
     }
-    copy_dir_recursive(src_dir, &dest)?;
-    let digest = dir_digest(&dest)?;
+    let dest = skill_entity_dir(store_root, identity, skill_rel);
+    let meta_dir = source_bucket(store_root, identity).join(".meta");
+    std::fs::create_dir_all(&meta_dir)?;
+    // 不同工作区可能同时部署同一版本；发布与存在性校验必须在同一锁内。
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(meta_dir.join("materialize.lock"))?;
+    lock.lock_exclusive()?;
+    match std::fs::symlink_metadata(&dest) {
+        Ok(meta) => {
+            if !meta.file_type().is_symlink() && meta.is_dir() && dir_digest(&dest)? == digest {
+                return Ok((dest, digest));
+            }
+            return Err(Error::new(
+                code::USER_CONTENT_CONFLICT,
+                format!(
+                    "Store Skill 实体内容不一致，保留修改并拒绝覆盖: {}",
+                    dest.display()
+                ),
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let parent = dest
+        .parent()
+        .ok_or_else(|| Error::new(code::WRITE_FAILED, "Store 实体缺少父目录"))?;
+    std::fs::create_dir_all(parent)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".skill-staging-")
+        .tempdir_in(parent)?;
+    let staged_entity = staging.path().join("entity");
+    copy_dir_recursive(src_dir, &staged_entity)?;
+    if dir_digest(&staged_entity)? != digest {
+        return Err(Error::new(
+            code::PRECONDITION_FAILED,
+            "技能源内容在复制时变化，请重新生成计划",
+        ));
+    }
+    write_source_meta(store_root, identity)?;
+    std::fs::rename(&staged_entity, &dest).map_err(|e| {
+        Error::new(
+            code::WRITE_FAILED,
+            format!("发布 Store 实体失败 {}: {e}", dest.display()),
+        )
+    })?;
     Ok((dest, digest))
 }
 
