@@ -76,6 +76,7 @@ jobs:
           path: |
             ailoom-${{ matrix.triple }}*
           if-no-files-found: error
+          retention-days: 3
 
   release:
     name: publish release
