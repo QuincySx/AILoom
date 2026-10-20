@@ -1,7 +1,7 @@
 # Claude Code 能力矩阵（AILoom）
 
 核实日期：2026-09-16（AIL-041 真机复核；初核 2026-09-09）。来源：code.claude.com 官方文档（memory / skills / sub-agents / mcp 页面）。
-本机实测版本：Claude Code 2.1.272（`claude --version`）。真机探测证据：[console/2026-09-16-host-probes.md](../evidence/console/2026-09-16-host-probes.md)。
+本机实测版本：Claude Code 2.1.272（`claude --version`）。真机探测证据：console/2026-09-16-host-probes.md。
 
 | resource_kind | project/user scope | 发现路径 | 格式 | 热重载/重启 | 支持级别 | 来源 | 实际验证 |
 |---|---|---|---|---|---|---|---|

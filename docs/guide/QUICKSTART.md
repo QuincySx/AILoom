@@ -1,6 +1,6 @@
 # AILoom 快速上手
 
-本文覆盖最小可用链路：绑定团队源 → 同步资源 → 检索经验 → 贡献 → 卸载。
+本文覆盖个人项目、全局 Skill 与团队配置的上手路径。完整场景及异常分支见 [使用流程与场景地图](USER-JOURNEYS.md)。
 术语见 [CONTEXT.md](../../CONTEXT.md)；文件格式与错误码见 [CONTRACTS.md](../CONTRACTS.md)。
 
 ## 个人模式（默认，无需团队源/远端/TOML）
@@ -13,18 +13,18 @@ cd /path/to/公司仓库
 ailoom web                # 启动或复用本地网页服务（仅 loopback），自动打开浏览器
 ```
 
-网页有四个页面：
+网页按下面的入口使用：
 
 | 页面 | 用途 |
 |---|---|
-| **我的目录** | 左侧是项目与 Worktree / 子目录树；右侧管理当前目录使用的 AI 工具与能力 |
-| **全局配置** | 全局 Skill（部署到用户级目录，所有项目可见），以及各 AI 工具用户级的 Rules / Agent 原生文件（见 [原生文件](NATIVE-FILES.md)） |
+| **项目** | 添加本机项目；进入后左侧是 Worktree / 子目录树，右侧管理当前目录使用的 AI 工具与能力 |
+| **资源库 → 跨项目配置** | 全局 Skill（部署到用户级目录，所有项目可见），以及各 AI 工具用户级的 Rules / Agent 原生文件（见 [原生文件](NATIVE-FILES.md)） |
 | **资源库** | 导入 Skill / MCP / Rules / Agent（GitHub、GitLab、其他 Git、本地文件夹、skills.sh），从 CC Switch 迁移，检查更新 |
 | **操作记录** | 每次应用的文件改动；可撤销 |
 
 第一次使用：
 
-1. **添加项目**：在「我的目录」点 ＋，选择项目文件夹，填写名称；同时确定项目知识库的保存目录（默认在本机数据区 `<data_root>/knowledge/projects/<项目 ID>`，也可选项目内或外部目录，见 [项目与知识库恢复](KNOWLEDGE-PORTABILITY.md)）。
+1. **添加项目**：在「项目」点「添加项目」，选择项目文件夹，填写名称；同时确定项目知识库的保存目录（默认在本机数据区 `<data_root>/knowledge/projects/<项目 ID>`，也可选项目内或外部目录，见 [项目与知识库恢复](KNOWLEDGE-PORTABILITY.md)）。
 2. **选择 AI 工具**：在目录页「用于这些 AI 工具」中点选 Claude Code、Codex CLI 等。
 3. **添加能力**：点「添加能力」从资源库选择 Skill / MCP / Rules / Agent；库里没有的，先在「资源库 → 导入资源」导入（只复制，不执行脚本）。
 4. **预览并应用**：项目默认配置对所有 Worktree 生效，修改即时保存；进入具体 Worktree 后点「查看改动」，确认将写入的文件再应用。公司已跟踪的文件会被明确跳过。
@@ -51,15 +51,15 @@ AGENTS.md 全文的本地视图，不遮蔽公司基线）。
 它已部署到项目里的文件保留不动，直到修好后重新同步。网页「资源库」页顶部会列出这些条目，可以直接「打开修复」或「删除…」；
 CLI 下 `ailoom library --action list` 的 `issues` 列出问题文件，`ailoom library --action delete --skill <名字> --execute` 可删除（移入本机归档）。
 
-日常管理在网页「我的目录」与「资源库」完成；个人文档与流程产物默认保存在仓外数据区。
+日常管理在网页「项目」与「资源库」完成；个人文档与流程产物默认保存在仓外数据区。
 
 ## 全局 Skill：少数想在所有项目里用的
 
-大部分 Skill 建议按项目启用；少数通用的（例如编码规范、Git 规范）可以全局启用。网页「全局配置 → Skill」：
+大部分 Skill 建议按项目启用；少数通用的（例如编码规范、Git 规范）可以全局启用。网页「资源库 → 跨项目配置 → 技能」：
 
-1. 在列表里点「启用」（来源是资源库或合集，库里没有的先到「资源库」导入）；
-2. 选择目标目录：**Claude Code**（`~/.claude/skills`，遵循 `CLAUDE_CONFIG_DIR`）、**Codex 等其他 Agent**（`~/.agents/skills`，遵循 `.agents` 规范的 agent 共用）；
-3. 点「应用」，确认将写入的条目。新开会话后生效。
+1. 点「添加技能」，浏览全部候选，可按仓库或合集过滤、搜索用途；
+2. 在每个 Skill 名称旁点亮 **Claude Code** 图标（`~/.claude/skills`，遵循 `CLAUDE_CONFIG_DIR`）或 **Codex** 图标（`~/.agents/skills`，可能被多个 Agent 读取）。技能声明不支持的工具不可选择；
+3. 点「添加并开启」，只应用这个 Skill。已添加后可直接修改它的工具选择；关闭最后一个图标会从全局移除，资源库里的技能保留。新开会话后生效。
 
 - 只管理 AILoom 部署的条目。目录里已有的同名条目（例如 CC Switch 安装的）**保留不动**，列在「其他来源的 Skill」里；与你启用的 Skill 同名时，点「替换…」才把原来的移入 AILoom 归档（链接只移动链接本身），之后可在同一页「还原」。
 - 不写任何宿主的全局配置文件（例如 `~/.codex/config.toml`）。
@@ -70,19 +70,21 @@ CLI 等价操作：
 
 ```bash
 ailoom global                                                       # 状态：目标目录、全局启用的 Skill、非托管条目
-ailoom global --action select --skill personal/skill/personal/my-skill --state enable
+ailoom global --action select --skill personal/skill/personal/my-skill --state enable --targets claude,agents
 ailoom global --action plan                                         # 预览
 ailoom global --action sync                                         # 应用
 ailoom global --action takeover --target claude --name my-skill     # 接管同名的已有条目（移入归档）
 ailoom global --action restore --id <归档 ID>                        # 还原
 ```
 
+`--targets claude` 只部署到 Claude Code；`--targets agents` 只部署到共享目录。未传 `--targets` 的旧选择沿用原有默认目录设置；已单独指定工具的 Skill 不受旧默认开关影响。
+
 ## 多个 Git 合集：按需引用 Skill / MCP
 
 可以同时添加自己的合集、团队合集和第三方 Skill 仓库。合集是来源目录，
 **添加来源不等于启用全部资源**。资源 ID 包含来源 ID，避免不同仓库的同名资源被混淆。
 
-Web 操作：在「资源库 → 导入资源」选择 GitHub / GitLab / 其他 Git 并确认版本，然后在「我的目录」的目录页
+Web 操作：在「资源库 → 导入」选择 GitHub / GitLab / 其他 Git 并确认版本，然后在「项目」的目录页
 点「添加能力」选择具体资源，最后进入 Worktree 预览并应用。
 
 CLI 操作：
@@ -113,7 +115,7 @@ MCP 清单格式。MCP 密钥只写 `$ENV:变量名` 引用；添加、预览合
 这里的更新机制不包含定时拉取或无人确认的自动升级。
 
 日常更新：在「资源库」点击 **检查全部更新**，查看版本、检查时间和错误，
-再点 **更新全部可用版本** 确认。项目不会被自动修改；按项目预览并应用新版。
+再点 **更新可用版本** 确认。项目不会被自动修改；按项目预览并应用新版，全局 Skill 则到「跨项目配置」刷新并应用待处理项。
 
 从 Git 导入的个人 Skill 副本也可在资源库检查并更新。本地修改会阻止覆盖；
 更新应用检查时的 commit，上游随后出现的新版本需要再次检查。CLI 可绑定检查凭证：
@@ -172,6 +174,9 @@ ailoom init --url git@github.com:team/resources.git --project a --role dev
 - **零项目合法**：不传 `--project` 时只获得 shared 资源，绝不自动激活。
 - 重复 `init` 幂等；显式传参才覆盖。显式更换 `--url` / `--local-path` 会重新锁定新源；只更新同一 Git 源的版本仍使用 `--refresh`。
 - **跨机器 clone 业务仓库后**：重新执行 `ailoom init` 即可恢复本机绑定。
+
+已绑定后，网页「项目设置 → 基本信息 → 团队资源来源 → 修改来源」可以更换 Git 地址、下载目录或已有本地文件夹。
+从 Git 获取时默认下载目录自动提供并创建，也可自定义；已有文件夹直接读取根目录里的 `ailoom.toml`。来源失联时目录错误页也提供相同入口。
 
 ## 2. 计划与同步
 

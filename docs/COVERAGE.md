@@ -1,6 +1,6 @@
 # 参考能力覆盖表
 
-本表把参考产品的能力映射到 AILoom 卡片，只表示能力归属，不代表已验收；卡片数量与状态以 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md) 为准。本地控制台相关映射的历史背景见 [本地控制台计划](archive/initiatives/local-console.md)。
+本表把参考产品的能力映射到 AILoom 卡片，只表示能力归属，不代表已验收；卡片数量与状态以 [cards.json](cards.json) / [BACKLOG.md](BACKLOG.md) 为准。本地控制台相关映射的历史背景见 本地控制台计划。
 
 | 能力 | AILoom卡 |
 |---|---|

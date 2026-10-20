@@ -27,19 +27,17 @@
 - [开发与关卡流程](IMPLEMENTATION-GUIDE.md)：领卡、实施、验收与状态纪律。
 - [任务看板](BACKLOG.md)：总表由 `scripts/docs_check.py --write` 从 [cards.json](cards.json) 生成，禁止手改生成区。
 - 当前迭代入口 `initiatives/`：[2026-10 稳定与收敛迭代](initiatives/iteration-2026-10.md)。
-- 卡片 `cards/`、评审 `reviews/`（按日期）、证据 `evidence/`（截图、日志、复现脚本）。
+- 卡片 `cards/`。测试截图、日志等过程证据不进仓库。
 - [发布检查单](RELEASE-CHECKLIST.md) · 契约夹具 `fixtures/`。
 
 ## 设计稿 `design/`
 
-[管理后端设计（仅设计，未实施）](design/backend/architecture.md) · [目录优先线稿](design/wireframes/directory-ux/index.html) · [业务逻辑线稿](design/wireframes/business-logic.html) · [知识生命周期原型](design/prototypes/knowledge-lifecycle/README.md)。
+[AILoom UI 设计包](design/brand/ailoom-ui.smallpen/)：SmallPen 设计包，含页面、共享组件与设计令牌；用 SmallPen 打开查看。
 
-## 历史归档 `archive/`
-
-见 [归档说明](archive/README.md)。归档内容保留原貌供追溯，其中的链接与结论不保证仍然成立。
+[管理后端设计（仅设计，未实施）](design/backend/architecture.md)。
 
 ## 维护规则
 
 1. 新文档先确定归属的类别；产品文档不写卡片编号、测试次数和执行轮次。
 2. 状态只改 `cards.json` 和卡头，然后运行 `python3 scripts/docs_check.py --write`。
-3. 一轮迭代结束后，把该轮入口移入 `archive/initiatives/`。
+3. 一轮迭代结束后，删除该轮入口；结论写进卡片或产品文档。

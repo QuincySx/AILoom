@@ -24,6 +24,8 @@ ailoom service disable      # 关闭登录自启动
 
 上手流程见 [快速上手](docs/guide/QUICKSTART.md)；网页服务的命令、平台支持与日志见 [CLI 与网页服务](docs/guide/WEB-SERVICE.md)。
 
+开发调试、npm 包验收和日常使用的入口见 [开发与测试](docs/guide/DEVELOPMENT-AND-TESTING.md)。
+
 ## 能力概览
 
 - **团队资源**：Git / 本地 / 同仓团队源，版本锁定、离线可用；计划 → 同步 → 冲突保留 → journal 恢复。
@@ -61,4 +63,4 @@ cargo test --locked --all-features
 python3 scripts/docs_check.py      # 断链、卡片状态一致性、看板生成区
 ```
 
-测试数量与逐卡证据记录在各卡片与 [docs/reviews/](docs/reviews/)，README 不再维护快照数字。
+测试数量与逐卡证据记录在各卡片与 docs/reviews/，README 不再维护快照数字。

@@ -1,6 +1,6 @@
 # 实现 AI 工作说明
 
-当前执行线是 [2026-10 稳定与收敛迭代](initiatives/iteration-2026-10.md)（AIL-129～147）。先读本轮入口及目标卡。所有状态以 [cards.json](cards.json) 为准，[BACKLOG](BACKLOG.md) 总表由 `python3 scripts/docs_check.py --write` 生成；旧完成记录不能推断当前通过。历史轮次入口见 [归档](archive/README.md)。
+当前执行线是 [2026-10 稳定与收敛迭代](initiatives/iteration-2026-10.md)（AIL-129～147）。先读本轮入口及目标卡。所有状态以 [cards.json](cards.json) 为准，[BACKLOG](BACKLOG.md) 总表由 `python3 scripts/docs_check.py --write` 生成；旧完成记录不能推断当前通过。历史轮次入口见 归档。
 
 ## 领取一张卡
 

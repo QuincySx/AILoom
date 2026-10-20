@@ -1,7 +1,7 @@
 # Codex CLI 能力矩阵（AILoom）
 
 核实日期：2026-09-16（AIL-041 复核；历史：2026-09-09 初核、2026-09-13/09-16 mcp 实机）。来源：learn.chatgpt.com/docs/build-skills（skills）、learn.chatgpt.com/docs/extend/mcp（MCP）、config-reference 与 agents.md 规范。
-本机实测版本：codex-cli 0.154.0（`codex --version`）。真机探测证据：[console/2026-09-16-host-probes.md](../evidence/console/2026-09-16-host-probes.md)。
+本机实测版本：codex-cli 0.154.0（`codex --version`）。真机探测证据：console/2026-09-16-host-probes.md。
 
 | resource_kind | project/user scope | 发现路径 | 格式 | 支持级别 | 来源 | 实际验证 |
 |---|---|---|---|---|---|---|
