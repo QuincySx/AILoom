@@ -609,6 +609,8 @@ fn npm_package_build_and_wrapper_runs_bundled_binary() {
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(pkg.join("package.json")).unwrap()).unwrap();
     assert_eq!(manifest["version"], version);
+    assert!(manifest["scripts"].is_null(), "发布包不包含仓库开发脚本");
+    assert!(manifest["private"].is_null(), "正式发布包仍可发布");
 
     // 打包内容：5 个二进制都在且保持可执行
     let pack = Command::new("npm")

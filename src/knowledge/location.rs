@@ -724,6 +724,7 @@ fn state_context(data: &Path, root: &Path, b: &Binding) -> Result<crate::appctx:
         data_root: data.into(),
         layout,
         device: crate::config::device_id(data)?,
+        source_cache_roots: crate::appctx::AppContext::load_source_cache_roots(root)?,
         workspace: crate::workspace::Workspace {
             workspace_root: root.canonicalize()?,
             repository_anchor: b.id.clone(),

@@ -13,6 +13,61 @@ use ailoom::profile::{
 use ailoom::repo_registry::{discover_repo, RepoRegistry};
 use std::path::PathBuf;
 
+#[test]
+fn global_skill_targets_preserve_legacy_defaults_and_persist_independently() {
+    use ailoom::profile::{set_global_in_place, GlobalKey};
+    let temp = tempfile::tempdir().unwrap();
+    let data = temp.path();
+    let id = "personal/skill/personal/alpha";
+    set_global_in_place(data, &GlobalKey::Skill(id.into()), true, Some(0)).unwrap();
+    let load = || PersonalProfile::load_or_default(data).unwrap();
+    assert_eq!(
+        load().global.selected_targets(id),
+        ["agents".into(), "claude".into()].into()
+    );
+    set_global_in_place(data, &GlobalKey::Target("agents".into()), false, None).unwrap();
+    assert_eq!(load().global.selected_targets(id), ["claude".into()].into());
+    set_global_in_place(
+        data,
+        &GlobalKey::SkillTargets {
+            id: id.into(),
+            targets: ["agents".into()].into(),
+        },
+        true,
+        None,
+    )
+    .unwrap();
+    assert_eq!(load().global.selected_targets(id), ["agents".into()].into());
+    let parsed: PersonalProfile = toml::from_str(&toml::to_string(&load()).unwrap()).unwrap();
+    assert_eq!(parsed.global.selected_targets(id), ["agents".into()].into());
+    assert!(parsed.global.selected_targets("unused").is_empty());
+    set_global_in_place(data, &GlobalKey::Skill(id.into()), false, None).unwrap();
+    assert!(load().global.skill_targets.is_empty());
+}
+
+#[test]
+fn global_skill_updates_preserve_other_choices_in_inline_tables() {
+    use ailoom::profile::{set_global_in_place, GlobalKey, PROFILE_SCHEMA_VERSION};
+    for body in [
+        "[global]\nskills = ['alpha','beta']\ntargets = { claude = false, agents = false }\nskill_targets = { alpha = ['claude'], beta = ['agents'] }\n",
+        "global = { skills = ['alpha','beta'], targets = { claude = false, agents = false }, skill_targets = { alpha = ['claude'], beta = ['agents'] } }\n",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path();
+        let path = PersonalProfile::profile_path(data);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path,format!("schema_version = {PROFILE_SCHEMA_VERSION}\nrevision = 0\n{body}")).unwrap();
+        set_global_in_place(data,&GlobalKey::SkillTargets { id:"alpha".into(),targets:["agents".into()].into() },true,None).unwrap();
+        let load=||PersonalProfile::load_or_default(data).unwrap();
+        assert_eq!(load().global.selected_targets("beta"),["agents".into()].into());
+        set_global_in_place(data,&GlobalKey::Skill("alpha".into()),false,None).unwrap();
+        assert!(!load().global.skill_targets.contains_key("alpha"));
+        assert_eq!(load().global.selected_targets("beta"),["agents".into()].into());
+        set_global_in_place(data,&GlobalKey::Target("claude".into()),true,None).unwrap();
+        assert!(!load().global.target_enabled("agents"));
+    }
+}
+
 fn canon(p: &std::path::Path) -> PathBuf {
     p.canonicalize().unwrap()
 }

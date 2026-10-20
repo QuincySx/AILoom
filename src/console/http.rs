@@ -100,7 +100,25 @@ pub(super) fn handle_conn(stream: TcpStream, state: &Arc<ServerState>) -> std::i
         body,
     };
     let resp = route(&req, state);
+    log_failure(&req, &resp);
     write_response(stream, &resp)
+}
+
+/// 失败的请求写进服务日志，排查时能看到网页上那条报错的原因；地址里的凭据会被抹掉。
+fn log_failure(req: &Request, resp: &Response) {
+    if resp.status < 400 || resp.status == 401 {
+        return;
+    }
+    let body: Value = serde_json::from_str(&resp.body).unwrap_or(Value::Null);
+    let message = match (body["code"].as_str(), body["error"].as_str()) {
+        (Some(code), Some(error)) => format!("[{code}] {error}"),
+        (None, Some(error)) => error.to_string(),
+        _ => resp.body.chars().take(300).collect(),
+    };
+    crate::logging::warn(crate::gitx::redact_credentials(&format!(
+        "{} {} → {}：{message}",
+        req.method, req.path, resp.status
+    )));
 }
 
 pub(super) fn percent_decode(s: &str) -> String {

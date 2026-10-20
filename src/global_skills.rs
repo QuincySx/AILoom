@@ -58,6 +58,11 @@ impl Layout {
     fn locks(&self) -> PathBuf {
         self.dir.join("locks")
     }
+    // 外层锁覆盖 prepare → 文件应用 → 清单保存；内层同步锁仍负责 journal。
+    fn operation_lock(&self, data_root: &Path) -> Result<crate::sync::lock::SyncLock> {
+        let device = crate::config::device_id(data_root)?;
+        crate::sync::lock::SyncLock::acquire(&self.locks().join("operation"), &device)
+    }
     fn archive(&self) -> PathBuf {
         self.dir.join("archive")
     }
@@ -143,7 +148,15 @@ pub fn prepare(data_root: &Path) -> Result<GlobalPrepare> {
     let targets = targets(&home, &profile);
     let layout = Layout::new(data_root);
     let mut notes = Vec::new();
-    for t in targets.iter().filter(|t| t.enabled && t.rel.is_none()) {
+    for t in targets.iter().filter(|t| {
+        t.rel.is_none()
+            && (t.enabled
+                || profile
+                    .global
+                    .skills
+                    .iter()
+                    .any(|id| profile.global.selected_targets(id).contains(t.key)))
+    }) {
         notes.push(format!(
             "{} 的全局目录 {} 不在用户目录下，暂不支持部署",
             t.label,
@@ -174,6 +187,26 @@ pub fn prepare(data_root: &Path) -> Result<GlobalPrepare> {
         });
     }
     for entry in &rendered.entries {
+        if entry.id.kind == crate::resource::ResourceKind::Skill {
+            let allowed = available_targets(crate::adapters::common::resource_targets(
+                entry.raw.as_deref(),
+            ));
+            for target in profile.global.selected_targets(&entry.id.to_string()) {
+                if !allowed.contains(&target.as_str()) {
+                    unsupported.push(crate::adapters::UnsupportedItem {
+                        resource_id: entry.id.to_string(),
+                        tool: if target == "agents" {
+                            "codex"
+                        } else {
+                            "claude"
+                        }
+                        .into(),
+                        kind: "skill".into(),
+                        reason: "该技能的 targets 声明不包含此工具".into(),
+                    });
+                }
+            }
+        }
         if entry.id.kind != crate::resource::ResourceKind::Skill {
             unsupported.push(crate::adapters::UnsupportedItem {
                 resource_id: entry.id.to_string(),
@@ -201,9 +234,16 @@ pub fn prepare(data_root: &Path) -> Result<GlobalPrepare> {
         else {
             continue;
         };
-        let (Some(rel), true) = (&target.rel, target.enabled) else {
+        let Some(rel) = &target.rel else {
             continue;
         };
+        if !profile
+            .global
+            .selected_targets(&a.resource_id)
+            .contains(target.key)
+        {
+            continue;
+        }
         let name = a.path.file_name().map(PathBuf::from).unwrap_or_default();
         a.path = rel.join(name);
         // 同一链接可能由多个宿主渲染（例如 .agents 目录被多个 agent 共用）：按路径去重
@@ -361,7 +401,23 @@ pub fn plan(data_root: &Path) -> Result<Value> {
 
 /// 应用全局部署：与项目同步相同的锁 / journal / 托管清单管道。
 pub fn sync(data_root: &Path) -> Result<Value> {
+    let _operation = Layout::new(data_root).operation_lock(data_root)?;
+    apply_prepared(data_root, prepare(data_root)?)
+}
+
+/// 搜索添加或移除时，仅应用这一项，其他全局选择的待应用改动保持原样。
+pub fn sync_skill(data_root: &Path, id: &str) -> Result<Value> {
+    if id.is_empty() {
+        return Err(Error::new(code::USAGE, "需要 Skill 资源 ID"));
+    }
+    let _operation = Layout::new(data_root).operation_lock(data_root)?;
     let mut p = prepare(data_root)?;
+    p.plan.actions.retain(|a| a.resource_id == id);
+    p.artifacts.retain(|a| a.resource_id == id);
+    apply_prepared(data_root, p)
+}
+
+fn apply_prepared(data_root: &Path, mut p: GlobalPrepare) -> Result<Value> {
     let device = crate::config::device_id(data_root)?;
     let report = crate::sync::apply::apply(
         &p.plan,
@@ -401,6 +457,7 @@ pub fn sync(data_root: &Path) -> Result<Value> {
 /// 撤回中途失败的全局同步。
 pub fn recover(data_root: &Path) -> Result<Value> {
     let layout = Layout::new(data_root);
+    let _operation = layout.operation_lock(data_root)?;
     let device = crate::config::device_id(data_root)?;
     let _lock = crate::sync::lock::SyncLock::acquire(&layout.locks(), &device)?;
     let report = crate::sync::apply::recover(&layout.journal(), &home()?)?;
@@ -408,13 +465,45 @@ pub fn recover(data_root: &Path) -> Result<Value> {
 }
 
 /// 可全局启用的 Skill（资源库 + 合集），带当前状态。
+fn available_targets(declared: Option<Vec<String>>) -> Vec<&'static str> {
+    [("claude", "claude"), ("agents", "codex")]
+        .into_iter()
+        .filter(|(_, tool)| {
+            declared
+                .as_ref()
+                .is_none_or(|list| list.iter().any(|t| t == tool))
+        })
+        .map(|(target, _)| target)
+        .collect()
+}
+
 fn candidates(data_root: &Path, profile: &PersonalProfile) -> Result<Vec<Value>> {
     let mut out = Vec::new();
+    let mut repository_keys = std::collections::BTreeMap::new();
     let (entries, _) = crate::personal_library::list_tolerant(data_root);
     for e in entries.iter().filter(|e| e.kind == "skill") {
+        let repository_url = e.source.as_ref().and_then(|source| {
+            source
+                .connection
+                .as_ref()
+                .map(|c| c.repository_url.as_str())
+                .or(source.repo_url.as_deref())
+        });
+        let repository_key = repository_url.map(|url| {
+            repository_keys
+                .entry(url.to_string())
+                .or_insert_with(|| {
+                    crate::repository_identity::key_for(data_root, url)
+                        .unwrap_or_else(|_| crate::repository_identity::key(url))
+                })
+                .clone()
+        });
         out.push(json!({
-            "id": e.id, "name": e.name, "description": e.description,
+            "id": e.id, "name": e.name, "description": e.description, "source_meta": e.source,
             "source": "资源库", "global": profile.global.skills.contains(&e.id),
+            "targets": profile.global.selected_targets(&e.id),
+            "available_targets": available_targets(crate::adapters::common::resource_targets(std::fs::read_to_string(crate::personal_library::library_root(data_root).join(&e.path).join("SKILL.md")).ok().as_deref())),
+            "repository_url": repository_url, "repository_key": repository_key,
         }));
     }
     let collections = crate::collections::list(data_root)?;
@@ -425,8 +514,11 @@ fn candidates(data_root: &Path, profile: &PersonalProfile) -> Result<Vec<Value>>
             }
             let id = r["id"].as_str().unwrap_or_default();
             out.push(json!({
-                "id": id, "name": r["name"], "description": r["description"],
+                "id": id, "name": r["name"], "description": r["description"], "path": r["path"], "readonly": true,
                 "source": s["name"], "global": profile.global.skills.contains(id),
+                "targets": profile.global.selected_targets(id),
+                "available_targets": available_targets(r["targets"].as_array().map(|a| a.iter().filter_map(|v|v.as_str().map(str::to_string)).collect())),
+                "repository_url": s["repository_url"], "repository_key": s["repository_key"],
             }));
         }
     }
@@ -554,6 +646,8 @@ pub fn status(data_root: &Path) -> Result<Value> {
         "home": p.home,
         "targets": targets,
         "skills": candidates(data_root, &profile)?,
+        "selected": profile.global.skills,
+        "skill_targets": profile.global.skills.iter().map(|id| (id, profile.global.selected_targets(id))).collect::<std::collections::BTreeMap<_,_>>(),
         "deployed": p.managed.items.iter().map(|(k, i)| json!({"path": k, "resource_id": i.resource_id, "tool": i.target_tool})).collect::<Vec<_>>(),
         "pending": pending,
         "actions": action_json(&p.plan),
@@ -571,24 +665,37 @@ pub fn select(
     enabled: bool,
     expect_revision: Option<u64>,
 ) -> Result<Value> {
-    if let (GlobalKey::Skill(id), true) = (key, enabled) {
+    if let (GlobalKey::Skill(id) | GlobalKey::SkillTargets { id, .. }, true) = (key, enabled) {
         let profile = PersonalProfile::load_or_default(data_root)?;
-        let known = candidates(data_root, &profile)?
-            .iter()
-            .any(|c| c["id"] == json!(id));
-        if !known {
+        let candidates = candidates(data_root, &profile)?;
+        let Some(candidate) = candidates.iter().find(|c| c["id"] == json!(id)) else {
             return Err(Error::new(
                 code::UNKNOWN_REFERENCE,
                 format!("资源库或合集中没有这个 Skill: {id}"),
             )
             .fix("运行 ailoom global --action status 查看可全局启用的 Skill（需完整资源 ID）"));
+        };
+        if let GlobalKey::SkillTargets { targets, .. } = key {
+            for target in targets {
+                if !candidate["available_targets"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(target))
+                {
+                    return Err(Error::new(
+                        code::UNKNOWN_REFERENCE,
+                        format!("Skill {id} 未声明支持全局目标 {target}"),
+                    ));
+                }
+            }
         }
     }
     let revision = crate::profile::set_global_in_place(data_root, key, enabled, expect_revision)?;
     Ok(json!({
         "revision": revision,
         "enabled": enabled,
-        "skill": match key { GlobalKey::Skill(id) => Some(id), _ => None },
+        "skill": match key { GlobalKey::Skill(id) | GlobalKey::SkillTargets { id, .. } => Some(id), _ => None },
+        "targets": match key { GlobalKey::SkillTargets { targets, .. } => Some(targets), _ => None },
         "target": match key { GlobalKey::Target(t) => Some(t), _ => None },
         "next": "运行 ailoom global --action plan 预览、--action sync 应用",
     }))
@@ -626,6 +733,7 @@ pub fn takeover(data_root: &Path, target: &str, name: &str) -> Result<Value> {
         ));
     }
     let layout = Layout::new(data_root);
+    let _operation = layout.operation_lock(data_root)?;
     let device = crate::config::device_id(data_root)?;
     let _lock = crate::sync::lock::SyncLock::acquire(&layout.locks(), &device)?;
     let p = prepare(data_root)?;
@@ -692,6 +800,7 @@ pub fn restore(data_root: &Path, id: &str) -> Result<Value> {
         return Err(Error::new(code::USAGE, format!("归档 ID 非法: {id}")));
     }
     let layout = Layout::new(data_root);
+    let _operation = layout.operation_lock(data_root)?;
     let device = crate::config::device_id(data_root)?;
     let _lock = crate::sync::lock::SyncLock::acquire(&layout.locks(), &device)?;
     let dir = layout.archive().join(id);

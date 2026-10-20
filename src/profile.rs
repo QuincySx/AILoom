@@ -107,14 +107,29 @@ pub struct GlobalProfile {
     /// 目标目录开关；缺省视为开启
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub targets: BTreeMap<String, bool>,
+    /// 单个 Skill 的目标选择；旧数据缺少此项时沿用 targets。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub skill_targets: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 impl GlobalProfile {
     pub fn is_empty(&self) -> bool {
-        self.skills.is_empty() && self.targets.is_empty()
+        self.skills.is_empty() && self.targets.is_empty() && self.skill_targets.is_empty()
     }
     pub fn target_enabled(&self, target: &str) -> bool {
         self.targets.get(target).copied().unwrap_or(true)
+    }
+    pub fn selected_targets(&self, id: &str) -> std::collections::BTreeSet<String> {
+        if !self.skills.contains(id) {
+            return Default::default();
+        }
+        self.skill_targets.get(id).cloned().unwrap_or_else(|| {
+            GLOBAL_TARGETS
+                .iter()
+                .filter(|t| self.target_enabled(t))
+                .map(|t| t.to_string())
+                .collect()
+        })
     }
 }
 
@@ -122,6 +137,10 @@ impl GlobalProfile {
 #[derive(Debug, Clone)]
 pub enum GlobalKey {
     Skill(String),
+    SkillTargets {
+        id: String,
+        targets: std::collections::BTreeSet<String>,
+    },
     Target(String),
 }
 
@@ -212,6 +231,18 @@ impl PersonalProfile {
                     self.schema_version
                 ),
             ));
+        }
+        for (id, targets) in &self.global.skill_targets {
+            if targets.is_empty()
+                || targets
+                    .iter()
+                    .any(|t| !GLOBAL_TARGETS.contains(&t.as_str()))
+            {
+                return Err(Error::new(
+                    code::UNKNOWN_REFERENCE,
+                    format!("全局 Skill {id} 的 targets 必须选择 claude / agents 中至少一项"),
+                ));
+            }
         }
         for (repo_id, repo) in &self.repos {
             if !is_valid_repo_key(repo_id) {
@@ -358,6 +389,22 @@ pub fn set_global_in_place(
     enabled: bool,
     expect_revision: Option<u64>,
 ) -> Result<u64> {
+    if let GlobalKey::SkillTargets { targets, .. } = key {
+        if !enabled || targets.is_empty() {
+            return Err(Error::new(
+                code::USAGE,
+                "启用 Skill 时需选择至少一个全局目标；停用时不传 targets",
+            ));
+        }
+        for target in targets {
+            if !GLOBAL_TARGETS.contains(&target.as_str()) {
+                return Err(Error::new(
+                    code::UNKNOWN_REFERENCE,
+                    format!("未知全局目标: {target}（支持 claude / agents）"),
+                ));
+            }
+        }
+    }
     let _lock = profile_lock(data_root)?;
     let path = PersonalProfile::profile_path(data_root);
     let raw = if path.is_file() {
@@ -389,14 +436,14 @@ pub fn set_global_in_place(
     }
     doc["schema_version"] = toml_edit::value(i64::from(PROFILE_SCHEMA_VERSION));
     doc["revision"] = toml_edit::value((current_rev + 1) as i64);
-    if doc.get("global").and_then(|i| i.as_table()).is_none() {
+    if doc.get("global").and_then(|i| i.as_table_like()).is_none() {
         doc["global"] = toml_edit::Item::Table(toml_edit::Table::new());
     }
     let global = doc["global"]
-        .as_table_mut()
+        .as_table_like_mut()
         .ok_or_else(|| Error::new(code::SCHEMA_VERSION, "global 不是表"))?;
     match key {
-        GlobalKey::Skill(id) => {
+        GlobalKey::Skill(id) | GlobalKey::SkillTargets { id, .. } => {
             let mut ids: std::collections::BTreeSet<String> = global
                 .get("skills")
                 .and_then(|i| i.as_array())
@@ -416,6 +463,30 @@ pub fn set_global_in_place(
                 arr.push(id);
             }
             global.insert("skills", toml_edit::value(arr));
+            if !enabled {
+                if let Some(table) = global
+                    .get_mut("skill_targets")
+                    .and_then(|i| i.as_table_like_mut())
+                {
+                    table.remove(id);
+                }
+            } else if let GlobalKey::SkillTargets { targets, .. } = key {
+                if global
+                    .get("skill_targets")
+                    .and_then(|i| i.as_table_like())
+                    .is_none()
+                {
+                    global.insert(
+                        "skill_targets",
+                        toml_edit::Item::Table(toml_edit::Table::new()),
+                    );
+                }
+                let mut chosen = toml_edit::Array::new();
+                for target in targets {
+                    chosen.push(target.as_str());
+                }
+                global.get_mut("skill_targets").unwrap()[id.as_str()] = toml_edit::value(chosen);
+            }
         }
         GlobalKey::Target(target) => {
             if !GLOBAL_TARGETS.contains(&target.as_str()) {
@@ -424,13 +495,25 @@ pub fn set_global_in_place(
                     format!("未知全局目标: {target}（支持 claude / agents）"),
                 ));
             }
-            if global.get("targets").and_then(|i| i.as_table()).is_none() {
+            if global
+                .get("targets")
+                .and_then(|i| i.as_table_like())
+                .is_none()
+            {
                 global.insert("targets", toml_edit::Item::Table(toml_edit::Table::new()));
             }
-            global["targets"][target.as_str()] = toml_edit::value(enabled);
+            global.get_mut("targets").unwrap()[target.as_str()] = toml_edit::value(enabled);
         }
     }
-    crate::sync_common::atomic_write(&path, doc.to_string().as_bytes())?;
+    let text = doc.to_string();
+    let parsed: PersonalProfile = toml::from_str(&text).map_err(|e| {
+        Error::new(
+            code::SCHEMA_VERSION,
+            format!("编辑后 profile 校验失败: {e}"),
+        )
+    })?;
+    parsed.validate()?;
+    crate::sync_common::atomic_write(&path, text.as_bytes())?;
     Ok(current_rev + 1)
 }
 

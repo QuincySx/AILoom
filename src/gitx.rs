@@ -78,6 +78,13 @@ pub fn normalize_remote_url(raw: &str) -> String {
 
 /// 运行 git，成功返回 stdout（UTF-8、去尾换行）。失败 → E2007，stderr 脱敏后入 context。
 pub fn git(cwd: &Path, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8_lossy(&git_bytes(cwd, args)?)
+        .trim_end()
+        .to_string())
+}
+
+/// 同 [`git`]，但原样返回 stdout 字节（用于 `-z` 输出等不能有损解码的场景）。
+pub fn git_bytes(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
         .args(args)
         .current_dir(cwd)
@@ -96,9 +103,7 @@ pub fn git(cwd: &Path, args: &[&str]) -> Result<String> {
             "exit": output.status.code(),
         })));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
+    Ok(output.stdout)
 }
 
 /// 运行 git，命令失败（如无远端）时返回 None 而非错误。

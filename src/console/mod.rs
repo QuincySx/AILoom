@@ -43,6 +43,7 @@ pub struct ServerState {
     pub port: u16,
     pub data_root: PathBuf,
     pub token: String,
+    pub build: Value,
     pub approved_roots: Mutex<Vec<PathBuf>>,
     /// 配置草稿（revision/ETag 防并发覆盖）
     pub draft: Mutex<Option<(u64, Value)>>,
@@ -87,6 +88,7 @@ impl ConsoleServer {
                         port: p,
                         data_root: opts.data_root.clone(),
                         token: token.clone(),
+                        build: crate::service::executable_identity(),
                         approved_roots: Mutex::new(Vec::new()),
                         draft: Mutex::new(None),
                         shutdown_flag: Mutex::new(false),
@@ -259,6 +261,7 @@ pub mod web;
 const KNOWN_PATHS: &[&str] = &[
     "/",
     "/api/capabilities",
+    "/api/source-binding",
     "/api/collections",
     "/api/collections/apply",
     "/api/collections/check",
@@ -288,6 +291,7 @@ const KNOWN_PATHS: &[&str] = &[
     "/api/knowledge",
     "/api/library/check-update",
     "/api/library/delete",
+    "/api/library/git-catalog",
     "/api/library/import",
     "/api/library/import-entry",
     "/api/library/import-git",
@@ -309,6 +313,7 @@ const KNOWN_PATHS: &[&str] = &[
     "/api/project/dirs",
     "/api/project/discover-directories",
     "/api/project/recover",
+    "/api/project/source",
     "/api/project/scan-skills",
     "/api/projects/metadata",
     "/api/repo/discover",
@@ -372,14 +377,14 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             200,
             json!({
                 "pid":std::process::id(), "data_root":state.data_root,
-                "stopping":*state.shutdown_flag.lock_ok()
+                "stopping":*state.shutdown_flag.lock_ok(), "build":state.build
             }),
         ),
         ("POST", "/api/service/status") => match crate::service::autostart_status(&state.data_root)
         {
             Ok(startup) => Response::json(
                 200,
-                json!({"running":true,"port":state.port,"autostart":startup}),
+                json!({"running":true,"port":state.port,"autostart":startup,"build":state.build}),
             ),
             Err(e) => Response::json(500, json!({"error":e.message})),
         },
@@ -396,7 +401,7 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         ("GET", "/api/state") => api_state(state),
         ("GET", "/api/events") => api_events_snapshot(state, req),
         ("POST", "/api/fs/approve") => api_fs_approve(state, req),
-        ("POST", "/api/fs/pick-directory") => api_pick_directory(),
+        ("POST", "/api/fs/pick-directory") => api_pick_directory(req),
         ("POST", "/api/projects/metadata") => api_project_metadata(state, req),
         ("POST", "/api/native-files") => knowledge::post_native_files(state, req),
         ("POST", "/api/knowledge") => knowledge::post_knowledge(state, req),
@@ -422,6 +427,7 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             json!({
                 "cwd": std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
                 "data_root": state.data_root,
+                "build": state.build,
                 "note": "cwd 是控制台进程的启动目录，可作为「当前目录」默认值",
             }),
         ),
@@ -459,9 +465,10 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
         }
         ("GET", "/api/global/plan") => global::get_global_plan(state),
         ("POST", "/api/global/select") => global::post_global_select(state, req),
-        ("POST", "/api/global/apply") => global::post_global_apply(state),
+        ("POST", "/api/global/apply") => global::post_global_apply(state, req),
         ("POST", "/api/global/takeover") => global::post_global_takeover(state, req),
         ("POST", "/api/global/restore") => global::post_global_restore(state, req),
+        ("POST", "/api/source-binding") => sources::post_source_binding(state, req),
         ("GET", "/api/collections") => {
             collection_response(crate::collections::list(&state.data_root))
         }
@@ -482,11 +489,13 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             req.body["execute"].as_bool().unwrap_or(false),
         )),
         ("POST", "/api/project/recover") => project::post_project_recover(state, req),
+        ("POST", "/api/project/source") => project::post_project_source(state, req),
         ("GET", "/api/project/scan-skills") => api_project_scan_skills(state, req),
         ("POST", "/api/project/delete-skill") => delete_skill::handle(state, req),
         ("GET", "/api/resources") => library::get_resources(state, req),
         ("GET", "/api/resources/mcp-detail") => api_resource_mcp_detail(state, req),
         ("POST", "/api/library/import-git") => library::post_library_import_git(state, req),
+        ("POST", "/api/library/git-catalog") => library::post_library_git_catalog(state, req),
         ("POST", "/api/library/import-entry") => library::post_library_import_entry(state, req),
         ("POST", "/api/library/check-update") => library::post_library_check_update(state, req),
         ("POST", "/api/library/update") => library::post_library_update(state, req),
@@ -711,6 +720,7 @@ mod console_tests {
             port: 12345,
             data_root: tmp.path().join("data"),
             token: "test-session".into(),
+            build: json!({}),
             approved_roots: Mutex::new(Vec::new()),
             draft: Mutex::new(None),
             shutdown_flag: Mutex::new(false),

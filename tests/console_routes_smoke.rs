@@ -2,6 +2,8 @@
 //! 每条路由至少验证：不返回 5xx、响应是 JSON 对象、失败时带 `error` 文本；能给出合法参数的路由验证 200。
 //! `POST /api/fs/pick-directory` 会弹出系统文件夹选择框，只验证未带会话令牌时被拒绝。
 
+mod common;
+
 use ailoom::console::{ConsoleOptions, ConsoleServer, SESSION_HEADER};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
@@ -56,6 +58,7 @@ fn enc(s: &str) -> String {
 
 #[test]
 fn previously_untested_routes_respond_with_json_and_no_server_errors() {
+    common::isolate_in_process_roots();
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().canonicalize().unwrap().join("repo");
     std::fs::create_dir_all(repo.join(".claude/skills/local")).unwrap();
@@ -217,6 +220,371 @@ fn previously_untested_routes_respond_with_json_and_no_server_errors() {
         401
     );
 
+    server.shutdown();
+    server.join();
+}
+
+#[test]
+fn unavailable_team_source_can_be_rebound_without_changing_deployed_files_or_choices() {
+    common::isolate_in_process_roots();
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let repo = base.join("project");
+    let old = base.join("old-source");
+    let replacement = base.join("new-source");
+    let invalid = base.join("invalid-source");
+    let data = base.join("data");
+    for path in [&repo, &old, &replacement, &invalid] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    ailoom::gitx::git_init(&repo, false).unwrap();
+    std::fs::write(old.join("ailoom.toml"), common::MANIFEST_TOML).unwrap();
+    std::fs::write(
+        replacement.join("ailoom.toml"),
+        common::MANIFEST_TOML.replace("example-team", "replacement-team"),
+    )
+    .unwrap();
+    let initial = ailoom::commands::init::run(
+        &ailoom::commands::init::InitArgs {
+            no_builtin: true,
+            url: None,
+            ref_: None,
+            name: None,
+            local_path: Some("../old-source".into()),
+            projects: vec!["a".into()],
+            roles: vec!["dev".into()],
+            targets: vec!["claude".into()],
+            refresh: false,
+            root: Some(repo.clone()),
+        },
+        true,
+        Some(&data),
+    )
+    .unwrap();
+    // Reproduce the missing-directory state while retaining the last binding and lock.
+    std::fs::rename(&old, base.join("moved-source")).unwrap();
+    let deployed = repo.join(".claude/skills/keep/SKILL.md");
+    std::fs::create_dir_all(deployed.parent().unwrap()).unwrap();
+    std::fs::write(&deployed, "keep deployed skill\n").unwrap();
+    let profile = data.join("profile/profile.toml");
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    std::fs::write(&profile, "schema_version = 1\n").unwrap();
+    let declaration = repo.join(".ailoom/project.toml");
+    let binding = std::path::Path::new(initial["binding_path"].as_str().unwrap());
+    let lock = std::path::Path::new(initial["lock_path"].as_str().unwrap());
+    let preserved =
+        [&declaration, binding, lock, &deployed, &profile].map(|p| (p, std::fs::read(p).unwrap()));
+
+    let server = ConsoleServer::start(&ConsoleOptions {
+        port: 0,
+        data_root: data.clone(),
+        open_browser: false,
+    })
+    .unwrap();
+    let token = Some(server.token.as_str());
+    for path in [&repo, &invalid] {
+        assert_eq!(
+            call(
+                server.port,
+                token,
+                "POST",
+                "/api/fs/approve",
+                Some(json!({"path":path}))
+            )
+            .0,
+            200
+        );
+    }
+    let read = || {
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/project/source",
+            Some(json!({"root":repo,"action":"read"})),
+        )
+    };
+    let (status, current) = read();
+    assert_eq!(status, 200, "{current}");
+    assert_eq!(
+        current["cache_root"],
+        data.join("cache").display().to_string()
+    );
+    assert_eq!(
+        std::path::Path::new(current["source"]["path"].as_str().unwrap()),
+        repo.join("../old-source")
+    );
+    let save = |kind: &str, value: &std::path::Path, base: &Value| json!({"root":repo,"action":"save","type":kind,"value":value,"base_fingerprint":base});
+    let request = save("local", &replacement, &current["base_fingerprint"]);
+    assert_eq!(
+        call(
+            server.port,
+            None,
+            "POST",
+            "/api/project/source",
+            Some(request.clone())
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/project/source",
+            Some(request.clone())
+        )
+        .0,
+        403
+    );
+    let (status, failure) = call(
+        server.port,
+        token,
+        "POST",
+        "/api/project/source",
+        Some(save("local", &invalid, &current["base_fingerprint"])),
+    );
+    assert_eq!(status, 400, "{failure}");
+    for (path, bytes) in &preserved {
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            *bytes,
+            "failed validation changed {}",
+            path.display()
+        );
+    }
+
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":replacement}))
+        )
+        .0,
+        200
+    );
+    let (status, saved) = call(
+        server.port,
+        token,
+        "POST",
+        "/api/project/source",
+        Some(request.clone()),
+    );
+    assert_eq!(status, 200, "{saved}");
+    let decl = ailoom::config::ProjectDeclaration::load(&declaration)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decl.source.path.as_deref(), Some("../new-source"));
+    assert_eq!(decl.projects, ["a"]);
+    assert_eq!(decl.roles, ["dev"]);
+    assert!(decl.targets.claude && !decl.targets.codex && !decl.builtins);
+    assert_eq!(
+        ailoom::config::Binding::load(binding)
+            .unwrap()
+            .unwrap()
+            .declaration,
+        decl
+    );
+    let sources = ailoom::source::SourcesLock::load(lock).unwrap().unwrap();
+    assert_eq!(
+        sources.sources["team"].identity,
+        ailoom::source::LocalSource::new(&replacement)
+            .unwrap()
+            .identity
+    );
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/project/source",
+            Some(request)
+        )
+        .0,
+        409,
+        "stale form must not overwrite the new source"
+    );
+
+    // Switching to Git with a blank branch must use the new repository's default.
+    ailoom::gitx::git_init(&replacement, false).unwrap();
+    ailoom::gitx::git_commit_all(&replacement, "team fixture", &["."]).unwrap();
+    ailoom::gitx::git(&replacement, &["branch", "-m", "develop"]).unwrap();
+    let (_, current) = read();
+    let mut default_download = save("git", &replacement, &current["base_fingerprint"]);
+    default_download["cache_root"] = json!(data.join("cache"));
+    assert!(
+        !data.join("cache").exists(),
+        "first Git download should create the default directory automatically"
+    );
+    let (status, saved) = call(
+        server.port,
+        token,
+        "POST",
+        "/api/project/source",
+        Some(default_download),
+    );
+    assert_eq!(status, 200, "{saved}");
+    let decl = ailoom::config::ProjectDeclaration::load(&declaration)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decl.source.kind, "git");
+    assert_eq!(decl.source.ref_.as_deref(), Some("develop"));
+    assert!(decl.source.path.is_none());
+
+    // A custom download root persists independently of the shareable declaration.
+    let downloads = base.join("downloads");
+    assert_eq!(
+        call(
+            server.port,
+            None,
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":downloads,"create":true}))
+        )
+        .0,
+        401
+    );
+    assert!(
+        !downloads.exists(),
+        "unauthenticated requests must not create directories"
+    );
+    let (_, current) = read();
+    let mut custom = save("git", &replacement, &current["base_fingerprint"]);
+    custom["cache_root"] = json!(downloads);
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/project/source",
+            Some(custom.clone())
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":downloads,"create":true}))
+        )
+        .0,
+        200
+    );
+    assert!(
+        downloads.is_dir(),
+        "custom download directories should be created automatically"
+    );
+    let declaration_before = std::fs::read(&declaration).unwrap();
+    let (status, saved) = call(
+        server.port,
+        token,
+        "POST",
+        "/api/project/source",
+        Some(custom.clone()),
+    );
+    assert_eq!(status, 200, "{saved}");
+    assert!(
+        std::path::Path::new(saved["source"]["snapshot_root"].as_str().unwrap())
+            .starts_with(&downloads)
+    );
+    assert_eq!(std::fs::read(&declaration).unwrap(), declaration_before);
+    let (_, current) = read();
+    assert_eq!(current["cache_root"], json!(downloads));
+    assert_eq!(current["default_cache_root"], json!(data.join("cache")));
+    assert_eq!(
+        call(
+            server.port,
+            token,
+            "POST",
+            "/api/project/source",
+            Some(custom)
+        )
+        .0,
+        409,
+        "changing only the download root must invalidate old forms"
+    );
+
+    let ctx = ailoom::appctx::AppContext::discover(Some(&data), &repo, Some(&repo)).unwrap();
+    let settings_before = std::fs::read(ctx.source_cache_settings_path()).unwrap();
+    let mut bad = save("git", &invalid, &current["base_fingerprint"]);
+    bad["cache_root"] = json!(downloads);
+    assert_eq!(
+        call(server.port, token, "POST", "/api/project/source", Some(bad)).0,
+        400
+    );
+    assert_eq!(
+        std::fs::read(ctx.source_cache_settings_path()).unwrap(),
+        settings_before,
+        "failed fetch must keep the selected download location"
+    );
+
+    // CLI refresh follows the saved directory, and offline init reuses its snapshot.
+    std::fs::write(
+        replacement.join("ailoom.toml"),
+        format!("{}\n# newer commit\n", common::MANIFEST_TOML),
+    )
+    .unwrap();
+    ailoom::gitx::git_commit_all(&replacement, "new source revision", &["ailoom.toml"]).unwrap();
+    assert!(ailoom::commands::source_refresh::refresh_source_locks(&ctx, &decl).unwrap());
+    std::fs::rename(&replacement, base.join("offline-source")).unwrap();
+    let offline = ailoom::commands::init::run(
+        &ailoom::commands::init::InitArgs {
+            no_builtin: false,
+            url: None,
+            ref_: None,
+            name: None,
+            local_path: None,
+            projects: vec![],
+            roles: vec![],
+            targets: vec![],
+            refresh: false,
+            root: Some(repo.clone()),
+        },
+        true,
+        Some(&data),
+    )
+    .unwrap();
+    assert!(
+        std::path::Path::new(offline["source"]["snapshot_root"].as_str().unwrap())
+            .starts_with(&downloads)
+    );
+    std::fs::rename(base.join("offline-source"), &replacement).unwrap();
+
+    let (_, current) = read();
+    let mut reset = save("git", &replacement, &current["base_fingerprint"]);
+    reset["cache_root"] = json!(data.join("cache"));
+    let (status, saved) = call(
+        server.port,
+        token,
+        "POST",
+        "/api/project/source",
+        Some(reset),
+    );
+    assert_eq!(status, 200, "{saved}");
+    assert!(
+        std::path::Path::new(saved["source"]["snapshot_root"].as_str().unwrap())
+            .starts_with(data.join("cache"))
+    );
+    let (_, current) = read();
+    assert_eq!(current["cache_root"], current["default_cache_root"]);
+    assert!(
+        downloads.is_dir(),
+        "restoring the default must not delete the previous download directory"
+    );
+    for (path, bytes) in &preserved[3..] {
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            *bytes,
+            "rebinding changed {}",
+            path.display()
+        );
+    }
     server.shutdown();
     server.join();
 }

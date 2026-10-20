@@ -22,6 +22,8 @@ struct Origin {
     name: String,
     url: String,
     lock: crate::source::SourceLock,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    connection: Option<crate::repository_identity::GitConnection>,
 }
 fn origin(data: &Path, source: &str, root: &Path) -> Result<Option<Origin>> {
     if source == "personal" {
@@ -29,10 +31,12 @@ fn origin(data: &Path, source: &str, root: &Path) -> Result<Option<Origin>> {
     }
     let registry = crate::collections::load(data)?;
     if source.starts_with("collection-portable-")
-        && registry
-            .sources
-            .get(source)
-            .is_some_and(|s| s.external_path.as_deref() == Some(root))
+        && registry.sources.get(source).is_some_and(|s| {
+            s.external_path.as_deref() == Some(root)
+                && s.connection
+                    .as_ref()
+                    .is_none_or(|c| c.revision == "portable")
+        })
         && root.join(ORIGIN).is_file()
     {
         return Ok(Some(serde_json::from_slice(&std::fs::read(
@@ -42,13 +46,84 @@ fn origin(data: &Path, source: &str, root: &Path) -> Result<Option<Origin>> {
     Ok(registry
         .sources
         .get(source)
-        .filter(|s| super::portable::portable_url(&s.url))
+        .filter(|s| {
+            super::portable::portable_url(s.repository_url())
+                && crate::repository_identity::validate_url(s.repository_url()).is_ok()
+        })
         .map(|s| Origin {
             name: s.name.clone(),
-            url: s.url.clone(),
-            lock: s.lock.clone(),
+            url: s.repository_url().into(),
+            lock: {
+                let mut lock = s.lock.clone();
+                lock.identity = crate::gitx::normalize_remote_url(s.repository_url());
+                lock
+            },
+            connection: s.connection.as_ref().map(|c| {
+                let mut portable = c.clone();
+                portable.url = c.repository_url.clone();
+                portable.host_mapping = None;
+                portable.revision = "portable".into();
+                portable
+            }),
         }))
 }
+fn portable_origin(bytes: &[u8]) -> Result<Origin> {
+    let mut origin: Origin = serde_json::from_slice(bytes)?;
+    if !super::portable::portable_url(&origin.url) {
+        return Err(fail("恢复资源的远端地址无效"));
+    }
+    crate::repository_identity::validate_url(&origin.url)?;
+    crate::source::GitSource::new(&origin.url, origin.lock.ref_.as_deref())?;
+    if let Some(connection) = &mut origin.connection {
+        crate::repository_identity::validate_url(&connection.url)?;
+        if !super::portable::portable_url(&connection.url)
+            || connection.url != origin.url
+            || connection.repository_url != origin.url
+            || connection.host_mapping.is_some()
+        {
+            return Err(fail("恢复来源不能携带本机连接或 SSH 别名映射"));
+        }
+        connection.revision = "portable".into();
+    }
+    Ok(origin)
+}
+
+fn portable_import_metadata(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut meta: Value = serde_json::from_slice(bytes)?;
+    if let Some(object) = meta.as_object_mut() {
+        object.remove("source_dir");
+    }
+    if let Ok(mut source) =
+        serde_json::from_value::<crate::skill_source::SkillSourceMeta>(meta["source"].clone())
+    {
+        let portable = source
+            .connection
+            .as_ref()
+            .map(|c| c.repository_url.clone())
+            .or(source.repo_url.clone());
+        if let Some(url) = portable.filter(|u| {
+            super::portable::portable_url(u) && crate::repository_identity::validate_url(u).is_ok()
+        }) {
+            source.source_kind = "git".into();
+            source.discovery_entry = url.clone();
+            source.repo_url = Some(url);
+            source.connection = None;
+        } else {
+            source.source_kind = "unknown".into();
+            source.discovery_entry = "portable-copy".into();
+            source.repo_url = None;
+            source.connection = None;
+            source.repo_path = None;
+            source.ref_ = None;
+            source.resolved_commit = None;
+        }
+        meta["source"] = serde_json::to_value(source)?;
+    } else if let Some(object) = meta.as_object_mut() {
+        object.remove("source");
+    }
+    Ok(serde_json::to_vec_pretty(&meta)?)
+}
+
 fn fail(s: impl Into<String>) -> Error {
     Error::new(code::KNOWLEDGE_STATE_CONFLICT, s)
 }
@@ -207,7 +282,10 @@ pub fn checkpoint(data: &Path, repo: &str, b: &Binding, d: &Declaration) -> Resu
                 }
             }
             if entry.id.kind == crate::resource::ResourceKind::Skill {
-                for (p, bytes) in scan(&input)? {
+                for (p, mut bytes) in scan(&input)? {
+                    if p == Path::new(crate::skill_source::IMPORT_META_FILE) {
+                        bytes = portable_import_metadata(&bytes)?;
+                    }
                     tree.insert(rel.join(p), bytes);
                 }
                 entry.raw = Some(std::fs::read_to_string(input.join("SKILL.md"))?);
@@ -443,11 +521,7 @@ pub fn restore(
         let cat = catalog(&source_path, &id)?.ok_or_else(|| fail("恢复来源缺失"))?;
         available.extend(cat.entries.iter().map(|e| e.id.to_string()));
         let origin = if source_path.join(ORIGIN).exists() {
-            let origin: Origin = serde_json::from_slice(&std::fs::read(source_path.join(ORIGIN))?)?;
-            if !super::portable::portable_url(&origin.url) {
-                return Err(fail("恢复资源的远端地址无效"));
-            }
-            crate::source::GitSource::new(&origin.url, origin.lock.ref_.as_deref())?;
+            let origin = portable_origin(&std::fs::read(source_path.join(ORIGIN))?)?;
             Some(origin)
         } else {
             None
@@ -473,6 +547,7 @@ pub fn restore(
                 content_digest: cat.snapshot.content_digest,
                 locked_at: crate::ids::now_iso(),
             },
+            connection: origin.as_ref().and_then(|o| o.connection.clone()),
             migration: None,
             external_path: Some(source_path),
         });
@@ -633,5 +708,46 @@ mod catalog_tests {
             write_catalog(dir, bad);
             assert!(catalog(dir, "src").is_err(), "{why} 必须拒绝");
         }
+    }
+}
+
+#[cfg(test)]
+mod portable_source_tests {
+    use super::*;
+    #[test]
+    fn recovery_rejects_machine_connection_in_portable_origin() {
+        let origin = json!({"name":"fixture","url":"https://github.com/owner/repo","lock":{"type":"git","identity":"git+https://github.com/owner/repo","ref":null,"resolved_commit":"synthetic","content_digest":"digest","locked_at":"fixture"},"connection":{"url":"/synthetic/unapproved-repo","repository_url":"https://github.com/owner/repo","ref":null,"revision":"forged"}});
+        assert!(portable_origin(&serde_json::to_vec(&origin).unwrap()).is_err());
+        let mut valid = origin.clone();
+        valid["connection"]["url"] = valid["url"].clone();
+        assert_eq!(
+            portable_origin(&serde_json::to_vec(&valid).unwrap())
+                .unwrap()
+                .connection
+                .unwrap()
+                .revision,
+            "portable"
+        );
+        valid["connection"]["repository_url"] = json!("https://github.com/another/repo");
+        assert!(portable_origin(&serde_json::to_vec(&valid).unwrap()).is_err());
+    }
+
+    #[test]
+    fn malformed_source_does_not_export_machine_connection() {
+        let bytes=serde_json::to_vec(&json!({"source_dir":"/synthetic/machine/path","source":{"source_kind":"local","discovery_entry":"local-dir:/synthetic/machine/path","connection":{"url":"git@private-alias:owner/repo"}}})).unwrap();
+        let v: Value = serde_json::from_slice(&portable_import_metadata(&bytes).unwrap()).unwrap();
+        assert!(v["source"].is_null());
+        assert!(v["source_dir"].is_null());
+    }
+    #[test]
+    fn local_projection_is_stable_across_checkpoints() {
+        let source =
+            crate::skill_source::local_meta(Path::new("/synthetic/machine/path"), "digest");
+        let bytes = serde_json::to_vec(&json!({"source":source})).unwrap();
+        let first = portable_import_metadata(&bytes).unwrap();
+        assert_eq!(first, portable_import_metadata(&bytes).unwrap());
+        let v: Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(v["source"]["source_kind"], "unknown");
+        assert_eq!(v["source"]["discovery_entry"], "portable-copy");
     }
 }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub(super) fn local_entry_json(e: &crate::personal_library::TolerantEntry) -> Value {
     json!({
         "id": e.id, "kind": e.kind, "name": e.name, "description": e.description,
-        "path": e.path, "source_name": "资源库", "readonly": false
+        "path": e.path, "source": e.source, "source_name": "资源库", "readonly": false
     })
 }
 
@@ -45,6 +45,28 @@ pub(super) fn library_entries(state: &Arc<ServerState>) -> Response {
     // AIL-062：宽容列表——坏条目作为 issues 返回（带文件级定位），不锁死整个列表
     let lib = crate::personal_library::library_root(&state.data_root);
     let (entries, issues) = crate::personal_library::list_tolerant(&state.data_root);
+    let entries: Vec<_> = entries
+        .into_iter()
+        .map(|entry| {
+            let mut value = serde_json::to_value(&entry).unwrap_or_default();
+            if let Some(source) = &entry.source {
+                let url = source
+                    .connection
+                    .as_ref()
+                    .map(|c| c.repository_url.as_str())
+                    .or(source.repo_url.as_deref());
+                if let Some(url) = url {
+                    value["repository_url"] = json!(url);
+                    value["repository_key"] =
+                        json!(crate::repository_identity::key_for(&state.data_root, url)
+                            .unwrap_or_else(|_| crate::repository_identity::key(url)));
+                    value["connection_url"] =
+                        json!(source.connection.as_ref().map_or(url, |c| c.url.as_str()));
+                }
+            }
+            value
+        })
+        .collect();
     Response::json(
         200,
         json!({
@@ -565,6 +587,35 @@ pub(super) fn get_resources(state: &Arc<ServerState>, _req: &Request) -> Respons
         json!({ "entries": entries, "issues": issues, "source_errors": source_errors, "source_warnings": source_warnings })
     });
     collection_response(result)
+}
+
+/// `POST /api/library/git-catalog`
+pub(super) fn post_library_git_catalog(state: &Arc<ServerState>, req: &Request) -> Response {
+    if req.body["execute"].as_bool().unwrap_or(false) {
+        let selected: Vec<String> = match serde_json::from_value(req.body["selected"].clone()) {
+            Ok(v) => v,
+            Err(_) => return Response::json(400, json!({"error":"需要所选 Skill 路径列表"})),
+        };
+        return collection_response(crate::personal_library::git_catalog::install(
+            &state.data_root,
+            req.body["preview_id"].as_str().unwrap_or(""),
+            &selected,
+        ));
+    }
+    let url = req.body["url"].as_str().unwrap_or("");
+    if let Some(path) = url
+        .strip_prefix("file://")
+        .or_else(|| Path::new(url).is_absolute().then_some(url))
+    {
+        if let Err(e) = ensure_within_roots(state, Path::new(path)) {
+            return Response::json(403, json!({"error":e}));
+        }
+    }
+    collection_response(crate::personal_library::git_catalog::preview(
+        &state.data_root,
+        url,
+        req.body["ref"].as_str(),
+    ))
 }
 
 /// `POST /api/library/import-git`

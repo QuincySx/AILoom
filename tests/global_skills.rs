@@ -10,6 +10,54 @@ struct Ctx {
     tmp: tempfile::TempDir,
 }
 
+#[test]
+fn cli_selects_independent_skill_targets_and_rejects_disable_with_targets() {
+    let c = Ctx::new();
+    for (name, targets) in [
+        ("alpha", "claude"),
+        ("beta", "agents"),
+        ("both", "claude,agents"),
+    ] {
+        c.import(name);
+        c.ok(&[
+            "global",
+            "--action",
+            "select",
+            "--skill",
+            &format!("personal/skill/personal/{name}"),
+            "--state",
+            "enable",
+            "--targets",
+            targets,
+        ]);
+    }
+    c.ok(&["global", "--action", "sync"]);
+    for (name, claude, agents) in [
+        ("alpha", true, false),
+        ("beta", false, true),
+        ("both", true, true),
+    ] {
+        assert_eq!(c.home().join(".claude/skills").join(name).exists(), claude);
+        assert_eq!(c.home().join(".agents/skills").join(name).exists(), agents);
+    }
+    let (code, _, _) = c.run(
+        c.tmp.path(),
+        &[
+            "global",
+            "--action",
+            "select",
+            "--skill",
+            "personal/skill/personal/alpha",
+            "--state",
+            "disable",
+            "--targets",
+            "claude",
+        ],
+    );
+    assert_ne!(code, 0);
+    assert!(c.home().join(".claude/skills/alpha").exists());
+}
+
 impl Ctx {
     fn new() -> Ctx {
         let c = Ctx {
@@ -283,6 +331,23 @@ fn project_skips_skills_that_are_deployed_globally() {
         serde_json::json!(["personal/skill/personal/g"]),
         "{eff}"
     );
+
+    // 只绑定 Claude 后，Codex 的项目级部署恢复；Claude 继续避免重复。
+    c.ok(&[
+        "global",
+        "--action",
+        "select",
+        "--skill",
+        "personal/skill/personal/g",
+        "--state",
+        "enable",
+        "--targets",
+        "claude",
+    ]);
+    c.ok(&["global", "--action", "sync"]);
+    personal(&["--action", "sync", "--root", &root]);
+    assert!(repo.join(".claude/skills/g").symlink_metadata().is_err());
+    assert!(repo.join(".agents/skills/g").exists());
 
     // 全局停用并同步后，项目恢复部署
     c.ok(&[

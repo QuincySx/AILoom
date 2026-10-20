@@ -65,6 +65,43 @@ fn assert_output(out: Output) -> Value {
     );
     serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone()
 }
+
+#[test]
+fn web_does_not_silently_reuse_a_service_from_another_installation() {
+    let f = Fixture::new();
+    let old = f._tmp.path().join(if cfg!(windows) {
+        "old-ailoom.exe"
+    } else {
+        "old-ailoom"
+    });
+    fs::copy(env!("CARGO_BIN_EXE_ailoom"), &old).unwrap();
+    let started = Command::new(&old)
+        .env("AILOOM_STORE_ROOT", f.root.join("store"))
+        .env_remove("XDG_DATA_HOME")
+        .arg("--data-root")
+        .arg(&f.root)
+        .arg("--json")
+        .args(["service", "start", "--port", "0"])
+        .output()
+        .unwrap();
+    let started = assert_output(started);
+    let web = command(&f.root, &["web", "--no-open"]).output().unwrap();
+    assert!(
+        !web.status.success(),
+        "must not claim the new installation is running"
+    );
+    let error: Value = serde_json::from_slice(&web.stderr).unwrap();
+    assert_eq!(error["code"], "E9101");
+    assert!(error["fix"].as_str().unwrap().contains("service restart"));
+    let before = run(&f.root, &["service", "status"]);
+    assert_eq!(before["pid"], started["pid"]);
+    assert_eq!(before["update_required"], true);
+    let restarted = run(&f.root, &["service", "restart"]);
+    assert_ne!(restarted["pid"], started["pid"]);
+    assert_eq!(restarted["port"], started["port"]);
+    assert_eq!(restarted["update_required"], false);
+    assert_eq!(run(&f.root, &["web", "--no-open"])["pid"], restarted["pid"]);
+}
 #[test]
 fn cli_is_independent_and_web_reuses_the_detached_process() {
     let f = Fixture::new();

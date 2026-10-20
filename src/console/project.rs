@@ -5,6 +5,212 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 
+fn source_edit_fingerprint(
+    ctx: &crate::appctx::AppContext,
+    path: &Path,
+) -> crate::error::Result<String> {
+    let mut bytes = std::fs::read(path)?;
+    bytes.push(0);
+    match std::fs::read(ctx.source_cache_settings_path()) {
+        Ok(settings) => bytes.extend(settings),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    Ok(crate::ids::sha256_hex(&bytes))
+}
+
+/// Read or replace a project's team source, using the same validation and binding as `init`.
+pub(super) fn post_project_source(state: &Arc<ServerState>, req: &Request) -> Response {
+    let Some(root) = req.body["root"].as_str() else {
+        return Response::json(400, json!({"error":"需要 root"}));
+    };
+    let root = match ensure_within_roots(state, Path::new(root)) {
+        Ok(p) => p,
+        Err(e) => return Response::json(403, json!({"error":e})),
+    };
+    let ctx = match crate::appctx::AppContext::discover(Some(&state.data_root), &root, Some(&root))
+    {
+        Ok(ctx) => ctx,
+        Err(e) => return Response::error(400, &e),
+    };
+    if let Err(e) = ensure_within_roots(state, &ctx.workspace.workspace_root) {
+        return Response::json(403, json!({"error":e}));
+    }
+    let Some(path) = ctx.workspace.declaration_path.as_ref() else {
+        return Response::json(400, json!({"error":"项目尚未绑定团队来源"}));
+    };
+    if req.body["action"] == "read" {
+        return collection_response((|| {
+            let mut declaration =
+                crate::config::ProjectDeclaration::load(path)?.ok_or_else(|| {
+                    crate::error::Error::new(
+                        crate::error::code::WORKSPACE_INVALID,
+                        "项目声明不存在",
+                    )
+                })?;
+            let cache_root = if let Some(url) = declaration.source.url.as_deref() {
+                let source = crate::source::GitSource::new(url, None)?;
+                ctx.source_cache_root(&source.identity)
+            } else {
+                ctx.default_source_cache_root()
+            };
+            declaration.source.url = declaration
+                .source
+                .url
+                .map(|url| crate::gitx::redact_credentials(&url));
+            declaration.source.path = declaration.source.path.map(|path| {
+                let path = std::path::PathBuf::from(path);
+                if path.is_absolute() {
+                    path
+                } else {
+                    ctx.workspace.workspace_root.join(path)
+                }
+                .display()
+                .to_string()
+            });
+            Ok(
+                json!({"source":declaration.source,"root":ctx.workspace.workspace_root,"cache_root":cache_root,"default_cache_root":ctx.default_source_cache_root(),"base_fingerprint":source_edit_fingerprint(&ctx,path)?}),
+            )
+        })());
+    }
+    if req.body["action"] != "save" {
+        return Response::json(400, json!({"error":"未知来源操作"}));
+    }
+    let Some(value) = req.body["value"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        return Response::json(400, json!({"error":"请选择资源目录或填写 Git 地址"}));
+    };
+    let kind = req.body["type"].as_str().unwrap_or("");
+    if !matches!(kind, "local" | "git") {
+        return Response::json(400, json!({"error":"来源类型必须是 local 或 git"}));
+    }
+    if kind == "local" && !Path::new(value).is_absolute() {
+        return Response::json(400, json!({"error":"本地资源目录需要绝对路径"}));
+    }
+    if kind == "git" && !Path::new(value).is_absolute() && !value.contains(':') {
+        return Response::json(
+            400,
+            json!({"error":"请填写 Git 地址，本机仓库请使用绝对路径"}),
+        );
+    }
+    if let Some(local) = value
+        .strip_prefix("file://")
+        .or_else(|| Path::new(value).is_absolute().then_some(value))
+    {
+        if let Err(e) = ensure_within_roots(state, Path::new(local)) {
+            return Response::json(403, json!({"error":e}));
+        }
+    }
+    // The picker uses absolute paths; project.toml keeps a portable relative path.
+    let local_path = if kind == "local" {
+        let Some((levels, suffix)) = ctx
+            .workspace
+            .workspace_root
+            .ancestors()
+            .enumerate()
+            .find_map(|(levels, base)| {
+                Path::new(value)
+                    .strip_prefix(base)
+                    .ok()
+                    .map(|suffix| (levels, suffix))
+            })
+        else {
+            return Response::json(
+                400,
+                json!({"error":"资源目录与项目不在同一磁盘，请改用 Git 来源"}),
+            );
+        };
+        let mut relative = std::path::PathBuf::new();
+        for _ in 0..levels {
+            relative.push("..");
+        }
+        relative.push(suffix);
+        if relative.as_os_str().is_empty() {
+            relative.push(".");
+        }
+        Some(relative.display().to_string())
+    } else {
+        None
+    };
+    let Some(base) = req.body["base_fingerprint"].as_str() else {
+        return Response::json(400, json!({"error":"请重新读取当前来源后保存"}));
+    };
+    let cache_root = if kind == "git" {
+        if let Some(value) = req.body.get("cache_root").filter(|v| !v.is_null()) {
+            let Some(folder) = value.as_str().map(str::trim).filter(|v| !v.is_empty()) else {
+                return Response::json(400, json!({"error":"请填写下载目录，或恢复默认目录"}));
+            };
+            let folder = Path::new(folder);
+            if !folder.is_absolute() {
+                return Response::json(400, json!({"error":"下载目录需要绝对路径"}));
+            }
+            if folder == ctx.default_source_cache_root() {
+                Some(folder.to_path_buf())
+            } else {
+                match ensure_within_roots(state, folder) {
+                    Ok(folder) if folder.is_dir() => Some(folder),
+                    Ok(_) => return Response::json(400, json!({"error":"下载位置必须是文件夹"})),
+                    Err(e) => return Response::json(403, json!({"error":e})),
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    collection_response(crate::source::with_file_lock(
+        &state
+            .data_root
+            .join("console/source-edits")
+            .join(format!("{}.lock", ctx.workspace.workspace_id)),
+        || {
+            if source_edit_fingerprint(&ctx, path)? != base {
+                return Err(crate::error::Error::new(
+                    crate::error::code::PRECONDITION_FAILED,
+                    "来源已被其他页面修改，请重新打开后保存",
+                ));
+            }
+            let ref_ = if kind == "git" {
+                crate::source::GitSource::new(value, None)?;
+                Some(
+                    req.body["ref"]
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|r| !r.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            crate::gitx::remote_default_branch(value)
+                                .unwrap_or_else(|| "main".into())
+                        }),
+                )
+            } else {
+                None
+            };
+            crate::commands::init::run_with_cache_root(
+                &crate::commands::init::InitArgs {
+                    no_builtin: false,
+                    url: (kind == "git").then(|| value.to_string()),
+                    ref_,
+                    name: None,
+                    local_path,
+                    projects: vec![],
+                    roles: vec![],
+                    targets: vec![],
+                    refresh: true,
+                    root: Some(ctx.workspace.workspace_root.clone()),
+                },
+                true,
+                Some(&state.data_root),
+                cache_root.as_deref(),
+            )
+        },
+    ))
+}
+
 /// `POST /api/preview/repo-default`
 pub(super) fn post_preview_repo_default(state: &Arc<ServerState>, _req: &Request) -> Response {
     // 仓库默认变更影响预览：对登记的每个 active Worktree 分别出计划（无写入）

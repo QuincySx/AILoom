@@ -6,11 +6,14 @@ use crate::error::{code, Error, Result};
 use crate::ids::now_iso;
 use crate::manifest::{valid_name, TeamManifest, MANIFEST_FILE};
 use crate::resource::{enumerate_isolating, parse_frontmatter, ResourceKind};
+use crate::source::git::Scope;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 pub const LIBRARY_TEAM_ID: &str = "personal";
 pub const LIBRARY_NAMESPACE: &str = "personal";
+
+pub mod git_catalog;
 
 pub fn library_root(data_root: &Path) -> PathBuf {
     data_root.join("library")
@@ -578,6 +581,25 @@ fn import_execute_inner(
         }
         // 暂存副本必须能被真实解析器完整解析（L01：先验证后发布）
         validate_staged_skill(&staging, &preview.skill_name)?;
+        // 来源与文件指纹也在暂存区完成；写入失败时不能留下已发布的半成品。
+        let imported_digest = skill_dir_digest(&staging)?;
+        let meta = serde_json::json!({
+            "source_dir": src.display().to_string(),
+            "imported_at": now_iso(),
+            "files": preview.files.iter().map(|f| {
+                let digest = std::fs::read(staging.join(f)).ok().map(|b| sha256_of(&b));
+                (f.clone(), digest)
+            }).collect::<std::collections::BTreeMap<_, _>>(),
+        });
+        crate::sync_common::atomic_write(
+            &staging.join(crate::skill_source::IMPORT_META_FILE),
+            &serde_json::to_vec_pretty(&meta)?,
+        )?;
+        let mut source =
+            source_meta.unwrap_or_else(|| crate::skill_source::local_meta(&src, &imported_digest));
+        source.imported_digest = imported_digest;
+        source.fetched_at = crate::ids::now_iso();
+        crate::skill_source::write_meta(&staging, &source)?;
         Ok(copied)
     })();
     let copied = match staged {
@@ -629,33 +651,6 @@ fn import_execute_inner(
             format!("导入后资源校验失败：未解析到 {expected}（已回滚，库保持原状）"),
         ));
     }
-    // 记录导入摘要元数据（版本/文件指纹，供更新对比）
-    let imported_digest = skill_dir_digest(&target)?;
-    let meta = serde_json::json!({
-        "source_dir": src.display().to_string(),
-        "imported_at": now_iso(),
-        "files": preview
-            .files
-            .iter()
-            .map(|f| {
-                let digest = std::fs::read(target.join(f)).ok().map(|b| sha256_of(&b));
-                (f.clone(), digest)
-            })
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    });
-    let _ = crate::sync_common::atomic_write(
-        &target.join(crate::skill_source::IMPORT_META_FILE),
-        serde_json::to_vec_pretty(&meta)
-            .unwrap_or_default()
-            .as_slice(),
-    );
-    // 来源元数据（AIL-063）合并写入（必须在汇总 meta 之后，避免被覆盖）
-    let source =
-        source_meta.unwrap_or_else(|| crate::skill_source::local_meta(&src, &imported_digest));
-    let mut source = source;
-    source.imported_digest = imported_digest;
-    source.fetched_at = crate::ids::now_iso();
-    crate::skill_source::write_meta(&target, &source)?;
     Ok(ImportReport {
         skill_id: expected,
         target_dir: target,
@@ -874,7 +869,7 @@ mod discovery_label_tests {
     }
 }
 
-fn skill_dir_digest(dir: &Path) -> Result<String> {
+pub(crate) fn skill_dir_digest(dir: &Path) -> Result<String> {
     let mut parts: Vec<(String, String)> = Vec::new();
     for entry in walkdir::WalkDir::new(dir) {
         let entry =
@@ -1438,7 +1433,7 @@ fn collect_file_entries(
 // ---------------------------------------------------------------------------
 
 /// skill git 导入缓存根（与团队源缓存隔离，互不干扰）。
-fn skill_git_cache(data_root: &Path, identity: &str) -> PathBuf {
+pub(crate) fn skill_git_cache(data_root: &Path, identity: &str) -> PathBuf {
     data_root
         .join("cache")
         .join("skill-import")
@@ -1572,7 +1567,7 @@ pub fn git_import_preview_labeled(
     name_override: Option<&str>,
     discovery_label: Option<&str>,
 ) -> Result<GitImportPreview> {
-    let src = crate::source::GitSource::new(url, ref_)?;
+    let src = crate::source::GitSource::new(url, ref_)?.with_scope(Scope::Skills);
     let cache = skill_git_cache(data_root, &src.identity);
     let snap = src.resolve(&cache, None)?;
     let (skill_dir, _cands) =
@@ -1656,7 +1651,7 @@ pub fn git_import_execute_labeled(
             name = preview.skill_name
         )));
     }
-    let src = crate::source::GitSource::new(url, ref_)?;
+    let src = crate::source::GitSource::new(url, ref_)?.with_scope(Scope::Skills);
     let cache = skill_git_cache(data_root, &src.identity);
     let snap = src.resolve(&cache, None)?;
     // 重新拉取后快照可能已变（分支前移），必须按同一规则再次校验路径边界。
@@ -1674,7 +1669,7 @@ pub fn git_import_execute_labeled(
 
 mod recovery;
 pub use recovery::{recover_updates, Recovery};
-mod update;
+pub(crate) mod update;
 pub use update::{cached_update, check_update, update_execute, update_execute_checked};
 
 /// 通过发现入口导入（AIL-065）：解析提供方 → 实际 GitHub 仓库 → 复用 git 导入；

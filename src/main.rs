@@ -757,6 +757,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             action,
             skill,
             target,
+            targets,
             state,
             name,
             id,
@@ -776,6 +777,12 @@ fn run(cli: &cli::Cli) -> Result<()> {
                     let enabled = need(state, "state")? == "enable";
                     let key =
                         match (skill, target) {
+                            (Some(s), None) if !targets.is_empty() => {
+                                ailoom::profile::GlobalKey::SkillTargets {
+                                    id: s.clone(),
+                                    targets: targets.iter().cloned().collect(),
+                                }
+                            }
                             (Some(s), None) => ailoom::profile::GlobalKey::Skill(s.clone()),
                             (None, Some(t)) => ailoom::profile::GlobalKey::Target(t.clone()),
                             _ => return Err(Error::new(
@@ -832,12 +839,13 @@ fn run(cli: &cli::Cli) -> Result<()> {
                         .or_else(|| existing.as_ref().map(|c| c.name.clone()));
                     let url = url
                         .clone()
-                        .or_else(|| existing.as_ref().map(|c| c.url.clone()));
+                        .or_else(|| existing.as_ref().map(|c| c.update_url().to_string()));
                     ailoom::collections::preview(
                         &data,
                         &required(&name, "name")?,
                         &required(&url, "url")?,
-                        ref_.as_deref(),
+                        ref_.as_deref()
+                            .or_else(|| existing.as_ref().and_then(|c| c.update_ref())),
                         source.as_deref(),
                     )?
                 }

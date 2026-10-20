@@ -131,9 +131,13 @@ fn resolve_upstream(
     lock: Option<&SourceLock>,
 ) -> Result<Snapshot> {
     let git = crate::source::GitSource::new(
-        source.repo_url.as_deref().unwrap_or(""),
+        source
+            .connection
+            .as_ref()
+            .map_or(source.repo_url.as_deref().unwrap_or(""), |c| c.url.as_str()),
         source.ref_.as_deref(),
-    )?;
+    )?
+    .with_scope(crate::source::git::Scope::Skills);
     git.resolve(&skill_git_cache(data, &git.identity), lock)
 }
 
@@ -377,7 +381,7 @@ fn prepare_and_replace(
     Ok((next_source, backup))
 }
 
-fn with_update_lock<T>(data: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(crate) fn with_update_lock<T>(data: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     crate::source::with_file_lock(&data.join("library-update.lock"), || {
         recovery::recover_locked(data)?;
         f()

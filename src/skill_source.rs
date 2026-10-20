@@ -19,6 +19,8 @@ pub struct SkillSourceMeta {
     pub discovery_entry: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<crate::repository_identity::GitConnection>,
     /// 仓库内 skill 相对路径（skill 根，含 SKILL.md）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_path: Option<String>,
@@ -42,6 +44,7 @@ impl SkillSourceMeta {
             source_kind: "unknown".into(),
             discovery_entry: discovery_entry.into(),
             repo_url: None,
+            connection: None,
             repo_path: None,
             ref_: None,
             resolved_commit: None,
@@ -102,6 +105,7 @@ pub fn local_meta(source_dir: &Path, digest: &str) -> SkillSourceMeta {
         source_kind: "local".into(),
         discovery_entry: format!("local-dir:{}", source_dir.display()),
         repo_url: None,
+        connection: None,
         repo_path: None,
         ref_: None,
         resolved_commit: None,
@@ -123,6 +127,7 @@ pub fn git_meta(
         source_kind: "git".into(),
         discovery_entry: discovery_entry.into(),
         repo_url: Some(repo_url.into()),
+        connection: None,
         repo_path: Some(repo_path.into()),
         ref_: ref_.map(str::to_string),
         resolved_commit: resolved_commit.map(str::to_string),

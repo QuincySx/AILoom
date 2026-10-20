@@ -2,7 +2,7 @@
 //! 普通 Skill 仓库可直接枚举；混合 Skill/MCP 等资源复用 ailoom.toml。
 use crate::error::{code, Error, Result};
 use crate::resource::{ResourceEntry, ResourceId, ResourceKind, ResourceMeta};
-use crate::source::{GitSource, Snapshot, SourceLock};
+use crate::source::{git::Scope, GitSource, Snapshot, SourceLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,12 +13,31 @@ pub struct Collection {
     pub id: String,
     pub name: String,
     pub url: String,
+    /// Next update connection; current content retains its original snapshot lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<crate::repository_identity::GitConnection>,
     pub lock: SourceLock,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub migration: Option<crate::cc_switch::MigrationOrigin>,
     /// 外部维护的 Skill 根目录；不物化缓存、不更新上游。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_path: Option<PathBuf>,
+}
+
+impl Collection {
+    pub fn update_url(&self) -> &str {
+        self.connection.as_ref().map_or(&self.url, |c| &c.url)
+    }
+    pub fn repository_url(&self) -> &str {
+        self.connection
+            .as_ref()
+            .map_or(&self.url, |c| &c.repository_url)
+    }
+    pub fn update_ref(&self) -> Option<&str> {
+        self.connection
+            .as_ref()
+            .map_or(self.lock.ref_.as_deref(), |c| c.ref_.as_deref())
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -51,7 +70,7 @@ fn cache(data: &Path, identity: &str) -> PathBuf {
 }
 
 fn snapshot(data: &Path, source: &Collection) -> Result<Snapshot> {
-    let git = GitSource::new(&source.url, source.lock.ref_.as_deref())?;
+    let git = GitSource::new(&source.url, source.lock.ref_.as_deref())?.with_scope(Scope::Catalog);
     let cache = cache(data, &git.identity);
     let commit = source
         .lock
@@ -76,7 +95,7 @@ pub struct Catalog {
     pub warnings: Vec<String>,
 }
 
-fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
+pub(crate) fn enumerate(snapshot: Snapshot, id: &str) -> Result<Catalog> {
     // AIL-119（F15）：符号链接逐项处置，不再整源拒绝。
     // 仓内相对链接（目标仍在本快照内且存在）保留为记录；外逃/悬空/不可解析链接
     // 记为该条目的 warning 并忽略，其余资源照常可用。从不跟随链接读取内容。
@@ -352,6 +371,7 @@ pub fn preview_external(
         id,
         name: format!("CC Switch · {}", cat.entries[0].id.name),
         url: origin.repo_url.clone(),
+        connection: None,
         lock: SourceLock {
             kind: "external".into(),
             identity: cat.snapshot.identity,
@@ -384,7 +404,7 @@ pub fn preview_external(
 
 fn entry_value(entry: &ResourceEntry, source: &Collection) -> Value {
     json!({ "id": entry.id.to_string(), "kind": entry.id.kind.as_str(), "name": entry.id.name,
-        "description": entry.description, "source_id": source.id, "source_name": source.name,
+        "description": entry.description, "targets": crate::adapters::common::resource_targets(entry.raw.as_deref()), "source_id": source.id, "source_name": source.name,
         "source_url": source.url, "revision": source.lock.resolved_commit, "path": entry.path, "readonly": true })
 }
 
@@ -393,6 +413,14 @@ pub fn list(data: &Path) -> Result<Value> {
     let mut sources = Vec::new();
     for source in registry.sources.values() {
         let mut v = serde_json::to_value(source)?;
+        v["connection_url"] = json!(source.update_url());
+        v["repository_url"] = json!(source.repository_url());
+        v["repository_key"] = json!(crate::repository_identity::key_for(
+            data,
+            source.repository_url()
+        )?);
+        v["update_ref"] = json!(source.update_ref());
+        v["can_rebind"] = json!(source.external_path.is_none() || portable_remote(source));
         v["management"] = json!(if source.external_path.is_some()
             && source.id.starts_with("collection-portable-")
         {
@@ -420,7 +448,11 @@ pub fn list(data: &Path) -> Result<Value> {
             .join(format!("{}.json", source.id));
         if check_path.is_file() {
             let mut check: Value = serde_json::from_slice(&std::fs::read(check_path)?)?;
-            if check["base_commit"] == json!(source.lock.resolved_commit) {
+            if check["binding_revision"] != json!(source.connection.as_ref().map(|c| &c.revision)) {
+                check["state"] = json!("stale");
+                check["preview"] = Value::Null;
+                v["update"] = check;
+            } else if check["base_commit"] == json!(source.lock.resolved_commit) {
                 if check["state"] == "available"
                     && check["preview"]["registry_revision"] != json!(registry.revision)
                 {
@@ -495,10 +527,10 @@ pub fn preview(
     if name.is_empty() || name.len() > 128 {
         return Err(Error::new(code::USAGE, "合集名称须为 1–128 字节"));
     }
-    let git = GitSource::new(url, ref_)?;
+    let git = GitSource::new(url, ref_)?.with_scope(Scope::Catalog);
     let id = update_id
         .and_then(|id| registry.sources.get(id))
-        .filter(|s| portable_remote(s) && crate::gitx::normalize_remote_url(&s.url) == git.identity)
+        .filter(|s| crate::gitx::normalize_remote_url(s.update_url()) == git.identity)
         .map(|s| s.id.clone())
         .unwrap_or_else(|| {
             format!(
@@ -524,6 +556,7 @@ pub fn preview(
         id: id.clone(),
         name: name.into(),
         url: git.url.clone(),
+        connection: registry.sources.get(&id).and_then(|s| s.connection.clone()),
         migration: registry.sources.get(&id).and_then(|s| s.migration.clone()),
         external_path: None,
         lock: SourceLock {
@@ -715,7 +748,7 @@ pub fn check_updates(data: &Path, source_id: Option<&str>) -> Result<Value> {
         .values()
         .filter(|s| source_id.is_none_or(|id| s.id == id))
     {
-        let mut status = json!({"source_id":s.id, "name":s.name, "base_commit":s.lock.resolved_commit, "checked_at":crate::ids::now_iso()});
+        let mut status = json!({"source_id":s.id, "name":s.name, "base_commit":s.lock.resolved_commit, "checked_at":crate::ids::now_iso(), "binding_revision":s.connection.as_ref().map(|c|&c.revision)});
         if s.external_path.is_some() && !portable_remote(s) {
             status["state"] = json!("external");
             if let Err(e) = catalog(data, s) {
@@ -725,7 +758,7 @@ pub fn check_updates(data: &Path, source_id: Option<&str>) -> Result<Value> {
             items.push(status);
             continue;
         }
-        match preview(data, &s.name, &s.url, s.lock.ref_.as_deref(), Some(&s.id)) {
+        match preview(data, &s.name, s.update_url(), s.update_ref(), Some(&s.id)) {
             Ok(p) => {
                 status["state"] = json!(if p["source"]["lock"]["resolved_commit"]
                     == json!(s.lock.resolved_commit)

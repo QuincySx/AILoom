@@ -51,7 +51,7 @@ pub fn matrix() -> Vec<Capability> {
             required_extension: None,
             notes: "按需加载；子目录 skills 亦被发现",
             official_doc: "code.claude.com/docs/en/skills",
-            verified: Some("claude 2.1.272，2026-09-16 隔离项目真实调用通过（docs/evidence/console/2026-09-16-host-probes.md）"),
+            verified: Some("claude 2.1.272，2026-09-16 隔离项目真实调用通过"),
         },
         Capability {
             tool: "claude",
@@ -99,7 +99,7 @@ pub fn matrix() -> Vec<Capability> {
             required_extension: None,
             notes: "首次连接需用户批准；设置成功 ≠ 连接成功",
             official_doc: "code.claude.com/docs/en/mcp",
-            verified: Some("claude 2.1.272，2026-09-16 mcp list 连接探测（docs/evidence/console/2026-09-16-host-probes.md）"),
+            verified: Some("claude 2.1.272，2026-09-16 mcp list 连接探测"),
         },
         // ---- Codex CLI ----
         Capability {
@@ -112,7 +112,7 @@ pub fn matrix() -> Vec<Capability> {
             required_extension: None,
             notes: "2026-09-16 官方复核：原生发现路径为 .agents/skills；旧 .ailoom/skills 路径由 sync 过期清理迁移",
             official_doc: "learn.chatgpt.com/docs/build-skills",
-            verified: Some("codex-cli 0.154.0，2026-09-16 隔离项目真实发现（docs/evidence/console/2026-09-16-host-probes.md）"),
+            verified: Some("codex-cli 0.154.0，2026-09-16 隔离项目真实发现"),
         },
         Capability {
             tool: "codex",
@@ -148,7 +148,7 @@ pub fn matrix() -> Vec<Capability> {
             required_extension: None,
             notes: "官方文档：项目级配置仅受信项目加载（trust gate）；0.153.4 实测不加载 → 0.154.0 待本轮实测记录",
             official_doc: "learn.chatgpt.com/docs/extend/mcp",
-            verified: Some("codex-cli 0.154.0，2026-09-16 mcp list 实测（docs/evidence/console/2026-09-16-host-probes.md）"),
+            verified: Some("codex-cli 0.154.0，2026-09-16 mcp list 实测"),
         },
         // ---- alva ----
         Capability {

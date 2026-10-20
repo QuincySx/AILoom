@@ -23,12 +23,26 @@ pub(super) fn get_global_plan(state: &Arc<ServerState>) -> Response {
     respond(crate::global_skills::plan(&state.data_root))
 }
 
-/// `POST /api/global/select`：`{skill | target, enabled, base_revision?}`
+/// `POST /api/global/select`：`{skill | target, enabled, targets?, base_revision?}`
 pub(super) fn post_global_select(state: &Arc<ServerState>, req: &Request) -> Response {
     let body = &req.body;
     let key = match (body["skill"].as_str(), body["target"].as_str()) {
-        (Some(s), None) => GlobalKey::Skill(s.to_string()),
-        (None, Some(t)) => GlobalKey::Target(t.to_string()),
+        (Some(s), None) => match body.get("targets") {
+            None => GlobalKey::Skill(s.to_string()),
+            Some(serde_json::Value::Array(values)) if values.iter().all(|v| v.is_string()) => {
+                GlobalKey::SkillTargets {
+                    id: s.to_string(),
+                    targets: values
+                        .iter()
+                        .map(|v| v.as_str().unwrap().to_string())
+                        .collect(),
+                }
+            }
+            Some(_) => {
+                return Response::json(400, json!({ "error": "targets 必须是全局目标名称的数组" }))
+            }
+        },
+        (None, Some(t)) if body.get("targets").is_none() => GlobalKey::Target(t.to_string()),
         _ => return Response::json(400, json!({ "error": "需要 skill 或 target 其中之一" })),
     };
     let Some(enabled) = body["enabled"].as_bool() else {
@@ -43,8 +57,14 @@ pub(super) fn post_global_select(state: &Arc<ServerState>, req: &Request) -> Res
 }
 
 /// `POST /api/global/apply`
-pub(super) fn post_global_apply(state: &Arc<ServerState>) -> Response {
-    respond(crate::global_skills::sync(&state.data_root))
+pub(super) fn post_global_apply(state: &Arc<ServerState>, req: &Request) -> Response {
+    match req.body.get("skill") {
+        Some(serde_json::Value::String(id)) => {
+            respond(crate::global_skills::sync_skill(&state.data_root, id))
+        }
+        Some(_) => Response::json(400, json!({ "error": "skill 必须是资源 ID" })),
+        None => respond(crate::global_skills::sync(&state.data_root)),
+    }
 }
 
 /// `POST /api/global/takeover`：`{target, name}`

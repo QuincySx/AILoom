@@ -29,6 +29,26 @@ fn schema_v1() -> u32 {
     1
 }
 
+/// Captured when the server starts, so replacing the executable on disk cannot
+/// make an old process report the new binary's identity.
+pub(crate) fn executable_identity() -> Value {
+    static BUILD: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    BUILD.get_or_init(|| {
+        let executable = std::env::current_exe().ok();
+        let sha256 = executable
+            .as_ref()
+            .and_then(|p| fs::read(p).ok())
+            .map(|bytes| crate::ids::sha256_hex(&bytes));
+        json!({"version": env!("CARGO_PKG_VERSION"), "executable": executable, "sha256": sha256})
+    }).clone()
+}
+
+fn same_executable(running: &Value, current: &Value) -> bool {
+    running["sha256"].as_str().is_some()
+        && running["sha256"] == current["sha256"]
+        && running["executable"] == current["executable"]
+}
+
 fn failure(message: impl Into<String>) -> Error {
     Error::new(code::SERVICE_FAILED, message)
 }
@@ -257,7 +277,8 @@ pub fn status(root: &Path) -> Result<Value> {
     match healthy(&root) {
         Ok((r, probe)) => Ok(
             json!({"state":if probe["stopping"]==true {"stopping"} else {"running"},
-            "running":true,"pid":r.pid,"port":r.port,"data_root":root,"autostart":startup}),
+            "running":true,"pid":r.pid,"port":r.port,"data_root":root,"autostart":startup,
+            "build":probe["build"], "update_required":!same_executable(&probe["build"], &executable_identity())}),
         ),
         Err(_) => Ok(
             json!({"state":"unreachable","running":true,"data_root":root,"autostart":startup,
@@ -279,6 +300,14 @@ pub fn start(root: &Path, port: u16) -> Result<Value> {
             .map_err(|_| failure("已有服务正在启动、停止或无响应，请稍后查看 service status"))?;
         if probe["stopping"] == true {
             return Err(failure("服务正在停止，请稍后重试"));
+        }
+        let current = executable_identity();
+        if !same_executable(&probe["build"], &current) {
+            return Err(
+                failure("网页服务仍由另一个安装位置或旧构建运行，尚未切换到当前程序")
+                    .fix("运行 ailoom service restart 切换到当前程序，然后刷新网页")
+                    .context(json!({"running":probe["build"], "current":current})),
+            );
         }
         let mut v = status(&root)?;
         v["reused"] = json!(true);
@@ -491,4 +520,24 @@ pub fn run(root: &Path, port: u16, open: bool, show_url: bool) -> Result<()> {
     server.join(); // drains requests and jobs before releasing the lifetime lock
     crate::logging::info("网页服务已停止");
     Ok(())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn replaced_binary_and_legacy_service_require_restart() {
+        let current = json!({"executable":"/same/ailoom", "sha256":"new"});
+        assert!(same_executable(&current, &current));
+        assert!(!same_executable(
+            &json!({"executable":"/same/ailoom", "sha256":"old"}),
+            &current
+        ));
+        assert!(!same_executable(&Value::Null, &current));
+        assert!(!same_executable(
+            &json!({"executable":"/same/ailoom"}),
+            &current
+        ));
+    }
 }

@@ -5,15 +5,21 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub(super) fn api_pick_directory() -> Response {
+pub(super) fn api_pick_directory(req: &Request) -> Response {
     #[cfg(target_os = "macos")]
     {
         // Fixed AppleScript: no user data is interpolated into executable code.
+        let script = match req.body["purpose"].as_str() {
+            Some("resource-storage") => {
+                "POSIX path of (choose folder with prompt \"选择 AILoom 下载目录\")"
+            }
+            Some("resource-source") => {
+                "POSIX path of (choose folder with prompt \"选择 AILoom 团队资源库\")"
+            }
+            _ => "POSIX path of (choose folder with prompt \"选择 AILoom 项目文件夹\")",
+        };
         match std::process::Command::new("/usr/bin/osascript")
-            .args([
-                "-e",
-                "POSIX path of (choose folder with prompt \"选择 AILoom 项目文件夹\")",
-            ])
+            .args(["-e", script])
             .output()
         {
             Ok(out) if out.status.success() => Response::json(
@@ -32,10 +38,13 @@ pub(super) fn api_pick_directory() -> Response {
         }
     }
     #[cfg(not(target_os = "macos"))]
-    Response::json(
-        400,
-        json!({"error":"当前平台尚未接入原生文件夹选择器，请输入绝对路径"}),
-    )
+    {
+        let _ = req;
+        Response::json(
+            400,
+            json!({"error":"当前平台尚未接入原生文件夹选择器，请输入绝对路径"}),
+        )
+    }
 }
 
 pub(super) fn api_events_snapshot(state: &Arc<ServerState>, req: &Request) -> Response {
@@ -60,6 +69,14 @@ pub(super) fn api_fs_approve(state: &Arc<ServerState>, req: &Request) -> Respons
         return Response::json(400, json!({ "error": "需要 path" }));
     };
     let p = Path::new(path);
+    if req.body["create"] == true {
+        if !p.is_absolute() {
+            return Response::json(400, json!({"error":"新目录需要绝对路径"}));
+        }
+        if let Err(e) = std::fs::create_dir_all(p) {
+            return Response::json(400, json!({"error":format!("无法创建目录：{e}")}));
+        }
+    }
     if !p.is_dir() {
         return Response::json(400, json!({ "error": "路径不是目录" }));
     }

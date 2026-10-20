@@ -56,6 +56,8 @@ pub struct PersonalPrepare {
     pub notes: Vec<String>,
     /// AIL-119：引用了但来源不可解析的资源 id（软降级，不再硬失败）
     pub unresolved_references: Vec<String>,
+    /// 团队层启用的资源说明（控制台列表用）
+    pub team_resources: Vec<Value>,
 }
 
 /// 团队层：有声明且源就绪 → Some(prepared)；无声明 → None；
@@ -94,6 +96,29 @@ fn team_layer(
         }
         Err(e) => Err(e),
     }
+}
+
+/// 团队层启用的资源（不含内置资源），给控制台列出名称、类型与说明。
+fn team_catalog(team: Option<&Prepared>) -> Vec<Value> {
+    use super::sync_core::{layer_of, Layer};
+    team.map(|p| {
+        p.desired
+            .deployable()
+            .iter()
+            .filter(|s| layer_of(&s.id) == Layer::Team)
+            .map(|s| {
+                json!({
+                    "id": s.id,
+                    "kind": s.kind,
+                    "name": s.name,
+                    "description": s.entry.description,
+                    "source_name": "团队来源",
+                    "layer": "team",
+                })
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// 非 Git 路径模式身份（F06）：`nongit-` + 路径哈希。无 Git 元数据可用，
@@ -138,6 +163,7 @@ fn nongit_ctx(data_root: Option<&Path>, root: &Path) -> Result<AppContext> {
     Ok(AppContext {
         data_root: data_root_buf,
         layout,
+        source_cache_roots: AppContext::load_source_cache_roots(&workspace.workspace_root)?,
         workspace,
         device: device_id,
     })
@@ -550,6 +576,7 @@ pub fn prepare_personal(
     } else {
         team_layer(data_root, explicit_root, &mut notes)?
     };
+    let team_resources = team_catalog(team.as_ref());
 
     // 团队层期望 id 集（v1 解析结果，语义不变）
     let team_enabled: Vec<String> = team
@@ -867,6 +894,7 @@ pub fn prepare_personal(
         skipped,
         notes,
         unresolved_references: unresolved_refs.into_iter().collect(),
+        team_resources,
     })
 }
 
@@ -941,6 +969,7 @@ pub fn effective(
         .iter()
         .filter(|a| !matches!(a.action, crate::sync::plan::ActionKind::Noop))
         .count();
+    let global_deployments = crate::global_skills::deployed_set(data_root_resolved);
     Ok(json!({
         "repo_id": p.registry.repo_id,
         "repo_root": p.repo.identity.repo_root,
@@ -956,9 +985,12 @@ pub fn effective(
         "pending_actions": pending,
         "skipped": p.skipped,
         "notes": p.notes,
+        "team_resources": p.team_resources,
         // AIL-152：已全局部署的资源（项目页标注「已全局启用」，项目内不重复部署）
-        "global_skills": crate::global_skills::deployed_set(data_root_resolved)
-            .into_iter()
+        "global_deployments": global_deployments.iter()
+            .map(|(resource_id, tool)| json!({"resource_id": resource_id, "tool": tool}))
+            .collect::<Vec<_>>(),
+        "global_skills": global_deployments.into_iter()
             .map(|(id, _)| id)
             .collect::<std::collections::BTreeSet<_>>(),
     }))
@@ -1320,7 +1352,8 @@ pub fn project_effective(root: &Path, data_root: &Path) -> Result<Value> {
     });
     Ok(
         json!({"resources":effective.resources,"hosts":effective.hosts,
-        "profile_revision":profile.revision,"notes":notes,"pending_actions":0}),
+        "profile_revision":profile.revision,"notes":notes,"pending_actions":0,
+        "team_resources":team_catalog(team.as_ref())}),
     )
 }
 

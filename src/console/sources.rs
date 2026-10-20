@@ -5,6 +5,71 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// `POST /api/source-binding`: detection, preview and explicit confirmation.
+pub(super) fn post_source_binding(state: &Arc<ServerState>, req: &Request) -> Response {
+    if req.body["action"] == "apply" {
+        return collection_response(crate::source_rebinding::apply(
+            &state.data_root,
+            req.body["preview_id"].as_str().unwrap_or(""),
+            req.body["relationship"].as_str(),
+        ));
+    }
+    let target: crate::source_rebinding::Target =
+        match serde_json::from_value(req.body["target"].clone()) {
+            Ok(t) => t,
+            Err(_) => return Response::json(400, json!({"error":"请选择要管理的来源"})),
+        };
+    if target.kind == "skill" {
+        let entry = match library::find_library_target(state, &target.id) {
+            Ok(e) => e,
+            Err(r) => return r,
+        };
+        if let Some(dir) = entry
+            .file
+            .parent()
+            .and_then(crate::skill_source::read_meta)
+            .and_then(|m| m.local_dir())
+        {
+            if req.body["action"] == "discover"
+                || req.body["change"]["mode"]
+                    .as_str()
+                    .is_none_or(|m| m == "local")
+            {
+                if let Err(e) = ensure_within_roots(state, &dir) {
+                    return Response::json(403, json!({"error":e}));
+                }
+            }
+        }
+    }
+    if req.body["action"] == "discover" {
+        return collection_response(crate::source_rebinding::discover(&state.data_root, &target));
+    }
+    let change: crate::source_rebinding::Change =
+        match serde_json::from_value(req.body["change"].clone()) {
+            Ok(c) => c,
+            Err(_) => return Response::json(400, json!({"error":"来源配置无效"})),
+        };
+    for url in [Some(change.url.as_str()), change.repository_url.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        let url = url.trim();
+        if let Some(path) = url
+            .strip_prefix("file://")
+            .or_else(|| Path::new(url).is_absolute().then_some(url))
+        {
+            if let Err(e) = ensure_within_roots(state, Path::new(path)) {
+                return Response::json(403, json!({"error":e}));
+            }
+        }
+    }
+    collection_response(crate::source_rebinding::preview(
+        &state.data_root,
+        &target,
+        &change,
+    ))
+}
+
 /// `POST /api/migrations/cc-switch/read`
 pub(super) fn post_migrations_cc_switch_read(state: &Arc<ServerState>, req: &Request) -> Response {
     if req.body["confirm_source_read"].as_bool() != Some(true) {

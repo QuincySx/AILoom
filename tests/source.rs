@@ -24,6 +24,81 @@ fn lock_entry(src: &GitSource, commit: &str, digest: &str) -> SourceLock {
 }
 
 #[test]
+fn refresh_uses_selected_connection_and_tracks_changed_default_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let first = tmp.path().join("first");
+    let second = tmp.path().join("second");
+    let cache = tmp.path().join("cache");
+    for (dir, text) in [(&first, "first"), (&second, "second")] {
+        git_init(dir, false).unwrap();
+        write_file(dir, "a.txt", text);
+        git_commit_all(dir, text, &["a.txt"]).unwrap();
+    }
+    ailoom::gitx::git(&second, &["branch", "-m", "develop"]).unwrap();
+    let old = GitSource::new(first.to_str().unwrap(), None).unwrap();
+    let old_snapshot = old.refresh(&cache).unwrap();
+    let locked = lock_entry(
+        &old,
+        old_snapshot.resolved_commit.as_deref().unwrap(),
+        &old_snapshot.content_digest,
+    );
+    let next = GitSource::new(second.to_str().unwrap(), None).unwrap();
+    let snapshot = next.refresh(&cache).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(snapshot.root.join("a.txt")).unwrap(),
+        "second"
+    );
+    assert_eq!(
+        ailoom::gitx::git(&cache.join("repo"), &["remote", "get-url", "origin"]).unwrap(),
+        second.to_str().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(
+            old.resolve(&cache, Some(&locked))
+                .unwrap()
+                .root
+                .join("a.txt")
+        )
+        .unwrap(),
+        "first",
+        "old immutable content remains available"
+    );
+    let missing = GitSource::new(second.to_str().unwrap(), Some("main")).unwrap();
+    assert!(
+        missing.refresh(&cache).is_err(),
+        "new connection must not resolve a stale clone-local main branch"
+    );
+    let old_commit = old_snapshot.resolved_commit.as_deref().unwrap();
+    assert!(
+        GitSource::new(second.to_str().unwrap(), Some(old_commit))
+            .unwrap()
+            .refresh(&cache)
+            .is_err(),
+        "old cached objects are not evidence of the new upstream containing a commit"
+    );
+    ailoom::gitx::git(&second, &["tag", "v1"]).unwrap();
+    assert_eq!(
+        GitSource::new(second.to_str().unwrap(), Some("v1"))
+            .unwrap()
+            .refresh(&cache)
+            .unwrap()
+            .resolved_commit,
+        snapshot.resolved_commit
+    );
+    assert_eq!(
+        GitSource::new(
+            second.to_str().unwrap(),
+            snapshot.resolved_commit.as_deref()
+        )
+        .unwrap()
+        .refresh(&cache)
+        .unwrap()
+        .resolved_commit,
+        snapshot.resolved_commit
+    );
+}
+
+#[test]
 fn first_resolve_locks_and_reuses_snapshot() {
     let tmp = tempfile::tempdir().unwrap();
     let origin = tmp.path().join("origin");
@@ -145,6 +220,14 @@ fn first_time_offline_fails_clearly() {
     let src = GitSource::new(tmp.path().join("no-such-origin").to_str().unwrap(), None).unwrap();
     let err = src.resolve(&cache, None).unwrap_err();
     assert_eq!(err.code, ailoom::error::code::SOURCE_FETCH_FAILED);
+    assert!(err.message.contains("资源源目录不存在"), "{err}");
+    assert!(err.message.contains("no-such-origin"));
+    assert!(!err.fix.as_deref().unwrap_or_default().contains("恢复网络"));
+    // 已锁定但缓存丢失也要保留真实修复建议，不能换成网络故障。
+    let lock = lock_entry(&src, &"a".repeat(40), "unused");
+    let locked = src.resolve(&cache, Some(&lock)).unwrap_err();
+    assert_eq!(locked.message, err.message);
+    assert_eq!(locked.fix, err.fix);
 }
 
 #[test]
@@ -252,4 +335,65 @@ fn lock_file_roundtrip_and_save_is_atomic() {
     // 锁文件不含凭据字段
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(!text.contains("password") && !text.contains("token"));
+}
+
+#[test]
+fn skill_scope_snapshot_migrates_legacy_full_snapshot_and_keeps_locked_digest() {
+    use ailoom::source::git::Scope;
+    let tmp = tempfile::tempdir().unwrap();
+    let up = tmp.path().join("up");
+    let cache = tmp.path().join("cache");
+    git_init(&up, false).unwrap();
+    write_file(&up, "skills/a/SKILL.md", "---\nname: a\n---\n");
+    write_file(&up, "skills/a/nested/SKILL.md", "---\nname: n\n---\n");
+    write_file(&up, "vendor/big.txt", "irrelevant");
+    git_commit_all(&up, "init", &["skills", "vendor"]).unwrap();
+
+    // 旧版本写下的整树快照与锁
+    let full = GitSource::new(up.to_str().unwrap(), None).unwrap();
+    let legacy = full.refresh(&cache).unwrap();
+    assert!(legacy.root.join("vendor/big.txt").is_file());
+    let lock = lock_entry(
+        &full,
+        legacy.resolved_commit.as_deref().unwrap(),
+        &legacy.content_digest,
+    );
+
+    let scoped = full.clone().with_scope(Scope::Skills);
+    let snap = scoped.resolve(&cache, Some(&lock)).unwrap();
+    assert_eq!(snap.root, legacy.root);
+    assert!(!snap.root.join("vendor").exists(), "无关文件不再物化");
+    assert!(snap.root.join("skills/a/nested/SKILL.md").is_file());
+    assert_eq!(
+        snap.content_digest, lock.content_digest,
+        "同一 commit 的锁摘要保持不变"
+    );
+    let again = scoped.resolve(&cache, Some(&lock)).unwrap();
+    assert_eq!(again.content_digest, lock.content_digest);
+
+    // 无锁的刷新给出范围快照自身的摘要，后续按该摘要锁定同样可用。
+    let fresh = scoped.refresh(&cache).unwrap();
+    assert_ne!(fresh.content_digest, lock.content_digest);
+    let fresh_lock = lock_entry(
+        &scoped,
+        fresh.resolved_commit.as_deref().unwrap(),
+        &fresh.content_digest,
+    );
+    assert_eq!(
+        scoped
+            .resolve(&cache, Some(&fresh_lock))
+            .unwrap()
+            .content_digest,
+        fresh.content_digest
+    );
+
+    // 复用时仍校验已物化内容：篡改即报缓存损坏。
+    write_file(&snap.root, "skills/a/SKILL.md", "tampered");
+    let err = scoped.resolve(&cache, Some(&fresh_lock)).unwrap_err();
+    assert_eq!(err.code, ailoom::error::code::SOURCE_CACHE_CORRUPT);
+
+    // 整树范围的使用方不受影响：范围快照会被重新物化为整树。
+    let other = tmp.path().join("cache-full");
+    let full_snap = full.refresh(&other).unwrap();
+    assert!(full_snap.root.join("vendor/big.txt").is_file());
 }

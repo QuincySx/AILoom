@@ -1100,26 +1100,68 @@ fn dashboard_state_follows_latest_lifecycle_event() {
 
 /// RW-07：SSE 初始快照 + 指纹变化推送 + 断线重连。跨进程 hook 事件使
 /// /api/events 在不刷新页面的情况下从 idle → running → idle。
-fn read_sse_frames(stream: &mut TcpStream, frames: usize) -> String {
-    use std::io::Read;
+fn read_sse_frames(stream: &mut std::io::BufReader<TcpStream>, frames: usize) -> String {
+    use std::io::BufRead;
     // 单独运行 2~3 秒即可；全量并行时负载高，8 秒曾偶发超时
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
-        .unwrap();
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    while buf.windows(2).filter(|w| w == b"\n\n").count() < frames {
-        let n = stream.read(&mut chunk).unwrap_or_else(|e| {
-            panic!(
-                "SSE 读取超时/断开: {e}; 已读 {} 字节: {}",
-                buf.len(),
-                String::from_utf8_lossy(&buf)
-            )
-        });
-        assert!(n > 0, "SSE 流提前结束");
-        buf.extend_from_slice(&chunk[..n]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut result = String::new();
+    let mut event = String::new();
+    let mut line_bytes = Vec::new();
+    let mut received = 0;
+    while received < frames {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "SSE 等待 snapshot 超时: {result}{event}"
+        );
+        stream.get_ref().set_read_timeout(Some(remaining)).unwrap();
+        // fill_buf performs at most one socket read. Recheck the total deadline
+        // for every chunk, even when a long data line arrives in many pieces.
+        let available = stream
+            .fill_buf()
+            .unwrap_or_else(|e| panic!("SSE 读取超时/断开: {e}; 已读事件: {result}{event}"));
+        assert!(!available.is_empty(), "SSE 流提前结束: {result}{event}");
+        let take = available
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(available.len(), |n| n + 1);
+        let complete = available[take - 1] == b'\n';
+        line_bytes.extend_from_slice(&available[..take]);
+        stream.consume(take);
+        if !complete {
+            continue;
+        }
+        let line = String::from_utf8(std::mem::take(&mut line_bytes)).expect("SSE UTF-8 行");
+        if line.trim_end().is_empty() {
+            if event.lines().any(|l| l == "event: snapshot")
+                && event.lines().any(|l| l.starts_with("data: "))
+            {
+                result.push_str(&event);
+                result.push('\n');
+                received += 1;
+            }
+            // HTTP headers and comment heartbeats are not snapshot events.
+            event.clear();
+        } else {
+            event.push_str(&line);
+        }
     }
-    String::from_utf8_lossy(&buf).into_owned()
+    result
+}
+
+#[test]
+fn sse_reader_ignores_heartbeats_and_preserves_buffered_snapshots() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client =
+        std::io::BufReader::new(TcpStream::connect(listener.local_addr().unwrap()).unwrap());
+    let (mut sender, _) = listener.accept().unwrap();
+    sender.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: keepalive\n\nid: 1\nevent: snapshot\ndata: {\"state\":\"idle\"}\n\n: keepalive\n\nid: 2\nevent: snapshot\ndata: {\"state\":\"running\"}\n\n").unwrap();
+    let first = read_sse_frames(&mut client, 1);
+    assert!(first.contains("\"idle\""));
+    assert!(!first.contains("running") && !first.contains("keepalive"));
+    let second = read_sse_frames(&mut client, 1);
+    assert!(second.contains("\"running\""));
+    assert!(!second.contains("idle") && !second.contains("keepalive"));
 }
 
 #[test]
@@ -1216,6 +1258,7 @@ fn dashboard_sse_pushes_state_transitions_without_page_refresh() {
     stream
         .write_all(b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .unwrap();
+    let mut stream = std::io::BufReader::new(stream);
     let frame1 = read_sse_frames(&mut stream, 1);
     let v1 = state_in_frame(&frame1);
     assert_eq!(state_of(&v1, "sse1"), "idle", "初始快照: {frame1}");
@@ -1242,6 +1285,7 @@ fn dashboard_sse_pushes_state_transitions_without_page_refresh() {
     stream2
         .write_all(b"GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .unwrap();
+    let mut stream2 = std::io::BufReader::new(stream2);
     let reframed = read_sse_frames(&mut stream2, 1);
     let v4 = state_in_frame(&reframed);
     assert_eq!(state_of(&v4, "sse1"), "idle", "重连快照: {reframed}");

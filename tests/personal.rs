@@ -96,6 +96,157 @@ fn make_repo(c: &Ctx, name: &str) -> PathBuf {
     repo
 }
 
+#[test]
+fn missing_locked_team_source_blocks_writes_and_preserves_deployed_files() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    let source = common::make_team_source(&c.tmp.path().join("source"));
+    let dr = c.dr();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            source.to_str().unwrap(),
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    c.run_json(&ws, &["--json", "--data-root", &dr, "sync"]);
+    let deployed = ws.join(".claude/skills/common-greet/SKILL.md");
+    let before = std::fs::read(&deployed).unwrap();
+    let lock_path = ws.join(".ailoom/machine/sources.lock.json");
+    let lock_before = std::fs::read(&lock_path).unwrap();
+    let lock: serde_json::Value = serde_json::from_slice(&lock_before).unwrap();
+    let identity = lock["sources"]["team"]["identity"].as_str().unwrap();
+    let cache = Path::new(&dr)
+        .join("cache")
+        .join(ailoom::ids::cache_key_from_identity(identity));
+    // Move both fixtures aside; don't delete any deployed files or caches.
+    std::fs::rename(&source, c.tmp.path().join("source-offline")).unwrap();
+    // Complete locked snapshots remain usable without the origin.
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "effective",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    std::fs::rename(&cache, c.tmp.path().join("cache-offline")).unwrap();
+    for action in ["effective", "plan", "sync"] {
+        let (code, _, stderr) = c.run(
+            &ws,
+            &[
+                "--json",
+                "--data-root",
+                &dr,
+                "personal",
+                "--action",
+                action,
+                "--root",
+                ws.to_str().unwrap(),
+            ],
+        );
+        assert_ne!(
+            code, 0,
+            "{action} must not treat missing team resources as an empty desired set"
+        );
+        let error: serde_json::Value = serde_json::from_str(&stderr).unwrap();
+        assert_eq!(error["code"], "E2002");
+        assert!(error["message"]
+            .as_str()
+            .unwrap()
+            .contains("资源源目录不存在"));
+        assert_eq!(std::fs::read(&deployed).unwrap(), before);
+        assert_eq!(std::fs::read(&lock_path).unwrap(), lock_before);
+    }
+    std::fs::rename(c.tmp.path().join("source-offline"), &source).unwrap();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "effective",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(std::fs::read(&deployed).unwrap(), before);
+    assert_eq!(std::fs::read(&lock_path).unwrap(), lock_before);
+}
+
+/// 项目页列出团队来源启用的资源：effective 带回名称、类型与说明，不含内置资源。
+#[test]
+fn effective_lists_team_resources_for_console() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    let source = common::make_team_source(&c.tmp.path().join("source"));
+    let dr = c.dr();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "init",
+            "--url",
+            source.to_str().unwrap(),
+            "--project",
+            "a",
+            "--role",
+            "dev",
+        ],
+    );
+    let effective = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &dr,
+            "personal",
+            "--action",
+            "effective",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    let team = effective["team_resources"].as_array().unwrap();
+    let greet = team
+        .iter()
+        .find(|r| r["id"].as_str().unwrap().ends_with("/common-greet"))
+        .unwrap_or_else(|| panic!("团队 Skill 应列出: {team:?}"));
+    assert_eq!(greet["kind"], "skill");
+    assert_eq!(greet["name"], "common-greet");
+    assert_eq!(greet["layer"], "team");
+    assert!(!greet["description"].as_str().unwrap().is_empty());
+    assert!(
+        team.iter()
+            .all(|r| !r["id"].as_str().unwrap().starts_with("ailoom-builtin/")),
+        "内置资源不列出: {team:?}"
+    );
+    // 列出的都是本作用域实际启用的资源
+    for r in team {
+        assert_eq!(
+            effective["resources"][r["id"].as_str().unwrap()]["deployed"],
+            true
+        );
+    }
+}
+
 fn import_skill(c: &Ctx, repo: &Path, name: &str) {
     let src = c.tmp.path().join("skills").join(name);
     std::fs::create_dir_all(&src).unwrap();

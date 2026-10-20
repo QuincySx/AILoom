@@ -491,9 +491,12 @@ pub enum Command {
         /// select：完整资源 ID（资源库或合集里的 Skill）
         #[arg(long)]
         skill: Option<String>,
-        /// select：目标目录开关 claude | agents；takeover：条目所在目标
+        /// select：旧选择的默认目录开关 claude | agents；takeover：条目所在目标
         #[arg(long, value_parser = ["claude", "agents"])]
         target: Option<String>,
+        /// select：此 Skill 单独启用的目录，例如 claude,agents
+        #[arg(long, value_delimiter = ',', value_parser = ["claude", "agents"], requires = "skill", conflicts_with = "target")]
+        targets: Vec<String>,
         /// select：enable | disable
         #[arg(long, value_parser = ["enable", "disable"])]
         state: Option<String>,

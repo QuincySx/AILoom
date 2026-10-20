@@ -38,8 +38,17 @@ pub fn run(
     json: bool,
     data_root: Option<&std::path::Path>,
 ) -> Result<serde_json::Value> {
+    run_with_cache_root(args, json, data_root, None)
+}
+
+pub(crate) fn run_with_cache_root(
+    args: &InitArgs,
+    json: bool,
+    data_root: Option<&std::path::Path>,
+    download_root: Option<&std::path::Path>,
+) -> Result<serde_json::Value> {
     let cwd = std::env::current_dir()?;
-    let ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
+    let mut ctx = AppContext::discover(data_root, &cwd, args.root.as_deref())?;
 
     // 1. 载入既有声明（无则默认骨架），仅显式参数覆盖
     let decl_path = ctx.workspace.declaration_path.clone().unwrap_or_else(|| {
@@ -155,6 +164,9 @@ pub fn run(
         "git" => {
             let url = decl.source.url.clone().unwrap_or_default();
             let git_src = GitSource::new(&url, decl.source.ref_.as_deref())?;
+            if let Some(root) = download_root {
+                ctx.set_source_cache_root(&git_src.identity, root);
+            }
             let cache_root = ctx.source_cache(&git_src.identity);
             // 显式替换源是 init 的授权更新；没有显式替换时仍校验声明与源锁，
             // 不能借普通 init 绕过被手改声明的身份冲突。
@@ -287,6 +299,9 @@ pub fn run(
     lock.sources.insert(decl.source.name.clone(), lock_entry);
 
     // 3. 幂等落盘：声明仅变化时写入
+    if download_root.is_some() {
+        ctx.save_source_cache_roots()?;
+    }
     let new_text = toml::to_string_pretty(&decl)?;
     let declaration_changed = existing
         .as_ref()

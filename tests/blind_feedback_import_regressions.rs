@@ -56,6 +56,7 @@ fn manual_context(root: &Path) -> AppContext {
         data_root,
         workspace,
         device: "synthetic-device".into(),
+        source_cache_roots: Default::default(),
     }
 }
 

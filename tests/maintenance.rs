@@ -32,6 +32,7 @@ fn manual_ctx(tmp: &tempfile::TempDir) -> AppContext {
         layout: ailoom::paths::layout_for(&data, &workspace.workspace_id, &workspace.anchor_key),
         workspace,
         device: "dev".into(),
+        source_cache_roots: Default::default(),
     }
 }
 
