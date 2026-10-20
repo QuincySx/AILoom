@@ -1,12 +1,15 @@
 #!/bin/bash
 # 浏览器验收：在隔离目录中启动控制台与调试 Chrome，依次运行 tests/ui_browser.mjs 的全部模式。
 # 用法：scripts/ui-browser.sh [输出目录]    （默认 target/ui-browser）
+# UI_BROWSER_MODES=v27,v27-flow 可只运行指定的回归模式；默认运行全部。
 # 需要：已构建的 target/debug/ailoom、Node 22+、Chrome 或 Chromium（CHROME 可覆盖路径；
 # CHROME_FLAGS 追加启动参数，例如容器里以 root 运行时的 --no-sandbox）。
 # 不触碰真实 HOME / ~/.claude / ~/.codex；结束时只停止本脚本启动的进程。
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-$ROOT/target/ui-browser}
+UI_NODE_BIN=${UI_NODE_BIN:-$(node -p process.execPath)}
+UI_AILOOM_BIN=${UI_AILOOM_BIN:-$ROOT/target/debug/ailoom}
 if [ -z "${CHROME:-}" ]; then
   for candidate in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
     "$(command -v google-chrome 2>/dev/null)" "$(command -v chromium 2>/dev/null)" "$(command -v chromium-browser 2>/dev/null)"; do
@@ -25,7 +28,7 @@ export HOME="$WORK/home" XDG_STATE_HOME="$WORK/home/state" XDG_DATA_HOME="$WORK/
   PI_CODING_AGENT_DIR="$WORK/home/pi" AILOOM_REPORTING=off AILOOM_AUTO_SYNC=off
 mkdir -p "$HOME"
 
-"$ROOT/target/debug/ailoom" console --port "$CONSOLE_PORT" --no-open >"$OUT/console.log" 2>&1 &
+"$UI_AILOOM_BIN" console --port "$CONSOLE_PORT" --no-open >"$OUT/console.log" 2>&1 &
 CONSOLE_PID=$!
 start_chrome() {
   # 关闭后台网络、组件更新与同步，避免 Chrome 自身的后台任务（含自更新）干扰无头实例。
@@ -60,15 +63,29 @@ ln -s "$WORK/elsewhere/foreign-skill" "$HOME/claude/skills/foreign-skill"
 ln -s "$HOME/claude/skills/foreign-skill" "$HOME/.agents/skills/foreign-skill"
 printf -- "---\nname: global-skill\ndescription: 全局启用验收用\n---\n正文\n" >"$WORK/skills/global-skill/SKILL.md"
 
+# 团队来源丢失：项目锁定过团队源 team-gone，之后源目录与本机缓存都没了；team-new 是可以换上的新来源
+export GIT_AUTHOR_NAME=ui GIT_AUTHOR_EMAIL=ui@example.invalid GIT_COMMITTER_NAME=ui GIT_COMMITTER_EMAIL=ui@example.invalid
+"$UI_AILOOM_BIN" source --dir "$WORK/team-gone" --git --project alva >/dev/null
+"$UI_AILOOM_BIN" source --dir "$WORK/team-new" --git --project alva >/dev/null
+mkdir -p "$WORK/project-sf" && git -C "$WORK/project-sf" init -q && git -C "$WORK/project-sf" commit -q --allow-empty -m base
+(cd "$WORK/project-sf" && "$UI_AILOOM_BIN" init --url "$WORK/team-gone" --project alva >/dev/null \
+  && "$UI_AILOOM_BIN" sync >/dev/null && "$UI_AILOOM_BIN" personal --action effective >/dev/null)
+mv "$WORK/team-gone" "$WORK/team-gone-unavailable"
+mv "$XDG_STATE_HOME/ailoom/cache" "$WORK/cache-before-missing"
+
 failed=0
 attempt() {
   local mode=$1 log=$2; shift 2
-  (cd "$ROOT" && CDP_PORT=$CDP_PORT timeout 150 node tests/ui_browser.mjs "http://127.0.0.1:$CONSOLE_PORT/" "$OUT/$mode" "$mode" "$@") >"$log" 2>&1 \
+  (cd "$ROOT" && CDP_PORT=$CDP_PORT timeout 150 "$UI_NODE_BIN" tests/ui_browser.mjs "http://127.0.0.1:$CONSOLE_PORT/" "$OUT/$mode" "$mode" "$@") >"$log" 2>&1 \
     && tail -1 "$log" | grep -q '"errors":\[\]'
 }
 restarts=1
 run() {
   local mode=$1; shift
+  case ",${UI_BROWSER_MODES:-all}," in
+    *,all,*|*,"$mode",*) ;;
+    *) return ;;
+  esac
   local log="$OUT/$mode.log"
   if attempt "$mode" "$log" "$@"; then
     echo "${mode}: PASS"
@@ -93,4 +110,7 @@ run onboarding
 run instructions "$WORK/project-c"
 run global "$WORK/skills/global-skill"
 run design "$WORK/project-b" "$WORK/skills/browser-skill"
+run source-failure "$(cd "$WORK/project-sf" && pwd -P)" "$(cd "$WORK/team-new" && pwd -P)"
+run v27-flow "$WORK/project-b"
+run v27
 exit $failed

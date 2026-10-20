@@ -6,68 +6,53 @@
 // AIL-113：无库存也可打开，并提供「＋导入」连续流程（importResources 可选）。
 import { esc } from '../services/api.js';
 import { Dialog } from '../components/dialog.js';
+import { Item, resourcePath } from '../components/item.js';
 
-const KIND_LABEL = {skill:'技能 · Skill',mcp:'工具连接 · MCP',rule:'规则',agent:'子代理',doc:'文档',learning:'经验',env:'环境',hook:'Hook',package:'依赖包'};
+const KIND_LABEL = {skill:'技能',mcp:'工具连接（MCP）',rule:'规则',agent:'子代理',doc:'文档',learning:'经验',env:'环境',hook:'Hook',package:'依赖包'};
 
-export function ResourcePicker(container, { title, description, entries, isAdded, onSubmit, importResources, createResource }) {
+export function ResourcePicker(container, { title, description, entries, isAdded, onSubmit, importResources, createResource, initialSelection = [], initialSearch = '', submitLabel = '添加所选', allowEmpty = false }) {
   const body = document.createElement('div');
   body.innerHTML = `
-    <input type="search" data-picker-search aria-label="搜索资源" placeholder="搜索名称、说明或来源…">
-    <div data-picker-list class="picker-list" aria-label="可选资源"></div>
+    ${description?`<p class="muted">${esc(description)}</p>`:''}
+    <div class="toolbar picker-toolbar"><input type="search" data-picker-search aria-label="搜索资源" placeholder="搜索名称或描述"><select data-picker-kind aria-label="能力类型"><option value="">全部类型</option>${[...new Set(entries.map(e=>e.kind))].map(kind=>`<option value="${esc(kind)}">${esc(KIND_LABEL[kind]||kind)}</option>`).join('')}</select><select data-picker-source aria-label="能力来源"><option value="">全部来源</option>${[...new Set(entries.map(e=>e.source_name||'其他来源'))].map(source=>`<option>${esc(source)}</option>`).join('')}</select>${createResource ? '<button type="button" data-variant="ghost" data-picker-create>新建</button>' : ''}${importResources ? '<button type="button" data-variant="ghost" data-picker-import>导入</button>' : ''}</div>
+    <div data-picker-list class="picker-list" tabindex="0" aria-label="可选资源"></div>
     <p data-picker-error class="field-error" role="alert"></p>
-    <div class="picker-library-actions">${createResource ? '<button type="button" data-picker-create>新建规则 / 子代理</button>' : ''}${importResources ? '<button type="button" data-picker-import>导入资源</button>' : ''}</div>
-    <footer class="dialog-actions"><span data-picker-count class="muted"></span><button type="button" data-picker-cancel>取消</button><button type="submit" class="primary" data-picker-submit disabled>添加所选</button></footer>`;
+    <footer class="dialog-actions"><span data-picker-count class="muted" role="status" aria-live="polite"></span><button type="button" data-variant="ghost" data-picker-only>仅看已选</button><button type="button" data-variant="ghost" data-picker-clear>清空</button><button type="button" data-picker-cancel>取消</button><button type="submit" class="primary" data-picker-submit disabled>添加所选</button></footer>`;
   const q = s => body.querySelector(s);
   let items = entries;
   let selected = new Set();
-  let saving = false;
+  q('[data-picker-search]').value=initialSearch;
+  let saving = false, onlySelected=false;
   let disposed = false;
   const modal = Dialog(container, {
     title,
     content: body,
     open: false, // 仅在点击「添加」时打开；否则会在切页时自动弹出
-    keepMounted: true, // 关闭后保留 DOM，同一 picker 可再次打开
     canClose: () => !saving,
-    onClose: () => {},
+    onClose: () => { disposed = true; },
   });
-  const groups = () => {
-    const query = q('[data-picker-search]').value.trim().toLowerCase();
-    const map = new Map();
-    for (const e of items) {
-      // F03：字段缺失时回退可读（不显示 undefined）
-      const label = e.name || e.id;
-      if (query && !`${label} ${e.description || ''} ${e.source_name || ''}`.toLowerCase().includes(query)) continue;
-      const source = e.source_name || '其他来源';
-      if (!map.has(source)) map.set(source, []);
-      map.get(source).push(e);
-    }
-    return map;
-  };
   function render() {
-    const map = groups();
-    const total = [...map.values()].flat().length;
-    q('[data-picker-list]').innerHTML = total ? [...map.entries()].map(([source, list]) => `
-      <fieldset class="picker-group"><legend>${esc(source)} · ${list.length} 项</legend>
-      ${list.map(e => {
-        const added = isAdded(e.id);
-        const na = e.unavailable;
-        return `<label class="picker-row"><input type="checkbox" data-picker-item value="${esc(e.id)}" ${added || na ? 'disabled' : ''} ${selected.has(e.id) ? 'checked' : ''}>
-          <span><span class="picker-item-head"><strong>${esc(e.name || e.id)}</strong>${e.kind?`<span class="badge">${esc(KIND_LABEL[e.kind]||e.kind)}</span>`:''}${added ? ' <span class="badge">已添加</span>' : ''}</span>${na ? `<span class="field-error">${esc(na)}</span>` : ''}
-          ${e.description?`<span class="muted">${esc(e.description)}</span>`:''}${e.hint?`<br><small class="muted">${esc(e.hint)}</small>`:''}
-          </span></label>`;
-      }).join('')}</fieldset>`).join('')
-      : `<p class="muted">${items.length ? '没有匹配的资源。' : '还没有可选资源。'}</p>`;
-    q('[data-picker-list]').querySelectorAll('[data-picker-item]').forEach(box => {
-      box.onchange = () => { box.checked ? selected.add(box.value) : selected.delete(box.value); syncFooter(); };
-    });
+    const query=q('[data-picker-search]').value.trim().toLowerCase(),kind=q('[data-picker-kind]').value,source=q('[data-picker-source]').value;
+    const filtered=items.filter(e=>(!kind||e.kind===kind)&&(!source||(e.source_name||'其他来源')===source)&&(!onlySelected||selected.has(e.id))&&`${e.name||e.id} ${e.description||''} ${e.source_name||''}`.toLowerCase().includes(query));
+    const map=new Map();
+    for(const entry of filtered){const source=entry.source_name||'其他来源';if(!map.has(source))map.set(source,[]);map.get(source).push(entry);}
+    q('[data-picker-list]').innerHTML=filtered.length?[...map.entries()].map(([source,list])=>`<fieldset class="picker-group"><legend>${esc(source)}</legend>${list.map(e=>{
+      const added=isAdded(e.id),na=e.unavailable;
+      return Item({tag:'label',title:e.name||e.id,description:e.description||KIND_LABEL[e.kind]||e.kind,meta:e.hint||'',path:resourcePath(e),className:'picker-row',density:'regular',leading:`<input type="checkbox" data-picker-item value="${esc(e.id)}" ${added||na||saving?'disabled':''} ${selected.has(e.id)?'checked':''}>`,actions:added?'<span class="badge ok">已添加</span>':'',feedback:na?`<span class="field-error">${esc(na)}</span>`:''});
+    }).join('')}</fieldset>`).join(''):`<p class="muted">${items.length?'没有匹配的资源。':'还没有可选资源。'}</p>`;
+    q('[data-picker-list]').querySelectorAll('[data-picker-item]').forEach(box=>{box.onchange=()=>{box.checked?selected.add(box.value):selected.delete(box.value);syncFooter();};});
     syncFooter();
   }
   function syncFooter() {
-    q('[data-picker-submit]').textContent = selected.size ? `添加所选（${selected.size}）` : '添加所选';
-    q('[data-picker-submit]').disabled = saving || !selected.size;
-    q('[data-picker-count]').textContent = `已勾选 ${selected.size} 项`;
+    q('[data-picker-submit]').textContent = selected.size ? `${submitLabel}（${selected.size}）` : submitLabel;
+    q('[data-picker-submit]').disabled = saving || (!allowEmpty && !selected.size);
+    q('[data-picker-count]').textContent = `已选 ${selected.size} 项`;
+    q('[data-picker-only]').setAttribute('aria-pressed',String(onlySelected));
   }
-  q('[data-picker-search]').oninput = render;
+  q('[data-picker-search]').oninput=()=>{render();};
+  q('[data-picker-kind]').onchange=q('[data-picker-source]').onchange=()=>{render();};
+  q('[data-picker-only]').onclick=()=>{if(saving)return;onlySelected=!onlySelected;render();};
+  q('[data-picker-clear]').onclick=()=>{if(saving)return;selected.clear();render();};
   q('[data-picker-cancel]').onclick = () => modal.close();
   if (createResource) q('[data-picker-create]').onclick = async () => {
     if(saving)return;
@@ -96,7 +81,7 @@ export function ResourcePicker(container, { title, description, entries, isAdded
     saving = true;
     submit.disabled = true;
     q('[data-picker-cancel]').disabled = true;
-    q('[data-picker-search]').disabled = true;
+    body.querySelectorAll('input,select,[data-picker-clear],[data-picker-only]').forEach(el=>el.disabled=true);
     // 保存期间锁住勾选与搜索，避免批次中途变化（AIL-114/F05）。
     q('[data-picker-list]').querySelectorAll('[data-picker-item]').forEach(box => { box.disabled = true; });
     q('[data-picker-error]').textContent = '';
@@ -118,14 +103,14 @@ export function ResourcePicker(container, { title, description, entries, isAdded
       if (!disposed) {
         submit.disabled = false;
         q('[data-picker-cancel]').disabled = false;
-        q('[data-picker-search]').disabled = false;
+        body.querySelectorAll('input,select,[data-picker-clear],[data-picker-only]').forEach(el=>el.disabled=false);
         render();
       }
     }
   };
   render();
   return {
-    show: () => { selected = new Set(); render(); modal.show(); },
+    show: () => { selected = new Set(initialSelection.filter(id=>!isAdded(id)&&!items.find(e=>e.id===id)?.unavailable));onlySelected=false; render(); modal.show(); },
     destroy: () => { disposed = true; modal.destroy(); },
   };
 }

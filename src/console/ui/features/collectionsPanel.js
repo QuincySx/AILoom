@@ -5,11 +5,15 @@ import { Dialog, confirmAction } from '../components/dialog.js';
 import { CcSwitchImport } from './ccSwitchImport.js';
 import { ResourceReferences } from './resourceReferences.js';
 import { ImportDialog } from './importDialog.js';
+import { GitSkillDialog } from './gitSkillDialog.js';
+import { SourceBindingDialog } from './sourceBindingDialog.js';
+import { PageHeader } from '../components/layout.js';
+import { Item, resourcePath, resourceIcon, MoreActions } from '../components/item.js';
 
 // One visual vocabulary for every capability type in the library.
 const capabilityTypes = {
-  skill: ['技能 · Skill', '<path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/>'],
-  mcp: ['工具连接 · MCP', '<path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/>'],
+  skill: ['技能', '<path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z"/>'],
+  mcp: ['工具连接（MCP）', '<path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3"/>'],
   agent: ['子代理', '<rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M8 12h1m6 0h1M9 16h6"/>'],
   rule: ['规则', '<path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1"/>'],
   doc: ['文档', '<path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h8"/>'],
@@ -20,15 +24,16 @@ const capabilityTypes = {
 };
 function capabilityBadge(kind) {
   const [label, drawing] = capabilityTypes[kind] || [kind, '<rect x="4" y="4" width="16" height="16" rx="3"/>'];
-  return `<span class="resource-kind" title="${esc(label)}"><svg viewBox="0 0 24 24" aria-hidden="true">${drawing}</svg><span>${esc(label)}</span></span>`;
+  return `<span class="resource-kind" title="${esc(label)}"><svg viewBox="0 0 24 24" aria-hidden="true">${drawing}</svg><span>${esc(label.split(' · ')[0])}</span></span>`;
 }
 
 // Group transport aliases, but never collapse distinct hosts or local paths.
 export function repositoryGroups(sources) {
   const groups = new Map();
   for (const source of sources) {
-    const raw = source.url || '';
+    const raw = source.repository_url || source.url || '';
     let key = raw, title = source.name, host = '本地来源';
+    if((raw.startsWith('/')||raw.startsWith('file://'))&&title===raw)title=raw.split('/').filter(Boolean).pop()||raw;
     try {
       const url = new URL(raw.replace(/^git@([^:]+):/, 'ssh://git@$1/'));
       if (['https:', 'http:', 'ssh:'].includes(url.protocol)) {
@@ -38,60 +43,149 @@ export function repositoryGroups(sources) {
         title = path || host;
       }
     } catch { /* Local paths keep their exact identity. */ }
+    key=source.repository_key||key;
     if (!groups.has(key)) groups.set(key, {key, title, host, sources:[]});
     groups.get(key).sources.push(source);
   }
   return [...groups.values()];
 }
 
+export function catalogGroups(sources, entries) {
+  const groups=repositoryGroups(sources).map(g=>({...g,entries:[],url:g.sources[0].connection_url||g.sources[0].url,ref:('update_ref' in g.sources[0]?g.sources[0].update_ref:g.sources[0].connection?g.sources[0].connection.ref:g.sources[0].lock?.ref_||g.sources[0].lock?.ref)}));
+  const byKey=new Map(groups.map(g=>[g.key,g]));
+  const unique=new Map();
+  for(const group of groups)for(const source of group.sources)for(const entry of source.resources||[])
+    unique.set(entry.id,{...entry,groupKey:group.key,sourceId:source.id,updateState:source.update?.state});
+  for(const entry of entries) {
+    const url=entry.connection_url||entry.source?.repo_url;
+    const origin=url?repositoryGroups([{url:entry.repository_url||url,name:url,repository_key:entry.repository_key}])[0]:{key:'local:personal',title:'本地与个人资源',host:'本地'};
+    if(!byKey.has(origin.key)){const group={...origin,sources:[],entries:[],url,ref:entry.source?.connection?entry.source.connection.ref:entry.source?.ref||entry.source?.ref_};byKey.set(origin.key,group);groups.push(group);}
+    unique.set(entry.id,{...entry,groupKey:origin.key,personal:true});
+  }
+  for(const entry of unique.values())byKey.get(entry.groupKey).entries.push(entry);
+  const compare=(a,b)=>String(a).localeCompare(String(b),'zh-CN',{numeric:true});
+  for(const group of groups)group.entries.sort((a,b)=>compare(a.name||a.id,b.name||b.id));
+  return groups.sort((a,b)=>(a.key==='local:personal')-(b.key==='local:personal')||compare(a.title,b.title)||compare(a.host,b.host));
+}
+
 export function CollectionsPanel(container, options = {}) {
   const root = document.createElement('section');
   container.appendChild(root);
   let alive = true, busy = false, sources = [];
-  let libraryEntries = []; // Personal copies may also have a Git origin.
-  let referenceDialog = null;
+  let libraryEntries = [], selectedRepository = ''; // Personal copies may also have a Git origin.
+  let referenceDialog = null, resourceDialog = null;
   root.innerHTML = `
-    <header class="page-head"><div><${options.headingLevel===2?'h2':'h1'}>${esc(options.title || (options.updatesOnly ? '来源更新' : '资源库'))}</${options.headingLevel===2?'h2':'h1'}>
-      <p>${esc(options.description || (options.updatesOnly ? '先检查上游，再确认资源库版本。哪些项目使用新版，由你决定。' : '把自己的合集与第三方资源放在一起管理，按需引用到项目。'))}</p></div>
-      <div class="actions">${options.onCreate?'<button data-create>新建规则 / 子代理</button>':''}<button data-add class="primary">导入资源</button></div></header>
-    <div class="toolbar"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索资源名称或用途…"><div></div></div>
+    ${PageHeader({title:options.title||'资源库',description:options.description||'按来源管理与搜索',actions:`${options.onCreate?'<button data-create data-variant="ghost" title="新建规则 / 子代理">新建</button>':''}${MoreActions('导入资源','<button data-git-add>GitHub 或 Git 仓库</button><button data-add-entry>skills.sh</button><button data-add>本地文件夹</button>','导入资源')}`})}
+    ${options.compactLibrary?'<div class="library-layout"><aside class="library-repository-nav" aria-label="仓库与合集"><h3>仓库与合集</h3><input data-repository-search type="search" aria-label="查找仓库或合集" placeholder="查找仓库 / 合集…"><div data-repository-filters></div><button class="item-surface" data-manage-sources>管理来源</button></aside><div class="library-catalog-pane"><div class="library-catalog-heading"><div><h2>全部资源</h2><small data-library-count class="sr-only" role="status" aria-live="polite"></small></div><button class="library-mobile-source" data-select-source aria-expanded="false">选择来源</button></div>':''}
+    <div class="toolbar${options.compactLibrary?' library-scope':''}"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索资源名称或用途…">${options.compactLibrary?'<button data-library-clear hidden>清除筛选</button>':''}<div class="actions library-update-actions"><button data-check>检查全部更新</button><button data-update disabled>更新可用版本</button></div></div>
     <p data-msg class="inline-status muted" role="status" aria-live="polite"></p>
     <div data-sources><p class="muted">正在读取资源库…</p></div>
-    <details class="library-maintenance"><summary>更新与迁移</summary><div class="actions"><button data-check>检查全部更新</button><button data-update disabled>更新可用版本</button><button data-cc-switch>从 CC Switch 迁移</button></div></details>`;
+    <details class="library-maintenance"><summary>迁移已有资源</summary><div class="actions"><button data-cc-switch>从 CC Switch 迁移</button></div></details>${options.compactLibrary?'</div></div>':''}`;
   const q = s => root.querySelector(s);
+  const bindingDialog=SourceBindingDialog(root,{onChanged:async()=>{changed();await refresh();}});
+
   if(options.onCreate)q('[data-create]').onclick=options.onCreate;
   if(options.compactLibrary) {
+    const searchRow=q('.toolbar');
+    const importAction=q('.page-head .action-menu-trigger');
+    const importMenu=importAction.nextElementSibling;
+    searchRow.append(importAction,importMenu);
+    importAction.textContent='导入';
+    if(options.onCreate)importMenu.append(q('[data-create]'));
+    importMenu.append(q('[data-cc-switch]'));
+    importMenu.insertAdjacentHTML('beforeend','<a href="#/library/rules">本地规则与子代理</a>');
+    q('.library-maintenance').remove();
+    q('.page-head .actions').remove();
+    q('[data-search]').placeholder='搜索名称、用途或来源';
+    const heading=q('.library-catalog-heading');
+    heading.querySelector('div').className='sr-only';heading.hidden=true;
+    // One toolbar row: search, source, type, list options, manage sources, import.
+    const filters=searchRow;
+    filters.insertBefore(q('[data-select-source]'),importAction);
+    q('[data-select-source]').textContent='全部来源';
     const list=document.createElement('div');list.dataset.capabilityCatalog='';
     const sourceList=q('[data-sources]');sourceList.before(list);sourceList.hidden=true;
     const filter=document.createElement('select');filter.dataset.libraryKind='';filter.setAttribute('aria-label','能力类型');
     filter.innerHTML='<option value="">全部类型</option>'+Object.entries(capabilityTypes).map(([kind,[label]])=>`<option value="${kind}">${label}</option>`).join('');
-    q('.toolbar').insertBefore(filter,q('.toolbar>div'));filter.onchange=renderSources;
-    q('.page-head p').remove();
+    filters.insertBefore(filter,importAction);filter.onchange=()=>{renderSources();};
+    const sort=document.createElement('select');sort.dataset.librarySort='';sort.setAttribute('aria-label','资源排序');sort.innerHTML='<option value="repository">按 Git 仓库</option><option value="name">按名称</option>';
+    sort.value='name';
+    const listOptions=document.createElement('details');listOptions.className='library-list-options';const summary=document.createElement('summary');summary.textContent='⋯';summary.setAttribute('aria-label','列表选项');const controls=document.createElement('div');controls.className='library-list-controls';controls.append(sort,q('.library-update-actions'));listOptions.append(summary,controls);
+    const manage=document.createElement('button');manage.dataset.manageCatalogSources='';manage.dataset.variant='ghost';manage.textContent='管理来源';
+    for(const el of [q('[data-library-clear]'),listOptions,manage])filters.insertBefore(el,importAction);sort.onchange=()=>{renderSources();};
+    q('[data-select-source]').onclick=()=>{const open=q('.library-layout').classList.toggle('sources-open');q('[data-select-source]').setAttribute('aria-expanded',String(open));};
+    q('[data-repository-search]').oninput=renderSources;
+    q('[data-repository-filters]').onclick=event=>{
+      const button=event.target.closest('[data-repository-filter]');
+      if(!button||busy)return;
+      selectedRepository=button.dataset.repositoryFilter;renderSources();root.querySelector('.library-layout')?.classList.remove('sources-open');q('[data-select-source]').setAttribute('aria-expanded','false');
+      const switcher=q('[data-select-source]');
+      if(switcher.getClientRects?.().length)switcher.focus();else q('[data-repository-filters]').querySelectorAll('[data-repository-filter]').forEach(b=>{if(b.dataset.repositoryFilter===selectedRepository)b.focus();});
+    };
+    q('[data-library-clear]').onclick=clearFilters;
   }
 
   const migrationDialog = CcSwitchImport(root, {onChanged:async () => { changed(); await refresh(); }});
   q('[data-cc-switch]').onclick = () => migrationDialog.show();
   // AIL-113：导入业务抽到可复用 ImportDialog（项目内「＋导入」共用同一实现）。
   const importDialog = ImportDialog(root, { onChanged: async () => { changed(); await refresh(); } });
+  const gitDialog = GitSkillDialog(root, {onChanged:async()=>{changed();await refresh();}});
+  q('[data-git-add]').onclick=()=>gitDialog.show();
+  q('[data-manage-sources]')?.addEventListener('click',()=>showSources(sources));
+  q('[data-manage-catalog-sources]')?.addEventListener('click',()=>showSources(sources));
   function changed() { const t = currentTarget(); if (t) setTarget(t); options.onChanged?.(); }
   function message(text) { if (alive) q('[data-msg]').textContent = text; }
   async function run(fn) {
     if (busy) return;
     busy = true; root.setAttribute('aria-busy', 'true');
     root.querySelectorAll('button').forEach(b => { b.disabled = true; });
+    root.querySelectorAll('.toolbar input,.toolbar select,[data-repository-search]').forEach(e=>{e.disabled=true;});
     try { await fn(); } catch (e) { message(e.message); }
-    finally { busy = false; if (alive) { root.removeAttribute('aria-busy'); root.querySelectorAll('button').forEach(b => { b.disabled = false; }); renderSources(); q('[data-update]').disabled = !available().length && !availableSkills().length; } }
+    finally { busy = false; if (alive) { root.removeAttribute('aria-busy'); root.querySelectorAll('button').forEach(b => { b.disabled = false; }); root.querySelectorAll('.toolbar input,.toolbar select,[data-repository-search]').forEach(e=>{e.disabled=false;}); renderSources(); } }
   }
-  q('[data-add]').onclick = () => importDialog.show();
-  function available() { return sources.filter(s => s.update?.state === 'available' && s.update.preview?.preview_id); }
+  q('[data-add]').onclick = () => importDialog.show('local');
+  q('[data-add-entry]').onclick = () => importDialog.show('entry');
   function checkableSkills() { return libraryEntries.filter(e => e.can_check_update); }
-  function availableSkills() { return checkableSkills().filter(e => e.update?.state === 'upstream-new' && e.update.preview_id); }
-  function skillControls(entry) {
+  function filtersActive() {
+    return options.compactLibrary&&!!(q('[data-search]').value.trim()||q('[data-library-kind]').value||selectedRepository);
+  }
+  function clearFilters() {
+    q('[data-search]').value='';
+    q('[data-library-kind]').value='';q('[data-repository-search]').value='';selectedRepository='';
+    q('[data-search]').dispatchEvent(new Event('input',{bubbles:true}));
+  }
+  function scopedGroups(catalog=catalogGroups(sources,libraryEntries)) {
+    const kind=q('[data-library-kind]').value;
+    const search=q('[data-search]').value.trim().toLowerCase();
+    return catalog.filter(g=>!selectedRepository||g.key===selectedRepository).map(g=>{
+      const groupMatch=!search||JSON.stringify([g.title,g.host,g.url,...g.sources.map(s=>s.name)]).toLowerCase().includes(search);
+      const entries=g.entries.filter(e=>(!kind||e.kind===kind)&&
+        (groupMatch||JSON.stringify([e.name,e.description,e.kind,e.source?.repo_path,e.path]).toLowerCase().includes(search)));
+      const matchedSources=g.sources.filter(s=>entries.some(e=>e.sourceId===s.id)||(!kind&&groupMatch));
+      return {...g,entries,sources:matchedSources};
+    }).filter(g=>g.entries.length||g.sources.length);
+  }
+  function updateScope() {
+    if(!options.compactLibrary)return {sources,skills:checkableSkills()};
+    const groups=scopedGroups();
+    return {sources:groups.flatMap(g=>g.sources),skills:groups.flatMap(g=>g.entries).filter(e=>e.personal&&e.can_check_update)};
+  }
+  function syncUpdateControls() {
+    const scope=updateScope();
+    q('[data-update]').disabled = busy || (!scope.sources.some(s=>s.update?.state==='available'&&s.update.preview?.preview_id)&&!scope.skills.some(e=>e.update?.state==='upstream-new'&&e.update.preview_id));
+    q('[data-check]').disabled = busy || !(scope.sources.some(s=>s.management!=='external'&&s.can_update!==false) || scope.skills.length);
+    q('[data-check]').textContent=filtersActive()?'检查筛选项':'检查全部更新';
+    q('[data-update]').textContent=filtersActive()?'更新筛选项':'更新可用版本';
+  }
+  const UPDATE_LABELS = {'up-to-date':'已是最新','upstream-new':'可更新','local-modified':'本地已修改',conflict:'本地与上游冲突','upstream-missing':'上游已移除',stale:'请重新检查',error:'检查失败'};
+  const updateLabel = entry => UPDATE_LABELS[entry.update?.state] || '尚未检查更新';
+  function skillControls(entry, check = true) {
     if (!entry.can_check_update) return '';
-    const labels = {'up-to-date':'已是最新','upstream-new':'可更新','local-modified':'本地已修改',conflict:'本地与上游冲突','upstream-missing':'上游已移除',stale:'请重新检查',error:'检查失败'};
-    return `<span class="badge">${esc(labels[entry.update?.state] || '尚未检查')}</span><button data-skill-check="${esc(entry.name)}">检查更新</button>${entry.update?.state === 'upstream-new' && entry.update.preview_id ? `<button data-skill-update="${esc(entry.name)}">更新</button>` : ''}`;
+    return `<span class="badge">${esc(updateLabel(entry))}</span>${check?`<button data-skill-check="${esc(entry.name)}">检查更新</button>`:''}${entry.update?.state === 'upstream-new' && entry.update.preview_id ? `<button data-skill-update="${esc(entry.name)}">更新</button>` : ''}`;
   }
   function bindSkillUpdates() {
+    root.querySelectorAll('[data-catalog-binding]').forEach(b=>{b.onclick=()=>{const e=libraryEntries.find(e=>e.id===b.dataset.catalogBinding);if(e)bindingDialog.show({kind:'skill',id:e.id},e.source);};});
+
     root.querySelectorAll('[data-skill-check]').forEach(b => { b.onclick = () => run(async () => {
       const entry = libraryEntries.find(e => e.name === b.dataset.skillCheck);
       try { await api.checkUpdate(entry.name); message('检查完成。'); }
@@ -102,7 +196,7 @@ export function CollectionsPanel(container, options = {}) {
   async function update(items, skills = []) {
     const refs = items.flatMap(s => s.references || []);
     const removed = items.flatMap(s => s.update.preview.removed || []);
-    if (!await confirmAction('更新 ' + (items.length + skills.length) + ' 个来源或 Skill？' + (skills.length ? '' : '\n涉及 ' + refs.length + ' 处使用。') + '\n不会自动修改项目。' + (removed.length ? '\n上游删除：' + removed.join('、') : '') + '\n旧版本保留。', {title:'更新资源库', confirmLabel:'确认更新'})) return;
+    if (!await confirmAction('更新 ' + (items.length + skills.length) + ' 个来源或 Skill？' + (items.length ? '\n合集按整个版本更新：'+items.map(s=>s.name).join('、')+'。\n涉及 '+refs.length+' 处使用。' : '') + '\n不会自动修改项目。' + (removed.length ? '\n上游删除：' + removed.join('、') : '') + '\n旧版本保留。', {title:'更新资源库', confirmLabel:'确认更新'})) return;
     const failures = [];
     try {
       if (items.length) {
@@ -114,21 +208,23 @@ export function CollectionsPanel(container, options = {}) {
         catch (e) { failures.push(entry.name + '：' + e.message); }
       }
     } finally { changed(); await refresh(); }
-    message(failures.length ? '部分更新未完成：' + failures.join('；') + '。请重新检查；已成功的更新请到需要升级的项目应用。' : '资源库已更新。请到需要升级的项目应用改动。');
+    message(failures.length ? '部分更新未完成：' + failures.join('；') + '。请重新检查；已成功的更新请到项目或跨项目配置应用。' : '资源库已更新。请到项目或跨项目配置应用改动。');
   }
   q('[data-check]').onclick = () => run(async () => {
     message('正在检查更新…');
     let availableCount = 0, failedCount = 0;
     const failures = [];
+    const scope=updateScope();
     try {
-      if (sources.length) {
+      const collections=scope.sources.filter(s=>s.management!=='external'&&s.can_update!==false);
+      for(const id of filtersActive()?collections.map(s=>s.id):collections.length?[undefined]:[]) {
         try {
-          const v = await api.collectionCheck();
+          const v = await api.collectionCheck(id);
           availableCount += v.items.filter(i => i.state === 'available').length;
           failedCount += v.items.filter(i => i.state === 'error').length;
         } catch (e) { failedCount++; failures.push('来源合集：' + e.message); }
       }
-      for (const entry of checkableSkills()) {
+      for (const entry of scope.skills) {
         try {
           const v = await api.checkUpdate(entry.name);
           if (v.status.state === 'upstream-new') availableCount++;
@@ -137,17 +233,32 @@ export function CollectionsPanel(container, options = {}) {
     } finally { await refresh(); }
     message('检查完成：' + availableCount + ' 个可更新，' + failedCount + ' 个失败。' + failures.join('；'));
   });
-  q('[data-update]').onclick = () => run(() => update(available(), availableSkills()));
+  q('[data-update]').onclick = () => run(() => {const scope=updateScope();return update(scope.sources.filter(s=>s.update?.state==='available'&&s.update.preview?.preview_id),scope.skills.filter(e=>e.update?.state==='upstream-new'&&e.update.preview_id));});
   // AIL-126：跨页往返（如引用 Dialog「前往管理」后返回）恢复搜索上下文。
   if (options.searchKey) {
     try { q('[data-search]').value = sessionStorage.getItem(options.searchKey) || ''; } catch { /* 隐私模式忽略 */ }
     q('[data-search]').addEventListener('input', () => { try { sessionStorage.setItem(options.searchKey, q('[data-search]').value); } catch { /* 忽略 */ } });
   }
-  q('[data-search]').oninput = renderSources;
+  q('[data-search]').oninput = ()=>{renderSources();};
+  function groupUpdates(group) {
+    return {sources:group.sources.filter(s=>s.update?.state==='available'&&s.update.preview?.preview_id),
+      skills:group.entries.filter(e=>e.personal&&e.can_check_update&&e.update?.state==='upstream-new'&&e.update.preview_id)};
+  }
+  async function checkGroup(group) {
+    message('正在检查 '+group.title+'…');
+    const failures=[];
+    try {
+      for(const source of group.sources.filter(s=>s.management!=='external'&&s.can_update!==false)) {
+        try {await api.collectionCheck(source.id);}catch(e){failures.push(source.name+'：'+e.message);}
+      }
+      for(const entry of group.entries.filter(e=>e.personal&&e.can_check_update)) {
+        try {await api.checkUpdate(entry.name);}catch(e){failures.push(entry.name+'：'+e.message);}
+      }
+    } finally {await refresh();}
+    message(failures.length?'部分检查失败：'+failures.join('；'):'检查完成：'+group.title+'。');
+  }
   function renderSources() {
     if (!alive) return;
-    q('[data-update]').disabled = busy || (!available().length && !availableSkills().length);
-    q('[data-check]').disabled = busy || !(sources.length || checkableSkills().length);
     const search = q('[data-search]').value.toLowerCase();
     const groups = repositoryGroups(sources);
     const shown = groups.map(g => ({...g, sources:g.sources.map(s => ({...s, visibleResources:!search || (g.title + ' ' + s.url).toLowerCase().includes(search) ? s.resources : s.resources.filter(r => JSON.stringify([r.name,r.description,r.path,r.kind]).toLowerCase().includes(search))})).filter(s => !search || s.visibleResources.length || (g.title + ' ' + s.url).toLowerCase().includes(search))})).filter(g => g.sources.length);
@@ -156,19 +267,70 @@ export function CollectionsPanel(container, options = {}) {
     const localEntries = libraryEntries.filter(e => !search || JSON.stringify([e.name, e.id, e.description, e.kind]).toLowerCase().includes(search));
     const nothingVisible = !shown.length && !localEntries.length;
     if(options.compactLibrary) {
-      const kind=q('[data-library-kind]').value;
-      const unique=new Map();
+      const catalog=catalogGroups(sources,libraryEntries);
+      const byGroup=new Map(catalog.map(g=>[g.key,g]));
+      const unique=new Map(catalog.flatMap(g=>g.entries.map(e=>[e.id,e])));
       // 不同托管平台上的同名仓库（如 GitHub 与 GitLab 的 owner/repo）在标签里带上平台名以便区分。
-      const titleCount=groups.reduce((m,g)=>m.set(g.title,(m.get(g.title)||0)+1),new Map());
+      const titleCount=catalog.reduce((m,g)=>m.set(g.title,(m.get(g.title)||0)+1),new Map());
       const label=g=>titleCount.get(g.title)>1&&g.host?`${g.host} · ${g.title}`:g.title;
-      for(const g of shown)for(const source of g.sources)for(const resource of source.visibleResources)unique.set(resource.id,{...resource,sourceLabel:label(g),sourceId:source.id,updateState:source.update?.state});
-      for(const resource of localEntries)unique.set(resource.id,{...resource,sourceLabel:resource.can_check_update?'上游来源':'本地',editable:!!options.onEdit});
-      const entries=[...unique.values()].filter(e=>!kind||e.kind===kind);
+      if(!catalog.some(g=>g.key===selectedRepository))selectedRepository='';
+      const repositorySearch=q('[data-repository-search]').value.trim().toLowerCase();
+      const navButton=(key,title,count,host='')=>`<button data-repository-filter="${esc(key)}" class="item-surface" aria-pressed="${selectedRepository===key}" ${busy?'disabled':''}><span><strong>${esc(title)}</strong>${host?`<small>${esc(host)}</small>`:''}</span><span class="badge">${count}</span></button>`;
+      const navGroups=catalog.filter(g=>g.key===selectedRepository||!repositorySearch||JSON.stringify([g.title,g.host,...g.sources.map(s=>s.name)]).toLowerCase().includes(repositorySearch));
+      q('[data-repository-filters]').innerHTML=navButton('','全部资源',catalog.reduce((n,g)=>n+g.entries.length,0))+navGroups.map(g=>navButton(g.key,g.title,g.entries.length,g.host)).join('')+(navGroups.length?'':'<p class="muted">没有匹配的仓库或合集。</p>');
+      syncUpdateControls();
+      const scoped=scopedGroups(catalog),scopeByGroup=new Map(scoped.map(g=>[g.key,g]));
+      const allVisible=scoped.map(g=>({...g,visible:g.entries})).filter(g=>g.entries.length||g.sources.some(s=>s.error));
+      const allEntries=allVisible.flatMap(g=>g.visible),byName=q('[data-library-sort]').value==='name';
+      const visible=allVisible;
+      const entries=byName?[...allEntries].sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-CN',{numeric:true})):allEntries;
+      q('[data-library-count]').textContent=filtersActive()?`${allEntries.length} 项匹配 / ${catalog.reduce((n,g)=>n+g.entries.length,0)} 项能力`:`${allEntries.length} 项能力`;
+      q('.library-catalog-heading h2').textContent=selectedRepository?label(byGroup.get(selectedRepository)):'全部资源';
+      q('[data-select-source]').textContent=selectedRepository?label(byGroup.get(selectedRepository)):'全部来源';
+      q('[data-library-clear]').hidden=!filtersActive();q('[data-library-clear]').disabled=busy;
       const hasResources=libraryEntries.length||sources.some(s=>s.resources?.length);
-      q('[data-capability-catalog]').innerHTML=entries.length?`<ul class="repository-resources">${entries.map(e=>`<li class="repository-resource">${capabilityBadge(e.kind)}<div><h3>${esc(e.name||e.id)} ${e.sourceId?`<button class="library-entry-source" data-catalog-source="${esc(e.sourceId)}">${esc(e.sourceLabel)}</button>`:`<small class="library-entry-source">${esc(e.sourceLabel)}</small>`}${e.updateState==='available'?'<span class="badge ok">可更新</span>':''}</h3><p>${esc(e.description||'')}</p></div><div class="actions">${skillControls(e)}${e.editable?`<button data-catalog-edit="${esc(e.id)}">编辑</button>`:''}<button data-catalog-usage="${esc(e.id)}">使用位置</button></div></li>`).join('')}</ul>`:`<div class="empty-state"><h2>${hasResources?'没有匹配的资源':'把常用的 AI 能力放在这里'}</h2>${hasResources?'<button data-clear-filters>清除筛选</button>':'<p>技能、工具连接、规则、子代理</p><button data-first class="primary">导入第一个资源</button>'}</div>`;
-      q('[data-first]')?.addEventListener('click',()=>importDialog.show());
-      q('[data-clear-filters]')?.addEventListener('click',()=>{q('[data-search]').value='';q('[data-library-kind]').value='';q('[data-library-kind]').dispatchEvent(new Event('change',{bubbles:true}));q('[data-search]').dispatchEvent(new Event('input',{bubbles:true}));});
-      q('[data-capability-catalog]').querySelectorAll('[data-catalog-source]').forEach(b=>{b.onclick=()=>showSource(b.dataset.catalogSource);});
+      const row=e=>Item({title:e.name||e.id,primaryAction:{attributes:`data-catalog-view="${esc(e.id)}"`,label:'查看资源 '+(e.name||e.id)},description:e.description,path:resourcePath(e),leading:resourceIcon,meta:[e.kind!=='skill'?(capabilityTypes[e.kind]?.[0]||e.kind):'',allEntries.some(other=>other.id!==e.id&&other.name===e.name)?label(byGroup.get(e.groupKey)):'',e.can_check_update&&e.update?.state?updateLabel(e):''].filter(Boolean).join('，'),tag:'li',className:'repository-resource',attributes:`data-library-id="${esc(e.id)}"`,
+        // An available update keeps its button next to the status; everything else lives in the detail dialog.
+        actions:`${e.update?.state==='upstream-new'&&e.update.preview_id?`<button data-variant="ghost" data-skill-update="${esc(e.name)}" ${busy?'disabled':''}>更新</button>`:''}<button class="library-row-use" data-variant="ghost" data-catalog-use="${esc(e.id)}" ${busy?'disabled':''}>选用</button>`});
+      const controls=g=>{
+        const updates=groupUpdates(g),count=updates.sources.length+updates.skills.length;
+        const checkable=g.sources.some(s=>s.management!=='external'&&s.can_update!==false)||g.entries.some(e=>e.personal&&e.can_check_update);
+        if(!checkable&&!g.url&&!g.sources.length)return '';
+        return `<div class="actions">${checkable?`<button data-group-check="${esc(g.key)}" ${busy?'disabled':''}>检查更新</button><button data-group-update="${esc(g.key)}" ${busy||!count?'disabled':''}>更新${count?`（${count}）`:''}</button>`:''}${g.url?`<button data-group-install="${esc(g.key)}" ${busy?'disabled':''}>安装其他 Skills</button>`:''}${g.sources.length?`<button data-catalog-source="${esc(g.key)}" ${busy?'disabled':''}>来源详情${g.sources.length>1?`（${g.sources.length}）`:''}</button>`:''}</div>`;
+      };
+      q('[data-capability-catalog]').innerHTML=visible.length?(byName?`<ul class="repository-resources">${entries.sort((a,b)=>String(a.name).localeCompare(String(b.name),'zh-CN',{numeric:true})).map(row).join('')}</ul>`:
+        visible.map(g=>`<section class="library-repository" data-repository="${esc(g.key)}"><header class="library-repository-heading"><div><h3>${esc(label(g))}</h3><span class="muted">${g.visible.length} 项</span></div>${controls(g)?MoreActions('来源操作',controls(g)):''}</header>${g.sources.filter(s=>s.error).map(s=>`<p class="field-error">${esc(s.error)}</p>`).join('')}<ul class="repository-resources">${g.visible.map(row).join('')}</ul></section>`).join('')):
+        `<div class="empty-state"><h2>${hasResources?'没有匹配的资源':'把常用的 AI 能力放在这里'}</h2>${hasResources?'<button data-clear-filters>清除筛选</button>':'<p>技能、工具连接、规则、子代理</p><button data-first class="primary">安装第一个 Skill</button>'}</div>`;
+      root.querySelectorAll('[data-catalog-use]').forEach(b=>{b.onclick=async()=>{
+        const entry=unique.get(b.dataset.catalogUse),body=document.createElement('div');
+        body.innerHTML='<p role="status">正在读取项目…</p>';
+        const modal=Dialog(root,{title:'选用 '+(entry.name||entry.id),content:body});
+        try {
+          const state=await api.state();if(!alive||!modal.isOpen)return;
+          body.innerHTML=(state.repos||[]).map(repo=>Item({title:repo.project?.name||repo.repo_id,primaryAction:{href:'#/projects/'+encodeURIComponent(repo.repo_id),attributes:`data-use-project="${esc(repo.repo_id)}"`,label:'在此项目选用'},description:repo.repo_id.startsWith('nongit-')?'文件夹项目':'项目默认'})).join('')||'<p>先添加一个项目，再选择需要的能力。</p><a href="#/projects" data-use-empty>添加项目</a>';
+          body.querySelectorAll('[data-use-project]').forEach(a=>{a.onclick=()=>{sessionStorage.setItem('ailoom-pick-resource',JSON.stringify({id:entry.id,repoId:a.dataset.useProject}));sessionStorage.setItem('ailoom-directory-view',JSON.stringify({repoId:a.dataset.useProject,node:'project'}));sessionStorage.removeItem('ailoom-return-after-settings');modal.close();};});
+          body.querySelector('[data-use-empty]')?.addEventListener('click',()=>modal.close());
+        }catch(e){if(modal.isOpen)body.textContent=e.message;}
+      };});
+      root.querySelectorAll('[data-catalog-view]').forEach(b=>{b.onclick=()=>{
+        const entry=unique.get(b.dataset.catalogView),group=byGroup.get(entry.groupKey),content=document.createElement('div');
+        content.innerHTML=`<p>${esc(entry.description||'暂无说明')}</p><p class="muted">${esc(capabilityTypes[entry.kind]?.[0]||entry.kind)}，来自${esc(label(group))}</p>${entry.can_check_update?`<p class="muted">${esc(updateLabel(entry))}</p>`:''}<details><summary>来源与位置</summary><p class="path">${esc(entry.path||entry.id)}</p>${group.url?`<p class="path">${esc(group.url)}</p>`:''}</details>`;
+        // Low-frequency actions are visible buttons here, not a menu on every row.
+        const then=fn=>()=>{resourceDialog.close();fn();return false;};
+        const actions=[{label:'关闭'}];
+        if(entry.personal&&options.onEdit)actions.push({label:'编辑',onAction:then(()=>options.onEdit(entry.id))});
+        if(entry.personal&&entry.kind==='skill'&&entry.source)actions.push({label:entry.source.source_kind==='local'&&!entry.source.repo_url?'关联 Git':'来源',onAction:then(()=>bindingDialog.show({kind:'skill',id:entry.id},entry.source))});
+        if(entry.can_check_update)actions.push({label:'检查更新',onAction:then(()=>run(async()=>{try{await api.checkUpdate(entry.name);message('检查完成。');}finally{await refresh();}}))});
+        if(entry.update?.state==='upstream-new'&&entry.update.preview_id)actions.push({label:'更新',onAction:then(()=>run(()=>update([],[entry])))});
+        actions.push({label:'使用位置',variant:'default',onAction:then(()=>{referenceDialog?.destroy();referenceDialog=ResourceReferences(root,{resourceId:entry.id,resourceName:entry.name});})});
+        resourceDialog?.destroy();resourceDialog=Dialog(root,{title:entry.name||entry.id,content,actions});
+      };});
+      root.querySelectorAll('[data-group-check]').forEach(b=>{b.onclick=()=>run(()=>checkGroup(scopeByGroup.get(b.dataset.groupCheck)));});
+      root.querySelectorAll('[data-group-update]').forEach(b=>{b.onclick=()=>run(()=>{const pending=groupUpdates(scopeByGroup.get(b.dataset.groupUpdate));return update(pending.sources,pending.skills);});});
+      root.querySelectorAll('[data-group-install]').forEach(b=>{b.onclick=()=>{const g=byGroup.get(b.dataset.groupInstall);gitDialog.show({url:g.url,ref:g.ref});};});
+      q('[data-first]')?.addEventListener('click',()=>gitDialog.show());
+      q('[data-clear-filters]')?.addEventListener('click',clearFilters);
+      q('[data-capability-catalog]').querySelectorAll('[data-catalog-source]').forEach(b=>{b.onclick=()=>showSources(byGroup.get(b.dataset.catalogSource).sources);});
       q('[data-capability-catalog]').querySelectorAll('[data-catalog-edit]').forEach(b=>{b.onclick=()=>options.onEdit?.(b.dataset.catalogEdit);});
       q('[data-capability-catalog]').querySelectorAll('[data-catalog-usage]').forEach(b=>{b.onclick=()=>{
         referenceDialog?.destroy();const entry=unique.get(b.dataset.catalogUsage);
@@ -177,6 +339,7 @@ export function CollectionsPanel(container, options = {}) {
       bindSkillUpdates();
       return;
     }
+    syncUpdateControls();
 
     q('[data-sources]').innerHTML = (!sources.length && !libraryEntries.length) ? `<div class="empty-state"><h2>先添加你的第一个资源来源</h2><p>连接自己的 Git 合集，或导入第三方 Skill。来源、版本和引用项目都会记录在这里。</p><button data-first class="primary">选择来源并导入</button></div>`
       : nothingVisible ? '<p>没有匹配的资源来源。</p>'
@@ -226,11 +389,21 @@ export function CollectionsPanel(container, options = {}) {
       await api.collectionRemove(b.dataset.remove, true); changed(); await refresh(); message('来源已移除。已有项目文件和历史版本未删除。');
     }); });
   }
+  function showSources(items) {
+    if(items.length===1){showSource(items[0].id);return;}
+    const content=document.createElement('div');
+    content.className='library-source-picker';
+    content.innerHTML=items.length?items.map(s=>`<button data-source-choice="${esc(s.id)}"><strong>${esc(s.name)} · ${esc(s.lock?.ref_||s.lock?.ref||'默认分支')}</strong><span class="muted path">${esc(s.connection_url||s.url||s.store_path||'本地文件夹')}</span><span class="muted">${s.resources?.length||0} 项 · ${s.management==='external'?'原目录维护':'AILoom 管理'}</span></button>`).join(''):'<p class="muted">还没有登记的合集来源。</p>';
+    referenceDialog?.destroy();
+    const modal=Dialog(root,{title:'选择要管理的来源',content,actions:[{label:'关闭'}]});
+    referenceDialog=modal;
+    content.querySelectorAll('[data-source-choice]').forEach(b=>{b.onclick=()=>{modal.destroy();showSource(b.dataset.sourceChoice);};});
+  }
   function showSource(id) {
     const source=sources.find(s=>s.id===id);if(!source)return;
     const content=document.createElement('div');
-    content.innerHTML=`<p class="path">${esc(source.url||source.store_path||'本地文件夹')}</p>${source.migration?.provider==='cc-switch'?'<p class="muted">从 CC Switch 迁入</p>':''}${source.error?`<p class="field-error">${esc(source.error)}</p>`:''}<p>${source.resources.length} 项能力</p>`;
-    const modal=Dialog(root,{title:source.name||'来源详情',content,actions:[{label:'关闭'},{label:'移除来源',variant:'destructive',onAction:async()=>{
+    content.innerHTML=`<p class="path">${esc(source.connection_url||source.url||source.store_path||'本地文件夹')}</p>${source.migration?.provider==='cc-switch'?'<p class="muted">从 CC Switch 迁入</p>':''}${source.error?`<p class="field-error">${esc(source.error)}</p>`:''}<p>${source.resources.length} 项能力</p><dl class="source-version"><dt>当前版本</dt><dd><code>${esc(source.lock?.resolved_commit||'本地内容')}</code></dd><dt>分支 / 标签</dt><dd>${esc(source.update_ref||source.lock?.ref_||source.lock?.ref||'默认分支')}</dd></dl>`;
+    const modal=Dialog(root,{title:source.name||'来源详情',content,actions:[{label:'关闭'},...(source.can_rebind!==false&&source.management!=='external'?[{label:'变更来源',onAction:()=>{modal.close();bindingDialog.show({kind:'collection',id},source);return false;}}]:[]),{label:'移除来源',variant:'destructive',onAction:async()=>{
       try {
         const preview=await api.collectionRemove(id);
         if(preview.references.length){message('此来源仍在项目中使用，请先到对应项目移除能力。');return false;}
@@ -250,5 +423,5 @@ export function CollectionsPanel(container, options = {}) {
     }
   }
   refresh().catch(e => message(e.message));
-  return { refresh, destroy() { alive = false; referenceDialog?.destroy(); migrationDialog.destroy(); importDialog.destroy(); root.remove(); } };
+  return { refresh, destroy() { alive = false; resourceDialog?.destroy();referenceDialog?.destroy(); migrationDialog.destroy(); importDialog.destroy(); gitDialog.destroy(); bindingDialog.destroy(); root.remove(); } };
 }

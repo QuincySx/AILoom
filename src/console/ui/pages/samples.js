@@ -10,6 +10,7 @@ import { StatusBadge } from '../components/badge.js';
 import { DataTable } from '../components/dataTable.js';
 import { DiffView } from '../components/diffView.js';
 import { ConflictPanel } from '../components/conflictPanel.js';
+import { Item } from '../components/item.js';
 
 const HOST_STATES = ['needs-new-session', 'needs-approval', 'host-unverified', 'deployed', 'missing'];
 const LONG = '长内容样例：'.repeat(40);
@@ -50,6 +51,38 @@ function plainTable(parent, label, props) {
 export function mount(container, ctx) {
   root = document.createElement('div');
   container.appendChild(root);
+
+  // Real shared controls, with read-only measurements of actual pointer/keyboard states.
+  const sItem = section('Item：状态与命中范围');
+  const itemList=document.createElement('div');
+  itemList.dataset.itemSamples='';
+  const shared={title:'一致性样例',description:'同一份内容，同一套间距',actions:'<button data-item-secondary type="button">操作</button>'};
+  itemList.innerHTML=[
+    Item({...shared,primaryAction:{attributes:'data-item-sample="button"'}}),
+    Item({...shared,density:'regular',primaryAction:{href:'#/samples',attributes:'data-item-sample="link"'}}),
+    Item({...shared,attributes:'aria-current="true"',primaryAction:{attributes:'data-item-sample="selected"'}}),
+    Item({title:shared.title,description:shared.description,tag:'label',density:'regular',attributes:'data-item-sample="choice"',leading:'<input type="checkbox" aria-label="选择一致性样例">'}),
+    Item({...shared,primaryAction:{attributes:'data-item-sample="disabled"',disabled:true},actions:'<button disabled>操作</button>'}),
+  ].join('');
+  const hint=document.createElement('p');hint.className='muted';hint.textContent='依次悬停、按下、Tab 聚焦或空格选择。下方记录真实尺寸与背景；状态不应改变宽高，右侧操作独立。';
+  const readout=document.createElement('pre');readout.className='log';readout.dataset.itemMeasurements='';
+  const records=new Map();
+  const measure=(surface,event)=>{
+    const box=surface.getBoundingClientRect(),style=getComputedStyle(surface);
+    const state=surface.matches(':disabled,:has(input:disabled)')?'禁用':surface.matches(':active')?'按下':surface.closest('[aria-current=true]')||surface.matches(':has(input:checked)')?'选中':surface.matches(':focus-visible,:has(input:focus-visible)')?'焦点':surface.matches(':hover')?'悬停':'默认';
+    records.set(surface.dataset.itemSample+' / '+state,`${Math.round(box.width*100)/100} × ${Math.round(box.height*100)/100} · ${style.backgroundColor} · ${event}`);
+    readout.textContent=[...records].slice(-10).map(([key,value])=>key+'：'+value).join('\n');
+  };
+  for(const [event,state] of [['pointerover','悬停'],['pointerdown','按下'],['pointerup','松开'],['focusin','聚焦'],['change','选择']]){
+    itemList.addEventListener(event,e=>{const surface=e.target.closest('[data-item-sample]');if(surface)requestAnimationFrame(()=>{if(surface.isConnected)measure(surface,state);});});
+  }
+  itemList.addEventListener('click',e=>{
+    const surface=e.target.closest('[data-item-sample]');
+    if(surface){if(surface.tagName==='A')e.preventDefault();requestAnimationFrame(()=>{if(surface.isConnected)measure(surface,'点击');});}
+    if(e.target.closest('[data-item-secondary]'))readout.textContent='次操作已触发，未触发 Item 主入口。';
+  });
+  sItem.append(hint,itemList,readout);
+  requestAnimationFrame(()=>{if(itemList.isConnected)itemList.querySelectorAll('[data-item-sample]').forEach(el=>measure(el,'默认'));});
 
   // Button：正常/禁用/pending
   const sBtn = section('Button');

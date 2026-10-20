@@ -7,7 +7,10 @@ import { setTarget, sharedSettingsTarget } from '../state/target.js';
 import { InstructionsPanel } from '../features/instructionsPanel.js';
 import { NativeFiles } from '../features/nativeFiles.js';
 import { KnowledgePanel } from '../features/knowledgePanel.js';
+import { TeamSourceDialog } from '../features/teamSourceDialog.js';
 import {projectNavigation} from '../components/sectionNav.js';
+import {PageHeader,setBreadcrumb} from '../components/layout.js';
+import {Item} from '../components/item.js';
 
 const RETURN_KEY = 'ailoom-return-after-settings';
 
@@ -54,10 +57,13 @@ export function mount(container, ctx = {}) {
   }
 
   function renderShell() {
-    root.innerHTML = `${projectNavigation({id:repo.repo_id,name:repo.project?.name||repo.repo_id,active:tab===1?'instructions':'settings'})}
-      <header class="project-heading"><div><h1>${tab===1?'项目说明':'设置'}</h1></div></header>
+    const name=repo.project?.name||Object.values(repo.worktrees||{})[0]?.path?.split('/').filter(Boolean).pop()||repo.repo_id;
+    const title=tab===1?'项目说明':tab===3?'知识库':'项目设置';
+    setBreadcrumb([{label:'项目',href:'#/projects'},{label:name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:title}]);
+    // The breadcrumb already names the project and leads back to it.
+    root.innerHTML = `${PageHeader({title,description:tab===1?'所有工作目录共用这份说明。':tab===3?'保存和整理项目知识。':'共享设置对整个项目生效。'})}
+      ${projectNavigation({id:repo.repo_id,active:tab===1?'instructions':tab===3?'knowledge':'settings',settings:true})}
       <p data-message role="status"></p>
-      ${tab!==1?'<nav class="project-tabs" aria-label="项目设置"><button data-tab="2">基本信息</button><button data-tab="3">知识库位置</button><button data-tab="4">本地文件</button></nav>':''}
       <div data-content></div>`;
     root.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => {
       location.hash=`#/projects/${encodeURIComponent(repo.repo_id)}/${b.dataset.tab==='4'?'files':b.dataset.tab==='3'?'knowledge':'settings'}`;
@@ -88,11 +94,14 @@ export function mount(container, ctx = {}) {
     const isGit = !repo.repo_id.startsWith('nongit-');
     let saving = false;
     slot.innerHTML = `<form class="project-settings-profile">
-      <label>名称<input name="name" required maxlength="120" value="${esc(repo.project?.name || '')}"></label>
-      <label>分类<input name="category" maxlength="80" value="${esc(repo.project?.category || '')}" placeholder="未分类"></label>
-      <button type="submit" class="primary" disabled>保存</button>
+      <label>名称<span class="input-action"><input name="name" required maxlength="120" value="${esc(repo.project?.name || '')}"><button type="submit" class="primary" disabled>保存设置</button></span></label>
+      <div class="field"><label>本地位置</label><p class="path">${esc(target.rootPath)}</p></div><details><summary>项目分类</summary><label>分类<input name="category" maxlength="80" value="${esc(repo.project?.category || '')}" placeholder="未分类"></label></details>
       <p data-form-error class="field-error" role="alert"></p>
     </form>
+    <section class="project-settings-directories" data-team-source>
+      <div class="tab-actions"><h2>团队资源来源</h2><button data-edit-team-source disabled>修改来源</button></div>
+      <div data-team-source-info role="status">正在读取来源…</div>
+    </section>
     <section class="project-settings-directories">
       <div class="tab-actions"><h2>工作目录</h2>${isGit ? '<button data-refresh>刷新分支目录</button>' : ''}</div>
       <div data-directories role="status">正在读取目录…</div>
@@ -113,7 +122,7 @@ export function mount(container, ctx = {}) {
         if (disposed) return;
         repo.project = saved;
         name.value = saved.name || ''; category.value = saved.category || '';
-        root.querySelector('.context-breadcrumb strong').textContent = saved.name;
+        setBreadcrumb([{label:'项目',href:'#/projects'},{label:saved.name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:'项目设置'}]);
         root.querySelector('[data-message]').textContent = '已保存';
         slot.querySelectorAll('[data-root-name]').forEach(el => el.textContent = saved.name);
       } catch (e) { if (!disposed) form.querySelector('[data-form-error]').textContent = e.message; }
@@ -126,6 +135,29 @@ export function mount(container, ctx = {}) {
     const directorySlot = slot.querySelector('[data-directories]');
     const version = renderVersion;
     const active = () => !disposed && version === renderVersion;
+    async function teamSource() {
+      const section = slot.querySelector('[data-team-source]');
+      const info = slot.querySelector('[data-team-source-info]');
+      const edit = slot.querySelector('[data-edit-team-source]');
+      edit.disabled = true;
+      try {
+        const source = await api.projectSource({action:'read',root:target.rootPath});
+        if (!active()) return;
+        section.hidden = false;
+        info.innerHTML = `<div class="project-settings-directory"><div><strong>${source.source.type==='git'?'Git 仓库':'已有文件夹'}</strong><p class="path">${esc(source.source.url || source.source.path)}</p>${source.source.ref?`<p class="muted">分支 / 标签：${esc(source.source.ref)}</p>`:''}${source.source.type==='git'?`<p class="path muted">下载目录：${esc(source.cache_root)}</p>`:''}<p class="path muted">应用于工作目录：${esc(source.root)}</p></div></div>`;
+        edit.disabled = false;
+        edit.onclick = () => children.push(TeamSourceDialog(root,{rootPath:source.root,onSaved:async()=>{
+          if (!active()) return;
+          await teamSource();
+          if (active()) root.querySelector('[data-message]').textContent = '团队来源已修改。到工作目录预览并应用改动。';
+        }}));
+      } catch (e) {
+        if (!active()) return;
+        if (e.message === '项目尚未绑定团队来源') { section.hidden = true; return; }
+        info.textContent = e.message;
+      }
+    }
+    teamSource();
     async function directories() {
       const groups = await Promise.all(Object.entries(repo.worktrees || {}).map(async ([id,w]) => {
         if (w.status === 'missing') return {id,w,dirs:[],error:'目录不存在'};
@@ -140,8 +172,9 @@ export function mount(container, ctx = {}) {
       directorySlot.innerHTML = groups.map(({id,w,dirs,error}) => {
         const row = (label,rel,kind) => {
           const index = rows.push({repoId:repo.repo_id,wt:id,dir:rel,node:kind,tab:0}) - 1;
-          return `<div class="project-settings-directory"><div><strong ${!isGit && !rel ? 'data-root-name' : ''}>${esc(label)}</strong><p class="path muted"><ailoom-path title="${esc(rel ? w.path + '/' + rel : w.path)}">${esc(rel ? w.path + '/' + rel : w.path)}</ailoom-path></p></div>
-            ${w.status === 'missing' ? '<span class="badge">目录不存在</span>' : `<a href="#/projects/${encodeURIComponent(repo.repo_id)}" data-directory="${index}">${rel ? '管理能力' : '管理能力与子目录'}</a>`}</div>`;
+          const path=rel?w.path+'/'+rel:w.path;
+          return Item({title:label,titleMarkup:`<span ${!isGit&&!rel?'data-root-name':''}>${esc(label)}</span>`,description:path,density:'regular',className:'project-settings-directory',primaryAction:w.status==='missing'?null:{href:`#/projects/${encodeURIComponent(repo.repo_id)}`,attributes:`data-directory="${index}"`,label:'配置目录 '+label},actions:w.status==='missing'?'<span class="badge warn">目录失联</span>':''});
+
         };
         return row(isGit ? (w.branch?.replace(/^refs\/heads\//,'') || w.path.split('/').filter(Boolean).pop()) : (repo.project?.name || '项目目录'),'',isGit?'worktree':'project')
           + [...new Set(dirs.map(d=>d.path).filter(Boolean))].map(rel=>row(rel,rel,'directory')).join('')

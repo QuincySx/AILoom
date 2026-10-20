@@ -69,7 +69,7 @@ export function DirectoryPicker(container, { title, rootPath, rootLabel = '根�
     if (query) {
       const hits = filteredDirs('');
       tree.innerHTML = hits.length ? `<div role="treeitem" aria-level="1">${hits.map(p => `
-        <div class="dir-row" data-rel="${esc(p)}" role="treeitem" aria-selected="${p === currentRelative}" tabindex="0">
+        <div class="dir-row item-surface" data-rel="${esc(p)}" role="treeitem" aria-selected="${p === currentRelative}" tabindex="0">
           <span class="dir-name">${esc(p.split('/').pop())}</span><span class="path dir-rel"><ailoom-path tabindex="-1" title="${esc(p)}">${esc(p)}</ailoom-path></span>
           ${configuredNote(p) ? `<span class="badge">${esc(configuredNote(p))}</span>` : ''}
         </div>`).join('')}</div>`
@@ -78,7 +78,7 @@ export function DirectoryPicker(container, { title, rootPath, rootLabel = '根�
       syncSelected();
       return;
     }
-    const lines = [`<div class="dir-row" data-rel="" role="treeitem" aria-selected="${currentRelative === ''}" tabindex="0">
+    const lines = [`<div class="dir-row item-surface" data-rel="" role="treeitem" aria-selected="${currentRelative === ''}" tabindex="0">
       <span class="dir-name">${esc(rootLabel)}</span>${configuredNote('') ? `<span class="badge">${esc(configuredNote(''))}</span>` : ''}
       <span class="muted dir-note">项目根目录</span></div>`];
     const renderLevel = async (rel, depth) => {
@@ -87,7 +87,7 @@ export function DirectoryPicker(container, { title, rootPath, rootLabel = '根�
       for (const name of dirs) {
         const childRel = rel ? rel + '/' + name : name;
         const conf = configuredNote(childRel);
-        lines.push(`<div class="dir-row" data-rel="${esc(childRel)}" role="treeitem" aria-selected="${childRel === currentRelative}" aria-level="${depth + 1}" tabindex="0" style="--dir-depth:${depth}">
+        lines.push(`<div class="dir-row item-surface" data-rel="${esc(childRel)}" role="treeitem" aria-selected="${childRel === currentRelative}" aria-level="${depth + 1}" tabindex="0" style="--dir-depth:${depth}">
           <span class="dir-twist" data-twist="${esc(childRel)}" role="button" aria-label="展开 ${esc(name)}" aria-expanded="${expanded.has(childRel)}">${expanded.has(childRel) ? '⌄' : '›'}</span>
           <span class="dir-name">${esc(name)}</span>
           ${conf ? `<span class="badge">${esc(conf)}</span>` : ''}

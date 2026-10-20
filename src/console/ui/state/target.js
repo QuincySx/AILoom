@@ -116,3 +116,11 @@ export function diffOf(trace, layer) {
     : up?.choice === 'disable' ? 'follow-off' : 'off';
   return { here, upstream: up, mode };
 }
+
+// Global availability is per actual deployed tool, never just a saved selection or short name.
+export function globallyAvailable(effective) {
+  const tools=Object.entries(effective?.hosts||{}).filter(([,host])=>host.enabled).map(([tool])=>tool);
+  if(!tools.length)return new Set();
+  const deployed=effective?.global_deployments||[];
+  return new Set(deployed.map(entry=>entry.resource_id).filter(id=>tools.every(tool=>deployed.some(entry=>entry.resource_id===id&&entry.tool===tool))));
+}

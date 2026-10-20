@@ -3,41 +3,49 @@
 :root {
   color-scheme: light;
   --background: #ffffff;
-  --foreground: #18181b;
+  --foreground: #242b3d;
   --card: #ffffff;
   --card-foreground: var(--foreground);
-  --primary: #18181b;
-  --primary-foreground: #fafafa;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #27272a;
-  --muted: #f4f4f5;
-  --muted-foreground: #64646f;
-  --accent: #ededf0;
-  --accent-foreground: var(--foreground);
-  --destructive: #b42332;
+  --primary: #4d5ddf;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f4fa;
+  --secondary-foreground: #242b3d;
+  --muted: #f2f4fa;
+  --muted-foreground: #5f697d;
+  --accent: #eef0ff;
+  --accent-foreground: var(--primary);
+  --pressed: #e8ecf6;
+  --destructive: #ba3c4b;
   --destructive-foreground: #ffffff;
   --destructive-muted: #fff0f1;
-  --success: #236544;
+  --success: #19745e;
   --success-muted: #edf7f0;
-  --warning: #84520e;
+  --warning: #96621b;
   --warning-muted: #fff6e4;
-  --border: #e4e4e7;
-  --input: #d4d4d8;
-  --ring: #71717a;
-  --sidebar: #fafafa;
-  --overlay: #18181b66;
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364646f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --border: #e4e8f0;
+  --input: #e4e8f0;
+  --ring: #8090f0;
+  --sidebar: #f9fafc;
+  --brand: #4d5ddf;
+  --agent-claude: #d97757;
+  --agent-codex: #000000;
+  --agent-inactive: #a7adba;
+  --overlay: #242b3d66;
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235f697d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --code-background: #202024;
-  --code-foreground: #f4f4f5;
+  --code-foreground: #f2f4fa;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, monospace;
-  --fs-h1: 26px;
-  --fs-h2: 18px;
-  --fs-body: 15px;
+  --fs-h1: 22px;
+  --fs-h2: 16px;
+  --fs-body: 14px;
+  --fs-label: 13px;
   --fs-small: 14px;
-  --fs-tiny: 13px;
+  --fs-tiny: 12px;
+  --fs-hint: 12px;
   --sp-1: 4px;
   --sp-2: 8px;
+  --sp-compact: 6px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 24px;
@@ -46,8 +54,25 @@
   --radius: 6px;
   --radius-lg: 10px;
   --border-width: 1px;
-  --control-height: 44px;
-  --sidebar-width: 208px;
+  --control-height: 34px;
+  --compact-height: 34px;
+  --navigation-height: 34px;
+  --touch-target: 44px;
+  --textarea-height: 192px;
+  --header-height: 52px;
+  --item-padding: 4px;
+  --item-regular-padding: 4px;
+  --content-width: 1120px;
+  --page-inset: 32px;
+  --directory-width: 200px;
+  --row-action: 28px;
+  --agent-hit-w: 24px;
+  --agent-hit-h: 32px;
+  --agent-logo: 16px;
+  --tree-row: 28px;
+  --icon: 16px;
+  --page-gap: 32px;
+  --sidebar-width: 184px;
   --duration-feedback: 140ms;
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
   /* Compatibility aliases, not a second palette. */
@@ -67,4 +92,23 @@
   --c-bad-bg: var(--destructive-muted);
   --c-code-bg: var(--code-background);
   --c-code-ink: var(--code-foreground);
+}
+@media (min-width:701px) and (max-width:1199px) {
+  :root { --sidebar-width:164px; --directory-width:192px; --page-inset:28px; --page-gap:24px; }
+}
+@media (max-width: 700px) {
+  :root {
+    --control-height: var(--touch-target);
+    --compact-height: var(--touch-target);
+    --navigation-height: var(--touch-target);
+    --header-height: 60px;
+    --textarea-height: 224px;
+    --page-inset: 16px;
+    --page-gap: 12px;
+    --fs-h1: 20px;
+    --row-action: var(--touch-target);
+    --agent-hit-w: var(--touch-target);
+    --agent-hit-h: var(--touch-target);
+    --tree-row: var(--touch-target);
+  }
 }

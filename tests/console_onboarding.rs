@@ -117,8 +117,8 @@ fn ail047_onboarding_first_run_closed_loop() {
         );
     }
     assert!(
-        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("① 添加项目")
-            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("③ 添加并应用")
+        ailoom::console::ui::PAGE_ONBOARDING_JS.contains("'添加项目'")
+            && ailoom::console::ui::PAGE_ONBOARDING_JS.contains("'添加并应用'")
             && ailoom::console::ui::APP_JS.contains("hashchange")
             && ailoom::console::ui::lookup("/ui/pages/workspace.js")
                 .is_some_and(|(js, _)| js.contains("api.plan(") && js.contains("api.apply(")),

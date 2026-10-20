@@ -8,6 +8,8 @@ import { currentTarget, setTarget } from './state/target.js';
 import { notify, subscribe } from './state/store.js';
 import { Dialog, confirmAction } from './components/dialog.js';
 import { installSelects } from './components/select.js';
+import { AppHeader, setBreadcrumb } from './components/layout.js';
+import { installItemMenus } from './components/item.js';
 
 import * as pageSamples from './pages/samples.js';
 import * as pageOnboarding from './pages/onboarding.js';
@@ -23,7 +25,8 @@ const ROUTES = {
   '#/projects/manage': { title: '管理目录', mount: pageProjects.mount, hidden: true },
   '#/samples': { title: '组件样例', mount: pageSamples.mount, hidden: true },
   '#/onboarding': { title: '开始使用', mount: pageOnboarding.mount, hidden: true },
-  '#/library/global': { title: '跨项目配置', mount: pageNativeFiles.mount, hidden:true },
+  '#/library/global': { title: '全局技能', mount: pageNativeFiles.mount, hidden:true },
+  '#/library/rules': { title:'规则与子代理', mount:pageNativeFiles.mount, hidden:true },
   '#/library': { title: '资源库', mount: pageLibrary.mount },
   '#/tasks': { title: '操作记录', mount: pageTasks.mount, secondary: true },
 };
@@ -43,8 +46,12 @@ function shell() {
   bar.className = 'muted';
   const app = document.createElement('main');
   app.id = 'app';
-  document.body.append(nav, bar, app);
+  const breadcrumb = document.createElement('header');
+  breadcrumb.id = 'page-breadcrumb';
+  breadcrumb.className = 'app-breadcrumb';
+  document.body.append(nav, breadcrumb, bar, app);
   installSelects(app);
+  installItemMenus(document.body);
   renderNav();
   subscribe('target', renderTargetBar);
   setInterval(checkConnection, 10000);
@@ -53,33 +60,7 @@ function shell() {
 function renderNav() {
   const nav = document.querySelector('#nav');
   if (!nav) return;
-  const isActive = (route) => location.hash === route || (['#/projects','#/library'].includes(route) && location.hash.startsWith(route+'/'));
-  const button = (route, def) => {
-    const b = document.createElement('button');
-    b.textContent = def.title;
-    if (isActive(route)) { b.className = 'on'; b.setAttribute('aria-current', 'page'); }
-    b.onclick = () => { location.hash = route; };
-    return b;
-  };
-  nav.innerHTML = '<a class="brand" href="#/projects" aria-label="AILoom 项目首页">AILoom</a>';
-  for (const [route, def] of Object.entries(ROUTES)) {
-    if (def.hidden || def.secondary) continue;
-    nav.appendChild(button(route, def));
-  }
-  // 辅助入口：操作记录（配置操作留痕），与主工作区分组呈现
-  const auxiliary = Object.entries(ROUTES).filter(([, def]) => def.secondary);
-  if (auxiliary.length) {
-    nav.insertAdjacentHTML('beforeend', '<div class="nav-label">历史</div>');
-    for (const [route, def] of auxiliary) nav.appendChild(button(route, def));
-  }
-  const help = document.createElement('button');
-  help.className='help-menu-button';help.textContent='帮助';help.onclick=()=>{location.hash='#/onboarding';};nav.append(help);
-  if(location.hash==='#/onboarding'){help.classList.add('on');help.setAttribute('aria-current','page');}
-  const service = document.createElement('button');
-  service.className = 'service-menu-button';
-  service.textContent = '服务';
-  service.onclick = openService;
-  nav.append(service);
+  AppHeader(nav, {route:location.hash});
 }
 
 async function openService() {
@@ -90,7 +71,8 @@ async function openService() {
   try {
     const state = await api.serviceStatus();
     if (closed) return;
-    body.innerHTML = `<p>运行中 · 端口 ${esc(state.port)}</p>
+    body.innerHTML = `<p>运行中 · ${state.build?.version?'v'+esc(state.build.version)+' · ':''}端口 ${esc(state.port)}</p>
+      ${state.build?`<details><summary>正在运行的程序</summary><p class="path">${esc(state.build.executable||'未知')}</p><p class="path">构建 ${esc(state.build.sha256?.slice(0,12)||'未知')}</p></details>`:''}
       <label><input type="checkbox" data-autostart ${state.autostart.enabled?'checked':''} ${state.autostart.supported?'':'disabled'}> 登录时自动启动</label>
       <p class="muted">关闭网页后仍在后台运行，CLI 可独立使用。</p>
       <p data-service-message role="status"></p>
@@ -132,7 +114,7 @@ async function openService() {
         serviceStopped=true;
         currentPage?.destroy?.(); currentPage=null;
         document.querySelector('#app').innerHTML='<p role="status">停止请求已提交，现有任务完成后退出。</p><p>重新打开：<code>ailoom web</code></p>';
-        document.querySelectorAll('#nav button').forEach(b=>b.disabled=true);
+        document.querySelectorAll('#nav a').forEach(a=>a.removeAttribute('href'));
         dialog.close();
       } catch(e) {
         message.textContent=e.message;stop.disabled=false;toggle.disabled=!state.autostart.supported;
@@ -179,14 +161,16 @@ async function route() {
     if (version !== routeVersion) return;
     if (!proceed) { history.replaceState(null, '', activeRoute); return; }
   }
-  const def = settingsMatch ? {title:'项目设置', mount:pageProjectSettings.mount}
+  const projectFiles = settingsMatch?.[2] === 'files';
+  const def = settingsMatch ? {title:({instructions:'项目说明',knowledge:'知识库',files:'本地文件'})[settingsMatch[2]]||'项目设置', mount:projectFiles?pageWorkspace.mount:pageProjectSettings.mount}
     : projectMatch ? {title:'目录能力', mount:pageWorkspace.mount} : ROUTES[location.hash];
   document.title = `AILoom 本地控制台 · ${def.title}`;
   const app = document.querySelector('#app');
   currentPage?.destroy?.();
   currentPage = null;
   app.innerHTML = '';
-  app.classList.toggle('workspace-host', !!projectMatch);
+  app.classList.toggle('workspace-host', !!projectMatch || projectFiles);
+  setBreadcrumb([{label:'工作空间'}, {label:def.title}]);
   if (settingsMatch) {
     currentPage = def.mount(app, {
       projectId: decodeURIComponent(settingsMatch[1]),
@@ -203,6 +187,7 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+document.addEventListener('click', event => { if (event.target.closest('[data-open-service]')) openService(); });
 window.addEventListener('beforeunload', (event) => {
   if (currentPage?.isDirty?.()) { event.preventDefault(); event.returnValue = ''; }
 });

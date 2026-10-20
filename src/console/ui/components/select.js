@@ -43,6 +43,7 @@ export function Select(source) {
     if (disposed) return;
     const selected = source.options[source.selectedIndex];
     text.textContent = selected?.label || '请选择';
+    trigger.title = selected?.label || '请选择';
     trigger.disabled = source.matches(':disabled') || !!source.closest('[aria-busy="true"]');
     trigger.setAttribute('aria-label', label());
     list.setAttribute('aria-label', label());

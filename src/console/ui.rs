@@ -33,6 +33,20 @@ pub const PAGE_SAMPLES_JS: &str = include_str!("ui/pages/samples.js");
 pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
     let assets: &[(&str, (&str, &str))] = &[
         (
+            "/ui/components/layout.js",
+            (
+                include_str!("ui/components/layout.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/components/item.js",
+            (
+                include_str!("ui/components/item.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
             "/ui/components/sectionNav.js",
             (
                 include_str!("ui/components/sectionNav.js"),
@@ -40,9 +54,23 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             ),
         ),
         (
+            "/ui/components/icons.js",
+            (
+                include_str!("ui/components/icons.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
             "/ui/components/pathText.js",
             (
                 include_str!("ui/components/pathText.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
+            "/ui/features/teamSourceDialog.js",
+            (
+                include_str!("ui/features/teamSourceDialog.js"),
                 "text/javascript; charset=utf-8",
             ),
         ),
@@ -149,6 +177,13 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             ),
         ),
         (
+            "/ui/features/gitSkillDialog.js",
+            (
+                include_str!("ui/features/gitSkillDialog.js"),
+                "text/javascript; charset=utf-8",
+            ),
+        ),
+        (
             "/ui/features/ccSwitchImport.js",
             (
                 include_str!("ui/features/ccSwitchImport.js"),
@@ -176,6 +211,13 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
         (
             "/ui/features/collectionsPanel.js",
             (COLLECTIONS_PANEL_JS, "text/javascript; charset=utf-8"),
+        ),
+        (
+            "/ui/features/sourceBindingDialog.js",
+            (
+                include_str!("ui/features/sourceBindingDialog.js"),
+                "text/javascript; charset=utf-8",
+            ),
         ),
         ("/ui/tokens.css", (TOKENS_CSS, "text/css; charset=utf-8")),
         ("/ui/base.css", (BASE_CSS, "text/css; charset=utf-8")),

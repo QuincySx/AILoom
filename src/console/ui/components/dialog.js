@@ -1,4 +1,5 @@
 // Native modal dialog: top layer, inert background, focus restoration and shared footer.
+import { icon } from './icons.js';
 let nextDialogId = 0;
 
 export function Dialog(container, props) {
@@ -16,7 +17,7 @@ export function Dialog(container, props) {
   dismiss.dataset.variant = 'ghost';
   dismiss.className = 'dialog-dismiss';
   dismiss.setAttribute('aria-label', '关闭弹窗');
-  dismiss.textContent = '关闭';
+  dismiss.innerHTML = icon('x');
   header.append(title, dismiss);
   const body = document.createElement('div');
   body.className = 'dialog-body';
@@ -26,6 +27,9 @@ export function Dialog(container, props) {
   let cur = props, prevFocus = null, disposed = false, checking = false;
   function render(p) {
     cur = p;
+    const closeAllowed = p.canClose?.() !== false;
+    box.setAttribute('closedby', closeAllowed ? 'closerequest' : 'none');
+    dismiss.disabled = !closeAllowed;
     title.textContent = p.title || '';
     if (p.content && body.firstChild !== p.content) {
       if (typeof p.content === 'string') body.innerHTML = p.content;

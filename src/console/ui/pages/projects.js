@@ -1,6 +1,9 @@
 import { api, esc } from '../services/api.js';
 import { setTarget } from '../state/target.js';
 import { ProjectDialog } from '../features/projectDialog.js';
+import { PageHeader } from '../components/layout.js';
+import { Item, paginate, Pagination, bindPagination } from '../components/item.js';
+import { icon } from '../components/icons.js';
 
 // 项目首页；配置入口始终由用户明确选择，目录内配置交给 workspace。
 const projectName = r => r.project?.name || Object.values(r.worktrees || {})[0]?.path?.split('/').filter(Boolean).pop() || r.repo_id;
@@ -9,7 +12,7 @@ export function mount(container) {
   const root = document.createElement('div');
   root.className='projects-page';
   container.append(root);
-  let disposed = false;
+  let disposed = false, listPage = 1;
   const dialogs = [];
   const error = e => { if (!disposed) (root.querySelector('dialog[open] [data-form-error]') || root.querySelector('[data-message]')).textContent = e.message; };
   root.innerHTML = '<p data-message role="status">正在读取项目…</p>';
@@ -31,8 +34,8 @@ export function mount(container) {
       root.querySelector('[data-new]').onclick=()=>dialogs.push(ProjectDialog(root,{onCreated:id=>{location.hash='#/projects/'+encodeURIComponent(id);}}));
       return;
     }
-    root.innerHTML = `<header class="project-heading"><div><h1>项目</h1><p class="muted">${state.repos.length} 个项目</p></div><div class="project-heading-actions"><a href="#/library/global">所有项目的配置</a><button data-new data-add-project class="primary">添加项目</button></div></header>
-      <p data-message role="status"></p><div class="project-toolbar"><input data-search type="search" aria-label="搜索项目" placeholder="搜索项目名称或路径…"><details class="project-filters"><summary>筛选</summary><div><label>分类<select data-filter aria-label="项目分类"><option value="">全部分类</option></select></label><label>项目类型<select data-kind aria-label="项目类型"><option value="">全部类型</option><option value="git">Git 项目</option><option value="nongit">文件夹项目</option></select></label></div></details></div><div class="project-grid" data-list></div>`;
+    root.innerHTML = `${PageHeader({title:'项目',description:'选择已有本机项目，不会自动启用资源。',actions:'<button data-new data-add-project data-variant="default">添加项目</button>'})}
+      <p data-message role="status"></p><div class="toolbar project-toolbar"><input data-search type="search" aria-label="搜索项目" placeholder="搜索名称、路径或分类"><select data-filter aria-label="项目分类"><option value="">全部分类</option></select><select data-kind aria-label="项目类型"><option value="">全部类型</option><option value="git">Git 项目</option><option value="nongit">文件夹项目</option></select></div><div class="project-grid" data-list></div><div data-pagination></div>`;
     root.querySelector('[data-new]').onclick = () => { dialogs.push(ProjectDialog(root,{onCreated:id=>{location.hash='#/projects/'+encodeURIComponent(id);}})); };
     const filter = root.querySelector('[data-filter]');
     const categories = [...new Set(state.repos.map(r => r.project?.category || '未分类'))].sort();
@@ -43,17 +46,20 @@ export function mount(container) {
       const repos = state.repos.filter(r => (!filter.value || (r.project?.category || '未分类') === filter.value)
         && (!kind || (r.repo_id.startsWith('nongit-') ? 'nongit' : 'git') === kind)
         && `${projectName(r)} ${r.origin_normalized || ''} ${Object.values(r.worktrees || {}).map(w => w.path).join(' ')}`.toLowerCase().includes(query));
-      root.querySelector('[data-list]').innerHTML = repos.length ? repos.sort((a,b) => projectName(a).localeCompare(projectName(b))).map(r => {
+      const page=paginate(repos.sort((a,b)=>projectName(a).localeCompare(projectName(b))),listPage);listPage=page.page;
+      root.querySelector('[data-list]').innerHTML=page.items.length?page.items.map(r=>{
         const worktrees=Object.values(r.worktrees||{}),active=worktrees.find(w=>w.status!=='missing'),base='#/projects/'+encodeURIComponent(r.repo_id),folder=r.repo_id.startsWith('nongit-');
         const path=(active||worktrees[0])?.path||r.common_dir;
-        return `<article class="project-card"><div class="project-card-meta"><span class="badge">${folder?'文件夹项目':'Git 项目'}</span><span>${esc(r.project?.category||'未分类')}</span>${!active?'<span class="badge warn">目录失联</span>':''}</div><h2>${esc(projectName(r))}</h2><p class="path"><ailoom-path title="${esc(path)}">${esc(path)}</ailoom-path></p><p class="muted">${folder?'本机文件夹':worktrees.length+' 个工作目录'}</p><footer>${active?`<a class="project-open" href="${base}">配置 AI <span aria-hidden="true">→</span></a>`:'<span class="muted">请先恢复目录</span>'}<a href="${base}/settings" aria-label="${esc(projectName(r))}的设置">设置</a></footer></article>`;
-      }).join('') : '<section class="empty-state"><h2>没有匹配的项目</h2><button data-clear-filters>清除筛选</button></section>';
+        return Item({title:projectName(r),primaryAction:{href:base,label:'打开项目 '+projectName(r),attributes:'data-project-open'},description:path?.split('/').filter(Boolean).slice(-2).join(' / '),meta:!active?'目录失联':'',leading:icon('folder'),trailing:`<span class="project-kind">${folder?'文件夹项目':`${worktrees.length} 个工作目录`}</span>`,className:'project-card',density:'regular'});
+      }).join(''):'<section class="empty-state"><h2>没有匹配的项目</h2><button data-clear-filters>清除筛选</button></section>';
+      root.querySelector('[data-pagination]').innerHTML=Pagination(page);
+      bindPagination(root.querySelector('[data-pagination]'),next=>{listPage=next;render();});
       root.querySelector('[data-clear-filters]')?.addEventListener('click',()=>{root.querySelector('[data-search]').value='';filter.value='';root.querySelector('[data-kind]').value='';filter.dispatchEvent(new Event('change',{bubbles:true}));root.querySelector('[data-kind]').dispatchEvent(new Event('change',{bubbles:true}));render();});
       root.querySelector('[data-first]')?.addEventListener('click',()=>root.querySelector('[data-new]').click());
     };
-    root.querySelector('[data-search]').oninput = render;
-    filter.onchange = render;
-    root.querySelector('[data-kind]').onchange = render;
+    root.querySelector('[data-search]').oninput = ()=>{listPage=1;render();};
+    filter.onchange = ()=>{listPage=1;render();};
+    root.querySelector('[data-kind]').onchange = ()=>{listPage=1;render();};
     render();
   }
   load();

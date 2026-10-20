@@ -3,7 +3,7 @@
 // 不再承载配置动作本身（登记走项目列表、入库走资源库、生效走项目页）。
 
 import { api } from '../services/api.js';
-import { Button } from '../components/button.js';
+import { PageHeader } from '../components/layout.js';
 
 export function mount(container, ctx) {
   const root = document.createElement('div');
@@ -14,38 +14,16 @@ export function mount(container, ctx) {
     try { repos = (await api.state()).repos || []; } catch { /* 引导页读不到状态也照常展示 */ }
     const hasRepos = repos.length > 0;
 
+    // Three numbered rows, each with its own way in; no cards, no brand banner.
+    const steps = [
+      ['添加项目', '选择本地文件夹或 Git 仓库。', '#/projects', '添加项目'],
+      ['导入能力', '从 GitHub、skills.sh、本地文件夹或 CC Switch 导入技能、规则和子代理。', '#/library', '打开资源库'],
+      ['添加并应用', '为目录选择工具和能力，预览改动后应用，再新开 AI 会话。', '#/projects', '打开项目'],
+    ];
     root.innerHTML = `
-      <header class="page-head"><div>
-        <h1>开始使用</h1>
-        <p>为项目选择 AI 能力。</p>
-      </div></header>
-      ${hasRepos ? `<p class="muted">已添加 ${repos.length} 个项目。</p>` : ''}
-      <div class="wizard">
-        <section class="step ${hasRepos ? '' : 'active'}">
-          <h2>① 添加项目</h2>
-          <p class="muted">选择本地文件夹或 Git 仓库。</p>
-          <div data-go="#/projects" data-primary="${hasRepos ? '' : '1'}"></div>
-        </section>
-        <section class="step">
-          <h2>② 导入能力</h2>
-          <p class="muted">支持本地文件夹、Git 仓库和 skills.sh。</p>
-          <div data-go="#/library"></div>
-        </section>
-        <section class="step ${hasRepos ? 'active' : ''}">
-          <h2>③ 添加并应用</h2>
-          <p class="muted">选择项目和 AI 工具，添加能力，查看并应用改动，然后新开 AI 会话。</p>
-          <div data-go="#/projects"></div>
-        </section>
-      </div>
-`;
-
-    root.querySelectorAll('[data-go]').forEach((slot) => {
-      Button(slot, {
-        label: slot.dataset.go === '#/library' ? '打开资源库' : '打开项目',
-        variant: slot.dataset.primary ? 'default' : 'outline',
-        onPress: () => { location.hash = slot.dataset.go; },
-      });
-    });
+      ${PageHeader({title:'开始使用',description:'三个步骤，让 AI 理解你的工作。'})}
+      <ol class="wizard onboarding-steps">${steps.map(([title, text, go, label], index) => `<li class="step ${(hasRepos ? 2 : 0) === index ? 'active' : ''}"><span class="onboarding-number" aria-hidden="true">${index + 1}</span><span class="onboarding-copy"><strong>${title}</strong><span>${text}</span></span><button data-go="${go}" ${(hasRepos ? 2 : 0) === index ? 'data-variant="default"' : 'data-variant="ghost"'}>${label}</button></li>`).join('')}</ol>`;
+    root.querySelectorAll('[data-go]').forEach((button) => { button.onclick = () => { location.hash = button.dataset.go; }; });
   }
 
   render();

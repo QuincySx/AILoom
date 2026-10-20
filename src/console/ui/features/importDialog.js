@@ -110,7 +110,12 @@ export function ImportDialog(container, { title = '导入资源', onChanged, onI
     message('');
   }); };
   return {
-    show: () => { message(''); modal.show(); },
+    // provider preselects the source type, e.g. 'local' or 'entry' (skills.sh).
+    show: (provider) => {
+      message('');
+      if (provider && q('[data-provider]').value !== provider) { q('[data-provider]').value = provider; q('[data-provider]').dispatchEvent(new Event('change', {bubbles:true})); }
+      modal.show();
+    },
     destroy: () => { alive = false; modal.destroy(); root.remove(); },
   };
 }

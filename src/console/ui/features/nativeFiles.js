@@ -1,30 +1,56 @@
 import {api,esc} from '../services/api.js';
 import {Dialog,confirmAction} from '../components/dialog.js';
+import {PageHeader} from '../components/layout.js';
+import {Item,resourcePath} from '../components/item.js';
+import {ManagedDefinition} from './managedDefinition.js';
 import {openSkillDelete,openSkillTakeover} from './skillActions.js';
 
-export function NativeFiles(container,{rootPath=null,scope='global',showSkills=false,managedPaths=[]}={}) {
+export function NativeFiles(container,{rootPath=null,scope='global',showSkills=false,managedPaths=[],readOnly=false,hideHeading=false,includeManaged=false}={}) {
   const root=document.createElement('section');root.className='native-files';container.append(root);
   let alive=true,version=0,data={files:[],targets:[]},skills=[],filter='',search='',busy=false,editor=null;
   const q=s=>root.querySelector(s), request=body=>api.nativeFiles({scope,root:rootPath,...body});
-  root.innerHTML=`<div class="workspace-section-heading"><h2>${showSkills?'本地已有':'规则与子代理'}</h2><div class="actions"><button data-refresh>刷新</button><button data-new>新建文件</button></div></div>
-    <div class="toolbar"><input data-search type="search" aria-label="搜索本地文件" placeholder="搜索名称、工具或路径…"><select data-kind aria-label="文件类型"><option value="">全部类型</option>${showSkills?'<option value="skill">技能 · Skill</option>':''}<option value="rule">规则</option><option value="agent">子代理</option></select></div>
+  // Global files keep their actions in the page title row; inside a project they join the search row.
+  const actions='<button data-refresh data-variant="ghost">刷新</button><button data-new>新建文件</button>';
+  const header=scope==='global'?PageHeader({title:'规则与子代理',description:'直接维护用户级文件，影响全部项目。',actions}).replace('<h1>','<h1 data-native-heading>'):`<div class="workspace-section-heading"><h2 data-native-heading>${showSkills?'本地已有':'配置文件'}</h2></div>`;
+  root.innerHTML=`${header}
+    <div class="toolbar native-files-toolbar"><input data-search type="search" aria-label="搜索本地文件" placeholder="搜索名称、工具或路径"><select data-kind aria-label="文件类型"><option value="">全部类型</option>${showSkills?'<option value="skill">技能</option>':''}<option value="rule">规则</option><option value="agent">子代理</option></select>${scope==='global'?'':actions}</div>
     <p data-status role="status"></p><div data-list></div><details data-details hidden><summary>扫描范围与限制</summary><div data-notes></div></details>`;
+  q('[data-new]').hidden=readOnly;
+  if(hideHeading)q('[data-native-heading]').hidden=true;
   function message(s){if(alive)q('[data-status]').textContent=s;}
   function render(){
-    const rows=[...data.files,...skills].filter(f=>(!filter||filter===f.kind)&&
-      (!showSkills||!f.managed)&&!managedPaths.includes(f.path)&&`${f.label} ${f.tool||''} ${f.path}`.toLowerCase().includes(search.toLowerCase()));
-    q('h2').textContent=(showSkills?'本地已有':'配置文件')+' · '+rows.length;
-    q('[data-list]').innerHTML=rows.length?rows.map((f,i)=>`<article class="native-file-row"><span class="badge">${f.kind==='rule'?'规则':f.kind==='skill'?'技能 · Skill':'子代理'}</span><div><strong>${esc(f.label)}</strong><small>${esc(f.tool||'')} ${f.local_only?' · 仅本机生效':f.managed?' · AILoom 管理':f.created_by_ailoom?' · AILoom 创建':''} ${esc(f.note||'')}${f.missing?' · 文件缺失，个人副本仍保留':''}</small><p class="path"><ailoom-path title="${esc(f.path)}">${esc(f.path)}</ailoom-path></p>${f.description?'<p>'+esc(f.description)+'</p>':''}${f.error?'<p class="field-error">'+esc(f.error)+'</p>':''}</div>${f.kind==='skill'?'<span class="muted">'+(f.management==='managed'?'AILoom 管理':f.management==='external_link'?'链接':'本地')+'</span>'+(['unmanaged','external_link'].includes(f.management)?`<button data-takeover="${i}">接管说明…</button><button data-skill-delete="${i}" data-variant="destructive">删除…</button>`:''):`<button data-edit="${i}">编辑</button><button data-delete="${i}">${f.local_only?'恢复项目版本':'删除'}</button>`}</article>`).join(''):'<p class="muted">没有找到匹配的本地文件。</p>';
-    q('[data-list]').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>edit(rows[Number(b.dataset.edit)]));
-    q('[data-list]').querySelectorAll('[data-delete]').forEach(b=>b.onclick=()=>remove(rows[Number(b.dataset.delete)]));
-    q('[data-list]').querySelectorAll('[data-takeover]').forEach(b=>b.onclick=()=>{const f=rows[Number(b.dataset.takeover)];openSkillTakeover({path:f.path,name:f.label});});
-    q('[data-list]').querySelectorAll('[data-skill-delete]').forEach(b=>b.onclick=async()=>{
-      const f=rows[Number(b.dataset.skillDelete)];b.disabled=true;
-      await openSkillDelete({root:rootPath,sub:undefined,path:f.path,name:f.dir_name||f.label,onDone:r=>{
-        if(r.error)message(r.error);else{load().then(()=>message('已删除并移入归档：'+r.archived_to));}
-      }});
-      if(alive)b.disabled=false;
-    });
+    const rows=[...data.files,...skills].map(f=>({...f,managed:f.managed||managedPaths.includes(f.path)})).filter(f=>(!filter||filter===f.kind)&&
+      (includeManaged||(!showSkills||!f.managed)&&!managedPaths.includes(f.path))&&`${f.label} ${f.tool||''} ${f.path}`.toLowerCase().includes(search.toLowerCase()));
+    q('[data-native-heading]').textContent=scope==='global'?'规则与子代理':`${showSkills?'本地已有':'配置文件'} ${rows.length} 项`;
+    if(includeManaged)rows.sort((a,b)=>(a.managed?0:a.kind==='skill'?2:1)-(b.managed?0:b.kind==='skill'?2:1));
+    q('[data-list]').innerHTML=rows.length?rows.map(f=>{
+      const i=rows.indexOf(f),path=rootPath&&f.path.startsWith(rootPath+'/')?f.path.slice(rootPath.length+1):f.path.split('/').pop();
+      const kind=f.kind==='rule'?'规则':f.kind==='skill'?'技能':'子代理';
+      const host=f.tool||(/(?:^|\/)\.claude(?:\/|$)/.test(f.path)?'Claude Code':/(?:^|\/)\.(?:agents|codex)(?:\/|$)/.test(f.path)?'Codex':'');
+      const meta=host?`${host} ${kind}`:kind;
+      const state=f.managed?'由能力配置生成':f.local_only?'仅本机生效':f.note||'';
+      const external=f.kind==='skill'?resourcePath({name:f.label,readonly:true,path:f.link_target||f.location?.real_path||path}):'';
+      const group=f.managed?'托管文件':f.kind==='skill'?'工具中已有':'其他本地文件';
+      const previous=rows[rows.indexOf(f)-1];
+      const previousGroup=previous&&(previous.managed?'托管文件':previous.kind==='skill'?'工具中已有':'其他本地文件');
+      return (includeManaged&&group!==previousGroup?`<h2 class="local-file-group-heading">${group}</h2>`:'')+Item({title:f.kind==='skill'?f.label:path||f.label,primaryAction:{attributes:`data-view="${i}"`,label:'查看 '+(path||f.label)},description:meta,path:external,meta:state,density:'regular',className:'native-file-row',actions:`${f.kind==='skill'&&!readOnly&&!f.managed?`<button data-import-skill="${i}">导入副本</button>`:''}${f.kind!=='skill'&&!readOnly&&!f.managed?`<button data-import-copy="${i}">导入副本</button>`:''}`,feedback:f.error?`<span class="field-error">${esc(f.error)}</span>`:''});
+    }).join(''):'<p class="muted">没有找到匹配的本地文件。</p>';
+    q('[data-list]').querySelectorAll('[data-view]').forEach(b=>{b.onclick=()=>view(rows[Number(b.dataset.view)]);});
+    q('[data-list]').querySelectorAll('[data-import-copy]').forEach(b=>{b.onclick=async()=>{
+      if(busy)return;busy=true;b.disabled=true;
+      try{const file=rows[Number(b.dataset.importCopy)],current=await request({action:'read',target:file.target,name:file.name});if(!alive)return;
+        const result=await ManagedDefinition(root,{kind:file.kind,title:'导入个人副本',initial:{name:(file.name||file.path.split('/').pop()).replace(/\.[^.]+$/,'').toLowerCase().replace(/[^a-z0-9._-]+/g,'-').slice(0,64)||'imported-rule',description:file.description||'',body:current.content||''}});
+        if(result)message('已保存个人副本，原文件保留。到能力配置中选用。');
+      }catch(e){message(e.message);}finally{busy=false;if(alive)b.disabled=false;}
+    };});
+    q('[data-list]').querySelectorAll('[data-import-skill]').forEach(b=>{b.onclick=async()=>{
+      if(busy)return;
+      const file=rows[Number(b.dataset.importSkill)];
+      if(!await confirmAction(`将 ${file.label} 保存到资源库？\n来源：${file.path}\n原文件保留，导入后可在其他项目选用。`,{title:'导入本地副本',confirmLabel:'导入副本'}))return;
+      busy=true;b.disabled=true;
+      try {await api.approveDir(file.path);await api.libraryImport(file.path,null,true);message('已保存资源库副本，原文件保留。');}
+      catch(e){message(e.message);}finally{busy=false;if(alive)b.disabled=false;}
+    };});
   }
   async function load(){
     const n=++version;message('正在扫描…');q('[data-new]').disabled=true;
@@ -36,8 +62,32 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
       const notes=[...(data.warnings||[]),...(data.limitations||[])];
       q('[data-details]').hidden=!notes.length;
       q('[data-notes]').innerHTML=notes.map(s=>'<p>'+esc(s)+'</p>').join('');
-      render();message('');q('[data-new]').disabled=false;
+      render();message('');q('[data-new]').disabled=readOnly;
     }catch(e){message(e.message);}
+  }
+  // Viewing a file is where its low-frequency actions live: edit, delete, take over.
+  async function view(file){
+    if(busy||editor?.isOpen)return;
+    const editable=!readOnly&&!file.managed,then=fn=>()=>{editor.close();fn();return false;};
+    if(file.kind==='skill'){
+      const body=document.createElement('div');body.innerHTML=`<p class="path">${esc(file.path)}</p>${file.note?`<p class="muted">${esc(file.note)}</p>`:''}`;
+      const actions=[{label:'关闭'}];
+      if(editable&&['unmanaged','external_link'].includes(file.management)){
+        actions.unshift({label:'删除',variant:'destructive',onAction:then(()=>openSkillDelete({root:rootPath,sub:undefined,path:file.path,name:file.dir_name||file.label,onDone:r=>{if(r.error)message(r.error);else load().then(()=>message('已删除并移入归档：'+r.archived_to));}}))});
+        actions.unshift({label:'接管说明',onAction:then(()=>openSkillTakeover({path:file.path,name:file.label}))});
+      }
+      editor=Dialog(root,{title:file.label,content:body,actions});return;
+    }
+    busy=true;
+    try{
+      const current=await request({action:'read',target:file.target,name:file.name});
+      if(!alive)return;
+      const body=document.createElement('div');body.innerHTML=`<p class="path">${esc(file.path)}</p><label>内容<textarea rows="18" readonly></textarea></label>`;
+      body.querySelector('textarea').value=current.content||'';
+      const actions=[{label:'关闭'}];
+      if(editable)actions.unshift({label:file.local_only?'恢复项目版本':'删除原文件',variant:'destructive',onAction:then(()=>remove(file))},{label:'编辑原文件',onAction:then(()=>edit(file))});
+      editor=Dialog(root,{title:file.label,content:body,actions});
+    }catch(e){message(e.message);}finally{busy=false;}
   }
   function template(t){
     if(t.ext==='toml')return 'name = "my-agent"\ndescription = "描述这个子代理的用途"\ndeveloper_instructions = "在这里填写子代理的职责和要求。"\n';
@@ -46,7 +96,7 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
     return '';
   }
   async function edit(file=null){
-    if(busy||editor?.isOpen)return;
+    if(readOnly||busy||editor?.isOpen)return;
     busy=true;
     try{
       const current=file?await request({action:'read',target:file.target,name:file.name}):null;
@@ -96,7 +146,7 @@ export function NativeFiles(container,{rootPath=null,scope='global',showSkills=f
     }catch(e){message(e.message);}finally{busy=false;}
   }
   async function remove(file){
-    if(busy)return;busy=true;
+    if(readOnly||busy)return;busy=true;
     try{
       const current=await request({action:'read',target:file.target,name:file.name});
       if(current.local?.active){

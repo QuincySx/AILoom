@@ -98,17 +98,17 @@ export function mount(container, ctx) {
       if (!await confirmAction('删除 ' + id.split('/').pop() + '？\n使用位置：' + (preview.affected_scopes || []).join('、') + '\n将移入归档。正在使用的能力不能删除。', {title:'删除个人副本', confirmLabel:'移入归档', destructive:true})) return;
       await api.libraryDelete(id, true);
       if (currentId === id) { currentId = null; editor.setValue(''); editorBox.classList.add('hidden'); }
-      editorDialog.close();notify('已删除，可从归档恢复。'); await refresh();await collections.refresh?.();
+      editorDialog.close();notify('已移入本机归档。'); await refresh();await collections.refresh?.();
     } catch (e) { notify(e.message); }
   }
   // 导入区（AIL-126：搜索上下文跨页保留）
   const collections = CollectionsPanel(root.querySelector('[data-collections]'), {
-    title: '可复用能力',
+    title: '资源库',
     headingLevel:2,
     compactLibrary: true,
     onEdit: async id=>{if(/^personal\/(rule|agent)\//.test(id)){await ManagedDefinition(root,{id});await refresh();await collections.refresh();}else await openResource(id);},
     onCreate: async()=>{const result=await ManagedDefinition(root);if(result){await refresh();await collections.refresh();}},
-    description: '收集可复用的 Skill、MCP 和 Agent，再添加到需要的目录。',
+    description: '把能力整理一次，在不同项目中按需使用。',
     searchKey: 'ailoom-library-search',
     onChanged: refresh,
   });
