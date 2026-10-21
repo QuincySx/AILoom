@@ -110,11 +110,14 @@ pub fn preview(data: &Path, url: &str, ref_: Option<&str>) -> Result<Value> {
             continue;
         }
         let dir = file.path().parent().unwrap();
+        // 仓内路径一律用 `/` 分隔，与 Git 和已登记的 Skill 路径一致（Windows 上不出现 `\`）。
         let path = dir
             .strip_prefix(&snapshot.root)
             .unwrap()
-            .to_string_lossy()
-            .to_string();
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let id = if path.is_empty() {
             ".".into()
         } else {

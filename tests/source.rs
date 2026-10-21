@@ -397,3 +397,87 @@ fn skill_scope_snapshot_migrates_legacy_full_snapshot_and_keeps_locked_digest() 
     let full_snap = full.refresh(&other).unwrap();
     assert!(full_snap.root.join("vendor/big.txt").is_file());
 }
+
+#[test]
+fn option_like_git_urls_are_rejected_and_never_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let marker = tmp.path().join("pwned");
+    let payload = format!("--upload-pack=touch {}", marker.display());
+    for url in [payload.as_str(), "-oProxyCommand=x@host:repo"] {
+        assert!(GitSource::new(url, None).is_err(), "{url}");
+        assert!(
+            ailoom::repository_identity::validate_url(url).is_err(),
+            "{url}"
+        );
+    }
+    assert_eq!(ailoom::gitx::remote_default_branch(&payload), None);
+    assert!(!marker.exists(), "地址不会被 git 当成选项执行");
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_full_snapshot_stays_usable_when_migration_fails() {
+    use ailoom::source::git::Scope;
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let up = tmp.path().join("up");
+    let cache = tmp.path().join("cache");
+    git_init(&up, false).unwrap();
+    write_file(&up, "skills/a/SKILL.md", "---\nname: a\n---\n");
+    write_file(&up, "vendor/big.txt", "irrelevant");
+    git_commit_all(&up, "init", &["skills", "vendor"]).unwrap();
+    let full = GitSource::new(up.to_str().unwrap(), None).unwrap();
+    let legacy = full.refresh(&cache).unwrap();
+    let lock = lock_entry(
+        &full,
+        legacy.resolved_commit.as_deref().unwrap(),
+        &legacy.content_digest,
+    );
+
+    // 缓存仓库里有该 commit，但无法写入新快照：迁移失败，旧整树快照照常使用。
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let scoped = full.clone().with_scope(Scope::Skills);
+    let snap = scoped.resolve(&cache, Some(&lock));
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let snap = snap.unwrap();
+    assert_eq!(snap.root, legacy.root);
+    assert_eq!(snap.content_digest, lock.content_digest);
+    assert!(snap.root.join("vendor/big.txt").is_file(), "仍是原整树快照");
+
+    // 可写后正常迁移。
+    let migrated = scoped.resolve(&cache, Some(&lock)).unwrap();
+    assert!(!migrated.root.join("vendor").exists());
+    assert_eq!(migrated.content_digest, lock.content_digest);
+}
+
+#[test]
+fn interrupted_snapshot_swap_is_recovered_offline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let up = tmp.path().join("up");
+    let cache = tmp.path().join("cache");
+    git_init(&up, false).unwrap();
+    write_file(&up, "a.txt", "v1");
+    git_commit_all(&up, "init", &["a.txt"]).unwrap();
+    let src = GitSource::new(up.to_str().unwrap(), None).unwrap();
+    let first = src.refresh(&cache).unwrap();
+    let lock = lock_entry(
+        &src,
+        first.resolved_commit.as_deref().unwrap(),
+        &first.content_digest,
+    );
+
+    // 模拟另一个进程在“旧快照已移开、新快照未就位”时被杀，且此时离线。
+    std::fs::rename(&first.root, cache.join(".snap-old-4242")).unwrap();
+    std::fs::create_dir_all(cache.join(".snap-tmp-4242/half")).unwrap();
+    std::fs::remove_dir_all(&up).unwrap();
+
+    let snap = src.resolve(&cache, Some(&lock)).unwrap();
+    assert_eq!(snap.root, first.root);
+    assert_eq!(snap.content_digest, lock.content_digest);
+    assert_eq!(
+        std::fs::read_to_string(snap.root.join("a.txt")).unwrap(),
+        "v1"
+    );
+    assert!(!cache.join(".snap-old-4242").exists());
+    assert!(!cache.join(".snap-tmp-4242").exists(), "暂存残留被清理");
+}

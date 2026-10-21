@@ -70,6 +70,10 @@ impl GitSource {
         if url.is_empty() {
             return Err(Error::new(code::SOURCE_INVALID_REF, "Git URL 为空"));
         }
+        // 以 `-` 开头的值会被 git 当成选项（如 `--upload-pack=<命令>`），绝不当作地址。
+        if url.starts_with('-') {
+            return Err(Error::new(code::USAGE, "Git 地址不能以 - 开头"));
+        }
         let identity = gitx::normalize_remote_url(url);
         if identity.contains("hunter2") || identity != gitx::redact_credentials(&identity) {
             return Err(Error::new(
@@ -120,7 +124,13 @@ impl GitSource {
                 Error::new(code::SOURCE_CACHE_CORRUPT, "Git 源锁缺少 resolved_commit")
             })?;
             let snap = self.snapshot_dir(cache_root, &commit);
-            match self.read_marker(&snap, &commit)? {
+            if !snap.is_dir() && cache_root.is_dir() {
+                // 上次替换快照时被打断：先把移开的旧快照放回原处。
+                with_file_lock(&cache_root.join("materialize.lock"), || {
+                    recover_interrupted(cache_root)
+                })?;
+            }
+            let (root, digest) = match self.read_marker(&snap, &commit)? {
                 Some(marker) if !self.needs_rematerialize(&marker) => {
                     let digest = verify_digest(&snap, &marker)?;
                     return Ok(Snapshot {
@@ -136,28 +146,30 @@ impl GitSource {
                         mutable: false,
                     });
                 }
-                // 范围不同（多为旧版整树快照）：commit 已在缓存仓库时离线按范围重新物化。
-                Some(marker) if !self.has_commit(cache_root, &commit) => {
-                    // 缓存仓库不可用：整树快照仍是合法超集，继续使用。
-                    if marker["scope"].is_null() {
-                        let digest = verify_digest(&snap, &marker)?;
-                        return Ok(Snapshot {
-                            identity: self.identity.clone(),
-                            resolved_commit: Some(commit),
-                            content_digest: digest,
-                            root: snap,
-                            ref_: self.ref_.clone(),
-                            locked_at: l.locked_at.clone(),
-                            mutable: false,
-                        });
+                // 旧版整树快照：commit 已在缓存仓库时离线按范围重新物化。
+                // 缓存仓库不可用或重建失败时，整树快照仍是合法超集，继续使用。
+                Some(marker) if marker["scope"].is_null() => {
+                    if !self.has_commit(cache_root, &commit) {
+                        return self.legacy_snapshot(&snap, commit, l);
                     }
-                    self.fetch(cache_root)?;
+                    match self.materialize(cache_root, &commit) {
+                        Ok(rebuilt) => rebuilt,
+                        Err(e) => return self.legacy_snapshot(&snap, commit, l).map_err(|_| e),
+                    }
                 }
-                Some(_) => {}
+                // 其他范围的快照：缺 commit 时先 fetch，再按当前范围重新物化。
+                Some(_) => {
+                    if !self.has_commit(cache_root, &commit) {
+                        self.fetch(cache_root)?;
+                    }
+                    self.materialize(cache_root, &commit)?
+                }
                 // 快照缺失：fetch 后重新物化（不改锁定的 commit）
-                None => self.fetch(cache_root)?,
-            }
-            let (root, digest) = self.materialize(cache_root, &commit)?;
+                None => {
+                    self.fetch(cache_root)?;
+                    self.materialize(cache_root, &commit)?
+                }
+            };
             let marker = self.read_marker(&root, &commit)?.unwrap_or_default();
             return Ok(Snapshot {
                 identity: self.identity.clone(),
@@ -171,6 +183,29 @@ impl GitSource {
         }
         // 未锁定：首次必须联网
         self.refresh(cache_root)
+    }
+
+    /// 按旧版整树快照原样使用（重新读取并复核摘要）。
+    fn legacy_snapshot(
+        &self,
+        snap: &Path,
+        commit: String,
+        lock: &super::SourceLock,
+    ) -> Result<Snapshot> {
+        let marker = self
+            .read_marker(snap, &commit)?
+            .filter(|m| m["scope"].is_null())
+            .ok_or_else(|| Error::new(code::SOURCE_CACHE_CORRUPT, "整树快照已不存在"))?;
+        let digest = verify_digest(snap, &marker)?;
+        Ok(Snapshot {
+            identity: self.identity.clone(),
+            resolved_commit: Some(commit),
+            content_digest: digest,
+            root: snap.to_path_buf(),
+            ref_: self.ref_.clone(),
+            locked_at: lock.locked_at.clone(),
+            mutable: false,
+        })
     }
 
     /// 显式更新入口：fetch 并解析当前 ref；失败返回 Err（调用方保留旧锁）。
@@ -215,7 +250,7 @@ impl GitSource {
         if repo.exists() {
             // Equivalent cache identities can use different SSH users/URL forms.
             // Always fetch with the caller's chosen machine connection.
-            gitx::git(&repo, &["remote", "set-url", "origin", &self.url])?;
+            gitx::git(&repo, &["remote", "set-url", "--", "origin", &self.url])?;
             gitx::git(
                 &repo,
                 &[
@@ -238,14 +273,26 @@ impl GitSource {
             if let Some(parent) = repo.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            // 持有 fetch.lock 时没有其他 clone 在进行：被打断的 clone 留下的目录一并清理。
+            if let Ok(entries) = std::fs::read_dir(cache_root) {
+                for entry in entries.flatten() {
+                    if entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(".clone-tmp-")
+                    {
+                        let _ = std::fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
             let tmp = cache_root.join(format!(".clone-tmp-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&tmp);
             gitx::git(
                 cache_root,
                 &[
                     "clone",
                     "-q",
                     "--no-checkout",
+                    "--",
                     &self.url,
                     tmp.to_str().unwrap_or_default(),
                 ],
@@ -357,6 +404,7 @@ impl GitSource {
     }
 
     fn materialize_locked(&self, cache_root: &Path, commit: &str) -> Result<(PathBuf, String)> {
+        recover_interrupted(cache_root)?;
         let final_dir = self.snapshot_dir(cache_root, commit);
         // 旧版整树快照按范围重建时记录原摘要：锁住原摘要的调用方看到的内容不变。
         let mut replaces = None;
@@ -403,13 +451,15 @@ impl GitSource {
         if let Some(parent) = final_dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        // 先把旧快照移开再就位，缩短读者看到目录缺失的窗口。
+        // 先把旧快照移开再就位，缩短读者看到目录缺失的窗口。中途被打断时，
+        // 移开的旧快照由 recover_interrupted 放回；就位失败则立即放回。
         let retired = cache_root.join(format!(".snap-old-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&retired);
         let _ = std::fs::rename(&final_dir, &retired);
         let _ = std::fs::remove_dir_all(&final_dir);
         std::fs::rename(&staging, &final_dir).map_err(|e| {
             let _ = std::fs::remove_dir_all(&staging);
+            let _ = std::fs::rename(&retired, &final_dir);
             Error::new(code::SOURCE_FETCH_FAILED, format!("快照就位失败: {e}"))
         })?;
         let _ = std::fs::remove_dir_all(&retired);
@@ -548,6 +598,47 @@ impl GitSource {
         }
         Ok(Some(marker))
     }
+}
+
+/// 清理被打断的物化留下的目录（调用方持有 materialize.lock，此时没有其他物化在进行）：
+/// 移开的旧快照（`.snap-old-*`）在原位置缺失时放回，否则删除；暂存目录与 tar 直接删除。
+fn recover_interrupted(cache_root: &Path) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(cache_root) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let path = entry.path();
+        if name.starts_with(".snap-tmp-") {
+            let _ = std::fs::remove_dir_all(&path);
+        } else if name.starts_with(".snap-tar-") {
+            let _ = std::fs::remove_file(&path);
+        } else if name.starts_with(".snap-old-") {
+            let commit = std::fs::read_to_string(path.join(SNAPSHOT_MARKER))
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .and_then(|m| m["commit"].as_str().map(str::to_string))
+                .filter(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_hexdigit()));
+            let target = commit.map(|c| cache_root.join("snapshots").join(c));
+            match target {
+                Some(target) if !target.exists() => {
+                    std::fs::create_dir_all(cache_root.join("snapshots"))?;
+                    std::fs::rename(&path, &target).map_err(|e| {
+                        Error::new(
+                            code::SOURCE_CACHE_CORRUPT,
+                            format!("无法恢复被打断的快照: {e}"),
+                        )
+                        .context(serde_json::json!({ "snapshot": path.display().to_string() }))
+                    })?;
+                }
+                _ => {
+                    let _ = std::fs::remove_dir_all(&path);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 复核已物化内容与标记摘要一致。范围快照只含 Skill 目录，代价随 Skill 大小而非仓库大小增长。

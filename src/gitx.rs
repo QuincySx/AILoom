@@ -16,7 +16,6 @@ pub fn redact_credentials(text: &str) -> String {
             .find(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
             .unwrap_or(after.len());
         let authority = &after[..end];
-        let tail = &after[end..];
         match authority.rsplit_once('@') {
             Some((_, host)) => {
                 out.push_str("://***@");
@@ -27,8 +26,7 @@ pub fn redact_credentials(text: &str) -> String {
                 out.push_str(authority);
             }
         }
-        out.push_str(tail);
-        rest = "";
+        rest = &after[end..];
     }
     out.push_str(rest);
     out
@@ -143,7 +141,7 @@ pub fn rev_parse_path(cwd: &Path, args: &[&str]) -> Result<PathBuf> {
 pub fn remote_default_branch(url: &str) -> Option<String> {
     let out = git_optional(
         &std::env::temp_dir(),
-        &["ls-remote", "--symref", url, "HEAD"],
+        &["ls-remote", "--symref", "--", url, "HEAD"],
     )?;
     out.lines().find_map(|l| {
         let target = l.strip_prefix("ref:")?.split_whitespace().next()?;
@@ -226,6 +224,12 @@ mod tests {
         assert!(red.contains("example.com/x"), "{red}");
         assert!(red.contains("仓库不可达"), "{red}");
         assert_eq!(redact_credentials("no url here"), "no url here");
+        assert_eq!(
+            redact_credentials(
+                "从 https://a:one@x.example/r 转到 ssh://b:two@y.example/s，再到 http://z.example/t"
+            ),
+            "从 https://***@x.example/r 转到 ssh://***@y.example/s，再到 http://z.example/t"
+        );
     }
 
     #[test]
