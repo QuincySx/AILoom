@@ -1,0 +1,636 @@
+{
+  "basePresentationId": "pres_library_ud8588a41_desktop",
+  "counterparts": [],
+  "id": "scr_library_ud8588a41",
+  "name": "Library / 导入确认",
+  "presentations": [
+    {
+      "id": "pres_library_ud8588a41_desktop",
+      "interactions": [],
+      "name": "desktop",
+      "nodes": {
+        "node_library_ud8588a41_desktop_desktop_u76119b57_app_navigation": {
+          "children": [],
+          "height": 900,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_app_navigation",
+          "instance": {
+            "component": {
+              "assetId": "cmp_app_navigation",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_app_navigation_navigation_global:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "20e7e36a-865c-5cca-8bc8-19db955d3c4e",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_help:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "40462b1a-bf5d-5c3b-aeff-18b267d9b928",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_history:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "4c7ac977-fdba-5d9b-a632-a94d111a0c83",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_library:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "cf41e3db-1a48-526d-8111-417ffe617738",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_library:variant": {
+                "axis_state": "selected"
+              },
+              "node_app_navigation_navigation_projects:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "f718a99b-b69e-5afc-8c03-b74512eac1fd",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_projects:variant": {
+                "axis_state": "default"
+              }
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "fill",
+          "name": "App navigation",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_8d00b760df5923e592f1b58fa735c685",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_e26b6b83700125ccd996868350df63eb",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 184,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_breadcrumb",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_mobile_navigation"
+          ],
+          "fills": [],
+          "height": 880,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Main",
+          "type": "FRAME",
+          "width": 722,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_breadcrumb": {
+          "children": [],
+          "height": 52,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_breadcrumb",
+          "instance": {
+            "component": {
+              "assetId": "cmp_breadcrumb",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_breadcrumb_breadcrumb_crumb:text": "工作空间 / 资源库"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Breadcrumb",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_8d00b760df5923e592f1b58fa735c685",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_mobile_navigation": {
+          "children": [],
+          "height": 60,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_mobile_navigation",
+          "instance": {
+            "component": {
+              "assetId": "cmp_mobile_navigation",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_mobile_navigation_mobile_menu:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "b923b542-1622-5088-ac74-edbd97230e58",
+                  "event-type": "click"
+                }
+              ],
+              "node_mobile_navigation_mobile_more:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "40462b1a-bf5d-5c3b-aeff-18b267d9b928",
+                  "event-type": "click"
+                }
+              ]
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Mobile navigation",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_fa3de2b6a15e098355de38565d83e3b3",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "visible": false,
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content"
+          ],
+          "fills": [],
+          "height": 828,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace",
+          "layout": "flex",
+          "layout-align-items": "stretch",
+          "layout-flex-dir": "row",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "layout-justify-content": "center",
+          "name": "Workspace",
+          "type": "FRAME",
+          "width": 722,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_selection",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_pagination",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_heading"
+          ],
+          "fills": [],
+          "height": 828,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-gap": {
+            "column-gap": 28,
+            "row-gap": 28
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-max-w": 1120,
+          "layout-item-v-sizing": "auto",
+          "layout-padding": {
+            "p1": 40,
+            "p2": 40,
+            "p3": 40,
+            "p4": 40
+          },
+          "layout-padding-type": "multiple",
+          "name": "Content",
+          "tokenBindings": {
+            "itemSpacing": {
+              "assetId": "tok_64efca34972325b5bbb69c89824cd77a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingBottom": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingLeft": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingRight": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingTop": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 722,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_heading": {
+          "children": [],
+          "height": 66,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_heading",
+          "instance": {
+            "component": {
+              "assetId": "cmp_page_heading",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_page_heading_heading_copy_subtitle:text": "已从 owner/ai-skills 找到 38 项技能。",
+              "node_page_heading_heading_copy_title:text": "确认导入"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Heading",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_4",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_3",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_2",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_1",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_0"
+          ],
+          "fills": [],
+          "height": 420,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-gap": {
+            "column-gap": 0,
+            "row-gap": 0
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Items",
+          "tokenBindings": {},
+          "type": "FRAME",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_0": {
+          "children": [],
+          "height": 84,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_0",
+          "instance": {
+            "component": {
+              "assetId": "cmp_resource_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_resource_item_item_copy_description:text": "审查变更，检查实现是否符合项目约定。",
+              "node_resource_item_item_copy_mobile_origin:text": "待导入",
+              "node_resource_item_item_copy_origin:text": "owner/ai-skills",
+              "node_resource_item_item_copy_title_line_name:text": "code-review",
+              "node_resource_item_item_copy_title_line_type:visible": false
+            },
+            "variant": {
+              "axis_mode": "candidate",
+              "axis_state": "selected"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Resource 0",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_1": {
+          "children": [],
+          "height": 84,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_1",
+          "instance": {
+            "component": {
+              "assetId": "cmp_resource_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_resource_item_item_copy_description:text": "在现有浏览器会话中完成检查与操作。",
+              "node_resource_item_item_copy_mobile_origin:text": "待导入",
+              "node_resource_item_item_copy_origin:text": "owner/ai-skills",
+              "node_resource_item_item_copy_title_line_name:text": "browser",
+              "node_resource_item_item_copy_title_line_type:visible": false
+            },
+            "variant": {
+              "axis_mode": "candidate",
+              "axis_state": "default"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Resource 1",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_2": {
+          "children": [],
+          "height": 84,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_2",
+          "instance": {
+            "component": {
+              "assetId": "cmp_resource_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_resource_item_item_copy_description:text": "梳理业务概念，记录模型与架构决策。",
+              "node_resource_item_item_copy_mobile_origin:text": "待导入",
+              "node_resource_item_item_copy_origin:text": "owner/ai-skills",
+              "node_resource_item_item_copy_title_line_name:text": "domain-modeling",
+              "node_resource_item_item_copy_title_line_type:visible": false
+            },
+            "variant": {
+              "axis_mode": "candidate",
+              "axis_state": "selected"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Resource 2",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_3": {
+          "children": [],
+          "height": 84,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_3",
+          "instance": {
+            "component": {
+              "assetId": "cmp_resource_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_resource_item_item_copy_description:text": "设计清晰、可维护的前端交互。",
+              "node_resource_item_item_copy_mobile_origin:text": "待导入",
+              "node_resource_item_item_copy_origin:text": "owner/ai-skills",
+              "node_resource_item_item_copy_title_line_name:text": "frontend-design",
+              "node_resource_item_item_copy_title_line_type:visible": false
+            },
+            "variant": {
+              "axis_mode": "candidate",
+              "axis_state": "default"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Resource 3",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_4": {
+          "children": [],
+          "height": 84,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_items_resource_4",
+          "instance": {
+            "component": {
+              "assetId": "cmp_resource_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_resource_item_item_copy_description:text": "管理分支与提交，保留可追溯的变更。",
+              "node_resource_item_item_copy_mobile_origin:text": "已入库",
+              "node_resource_item_item_copy_origin:text": "owner/ai-skills",
+              "node_resource_item_item_copy_title_line_name:text": "git-workflow",
+              "node_resource_item_item_copy_title_line_type:visible": false
+            },
+            "variant": {
+              "axis_mode": "candidate",
+              "axis_state": "disabled"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Resource 4",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_pagination": {
+          "children": [],
+          "height": 58,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_pagination",
+          "instance": {
+            "component": {
+              "assetId": "cmp_pager",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_pager_pagination_count:text": "共 38 项",
+              "node_pager_pagination_current:text": "1 / 8"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Pagination",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_select_all",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_search"
+          ],
+          "fills": [],
+          "height": 34,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search",
+          "layout": "flex",
+          "layout-align-items": "center",
+          "layout-flex-dir": "row",
+          "layout-gap": {
+            "column-gap": 8,
+            "row-gap": 8
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Search",
+          "type": "FRAME",
+          "width": 642,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_search": {
+          "children": [],
+          "height": 34,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_search",
+          "instance": {
+            "component": {
+              "assetId": "cmp_input",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "variant": {
+              "axis_state": "default"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Search",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_select_all": {
+          "children": [],
+          "height": 34,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_search_select_all",
+          "instance": {
+            "component": {
+              "assetId": "cmp_action",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_action_action_label:text": "选择本页"
+            },
+            "variant": {
+              "axis_state": "default",
+              "axis_style": "secondary"
+            }
+          },
+          "layout-item-h-sizing": "auto",
+          "layout-item-v-sizing": "fix",
+          "name": "Select all",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 74,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_selection": {
+          "children": [],
+          "height": 58,
+          "id": "node_library_ud8588a41_desktop_desktop_u76119b57_main_workspace_content_selection",
+          "instance": {
+            "component": {
+              "assetId": "cmp_selection_bar",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_selection_bar_selection_count:text": "已选 2 项",
+              "node_selection_bar_selection_done:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "cf41e3db-1a48-526d-8111-417ffe617738",
+                  "event-type": "click"
+                }
+              ],
+              "node_selection_bar_selection_done__node_action_action_label:text": "导入所选"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Selection",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_library_ud8588a41_desktop_root": {
+          "children": [
+            "node_library_ud8588a41_desktop_desktop_u76119b57_main",
+            "node_library_ud8588a41_desktop_desktop_u76119b57_app_navigation",
+            "node_viewport_min_library_ud8588a41"
+          ],
+          "fills": [
+            {
+              "color": "#FFFFFF",
+              "type": "solid"
+            }
+          ],
+          "height": 900,
+          "id": "node_library_ud8588a41_desktop_root",
+          "layout": "flex",
+          "layout-flex-dir": "row",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "auto",
+          "name": "导入确认 · desktop",
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_a202dc7622024cb8eb4b42cdb0a75016",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_ff934b567e6d2ff8a8b49f47a5f125e5",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 1440,
+          "x": 0,
+          "y": 0
+        },
+        "node_viewport_min_library_ud8588a41": {
+          "children": [],
+          "height": 900,
+          "id": "node_viewport_min_library_ud8588a41",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "fix",
+          "name": "Viewport minimum · layout guide",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_8ec2348f5991280bed0aaae0bd8e3902",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 0,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "platform": "desktop",
+      "rootId": "node_library_ud8588a41_desktop_root",
+      "viewport": {
+        "height": 900,
+        "width": 1440
+      }
+    }
+  ]
+}

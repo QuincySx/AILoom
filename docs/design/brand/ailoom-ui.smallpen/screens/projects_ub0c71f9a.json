@@ -1,0 +1,362 @@
+{
+  "basePresentationId": "pres_projects_ub0c71f9a_desktop",
+  "counterparts": [],
+  "id": "scr_projects_ub0c71f9a",
+  "name": "Projects / 注册子目录",
+  "presentations": [
+    {
+      "id": "pres_projects_ub0c71f9a_desktop",
+      "interactions": [],
+      "name": "desktop",
+      "nodes": {
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body": {
+          "children": [
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_hint",
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_path",
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_label"
+          ],
+          "fills": [],
+          "height": 214,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-gap": {
+            "column-gap": 12,
+            "row-gap": 12
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "layout-padding": {
+            "p1": 20,
+            "p2": 20,
+            "p3": 20,
+            "p4": 20
+          },
+          "layout-padding-type": "multiple",
+          "name": "Body",
+          "type": "FRAME",
+          "width": 600,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_hint": {
+          "children": [],
+          "fills": [
+            {
+              "color": "#5F697D",
+              "type": "solid"
+            }
+          ],
+          "growType": "auto-height",
+          "height": 18,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_hint",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Hint",
+          "text": "选择已有子目录。注册后默认使用最近上级的配置。",
+          "textStyle": {
+            "fontFamily": "AILoom UI",
+            "fontSize": 12,
+            "lineHeight": 1.5
+          },
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_295e290055d01509c05ef53a0cf47fc5",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "fontFamily": {
+              "assetId": "tok_0f5802c78ac009efe743b235e1830999",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "fontSize": {
+              "assetId": "tok_017c7ccf3485b47d5304638b6bcfa87f",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "lineHeight": {
+              "assetId": "tok_a7f94ec02a0cc46bcb89464eb56691f6",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "TEXT",
+          "width": 278,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_label": {
+          "children": [],
+          "fills": [
+            {
+              "color": "#242B3D",
+              "type": "solid"
+            }
+          ],
+          "growType": "auto-height",
+          "height": 20,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_label",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Label",
+          "text": "相对父目录的路径",
+          "textStyle": {
+            "fontFamily": "AILoom UI",
+            "fontSize": 13,
+            "fontWeight": 600,
+            "lineHeight": 1.538
+          },
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_70832c88b819ab5f6e601be4e34b1699",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "fontFamily": {
+              "assetId": "tok_0f5802c78ac009efe743b235e1830999",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "fontSize": {
+              "assetId": "tok_751c6c1ae4d6fb89c0019f8e16135856",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "fontWeight": {
+              "assetId": "tok_ee83a9dfb95faf0500f121bd58ebbe95",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "lineHeight": {
+              "assetId": "tok_106ccbbb2efd84f6675c49d909e43c13",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "TEXT",
+          "width": 106,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_path": {
+          "children": [],
+          "height": 34,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body_path",
+          "instance": {
+            "component": {
+              "assetId": "cmp_input",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_input_field_prefix:variant": {
+                "axis_name": "folder"
+              },
+              "node_input_field_value:text": "apps/api",
+              "node_input_field_value:tokenBindings": {
+                "fill": {
+                  "assetId": "tok_70832c88b819ab5f6e601be4e34b1699",
+                  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+                },
+                "fontFamily": {
+                  "assetId": "tok_0f5802c78ac009efe743b235e1830999",
+                  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+                },
+                "fontSize": {
+                  "assetId": "tok_751c6c1ae4d6fb89c0019f8e16135856",
+                  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+                },
+                "lineHeight": {
+                  "assetId": "tok_106ccbbb2efd84f6675c49d909e43c13",
+                  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+                }
+              }
+            },
+            "variant": {
+              "axis_state": "default"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Path",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer": {
+          "children": [
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_confirm",
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_cancel"
+          ],
+          "fills": [],
+          "height": 66,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer",
+          "layout": "flex",
+          "layout-align-items": "center",
+          "layout-flex-dir": "row",
+          "layout-gap": {
+            "column-gap": 8,
+            "row-gap": 8
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "layout-justify-content": "end",
+          "layout-padding": {
+            "p1": 16,
+            "p2": 16,
+            "p3": 16,
+            "p4": 16
+          },
+          "layout-padding-type": "multiple",
+          "name": "Footer",
+          "type": "FRAME",
+          "width": 192,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_cancel": {
+          "children": [],
+          "height": 34,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_cancel",
+          "instance": {
+            "component": {
+              "assetId": "cmp_action",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_action_action_label:text": "取消"
+            },
+            "variant": {
+              "axis_state": "default",
+              "axis_style": "quiet"
+            }
+          },
+          "interactions": [
+            {
+              "action-type": "prev-screen",
+              "event-type": "click"
+            }
+          ],
+          "layout-item-h-sizing": "auto",
+          "layout-item-v-sizing": "fix",
+          "name": "Cancel",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 74,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_confirm": {
+          "children": [],
+          "height": 34,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer_confirm",
+          "instance": {
+            "component": {
+              "assetId": "cmp_action",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_action_action_label:text": "注册目录",
+              "node_action_action_label:width": 54
+            },
+            "variant": {
+              "axis_state": "default",
+              "axis_style": "primary"
+            }
+          },
+          "interactions": [
+            {
+              "action-type": "prev-screen",
+              "event-type": "click"
+            }
+          ],
+          "layout-item-h-sizing": "auto",
+          "layout-item-v-sizing": "fix",
+          "name": "Confirm",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 78,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_heading": {
+          "children": [],
+          "height": 86,
+          "id": "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_heading",
+          "instance": {
+            "component": {
+              "assetId": "cmp_dialog_header",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_dialog_header_header_close:interactions": [
+                {
+                  "action-type": "prev-screen",
+                  "event-type": "click"
+                }
+              ],
+              "node_dialog_header_header_copy_subtitle:text": "父目录：AILoom / main",
+              "node_dialog_header_header_copy_title:text": "注册子目录"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Heading",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_ub0c71f9a_desktop_root": {
+          "children": [
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_footer",
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_body",
+            "node_projects_ub0c71f9a_desktop_desktop_ud20a9839_heading"
+          ],
+          "fills": [
+            {
+              "color": "#FFFFFF",
+              "type": "solid"
+            }
+          ],
+          "height": 366,
+          "id": "node_projects_ub0c71f9a_desktop_root",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "auto",
+          "name": "注册子目录 · desktop",
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_a202dc7622024cb8eb4b42cdb0a75016",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_2b0c3ee6dbc468329975747eb9a8a375",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "platform": "desktop",
+      "rootId": "node_projects_ub0c71f9a_desktop_root",
+      "viewport": {
+        "height": 366,
+        "width": 560
+      }
+    }
+  ]
+}

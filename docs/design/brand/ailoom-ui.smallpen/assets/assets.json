@@ -1,0 +1,428 @@
+{
+  "colors": [],
+  "fonts": [
+    {
+      "family": "AILoom UI",
+      "id": "font_2cf134de-8166-44cd-801b-af5e2db499fa",
+      "variants": [
+        {
+          "files": {
+            "otf": {
+              "blob": "blobs/b905f9581c991c6f03503e62c3f8bf6f64a36c8e3bde644fee4a5f77a9180ffe",
+              "byteLength": 7747440,
+              "mimeType": "font/otf",
+              "sha256": "b905f9581c991c6f03503e62c3f8bf6f64a36c8e3bde644fee4a5f77a9180ffe"
+            }
+          },
+          "id": "fvar_f1bc8b06-bec8-4a5f-b28c-cd91122a9c6f",
+          "name": "Regular",
+          "style": "normal",
+          "weight": 400
+        },
+        {
+          "files": {
+            "otf": {
+              "blob": "blobs/9a49884096c8ae81b62f6e631f2b5f39117f684f73c2e20ff2055987aefff217",
+              "byteLength": 7745636,
+              "mimeType": "font/otf",
+              "sha256": "9a49884096c8ae81b62f6e631f2b5f39117f684f73c2e20ff2055987aefff217"
+            }
+          },
+          "id": "fvar_6fdecc2d-f5ea-48a1-8e11-ddc867ca1bbc",
+          "name": "Semi Bold",
+          "style": "normal",
+          "weight": 600
+        }
+      ]
+    }
+  ],
+  "id": "alib_design",
+  "media": [
+    {
+      "blob": "blobs/8a08857d8285e34d4c846c767940dfbc745877d890c1a8bb5855c82cfe471d6f",
+      "byteLength": 2544,
+      "height": 24,
+      "id": "media_83d7477d-d298-406d-8ade-1abe72064c5c",
+      "mimeType": "image/svg+xml",
+      "name": "Claude on",
+      "path": "",
+      "sha256": "8a08857d8285e34d4c846c767940dfbc745877d890c1a8bb5855c82cfe471d6f",
+      "width": 24
+    },
+    {
+      "blob": "blobs/baa82c02197150bc38a8e3e132d92da0335e9591e8cf5219de2766b56bf03350",
+      "byteLength": 2544,
+      "height": 24,
+      "id": "media_1000d7c3-c90e-495a-9929-e5886530a22b",
+      "mimeType": "image/svg+xml",
+      "name": "Claude off",
+      "path": "",
+      "sha256": "baa82c02197150bc38a8e3e132d92da0335e9591e8cf5219de2766b56bf03350",
+      "width": 24
+    },
+    {
+      "blob": "blobs/c4ff5a0579522b054aeb2b2b0d2d59f2407d7acc1a7d0321c5fa42b355d06c5f",
+      "byteLength": 2425,
+      "height": 24,
+      "id": "media_7577fc82-7e91-40d5-a948-477327373a8c",
+      "mimeType": "image/svg+xml",
+      "name": "Codex on",
+      "path": "",
+      "sha256": "c4ff5a0579522b054aeb2b2b0d2d59f2407d7acc1a7d0321c5fa42b355d06c5f",
+      "width": 24
+    },
+    {
+      "blob": "blobs/2d918ffcd4eef543490a80afaf70ab83ff0155bae5650c501e749c9fe55b7bf9",
+      "byteLength": 2425,
+      "height": 24,
+      "id": "media_5e5e38e5-2d22-413a-a7a3-5ae4d6505e63",
+      "mimeType": "image/svg+xml",
+      "name": "Codex off",
+      "path": "",
+      "sha256": "2d918ffcd4eef543490a80afaf70ab83ff0155bae5650c501e749c9fe55b7bf9",
+      "width": 24
+    },
+    {
+      "blob": "blobs/0204dba87cef0e6a6038bf0516b33b335dd9e1af4cd53214fa669e9db343c036",
+      "byteLength": 89,
+      "height": 24,
+      "id": "media_fec09782-013a-4314-a1fe-e845c76da596",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/blank",
+      "path": "",
+      "sha256": "0204dba87cef0e6a6038bf0516b33b335dd9e1af4cd53214fa669e9db343c036",
+      "width": 24
+    },
+    {
+      "blob": "blobs/b61ee911e0a1b1cae72503515fd19bc7e613e4ebfbea1a595f6f412dd214551b",
+      "byteLength": 309,
+      "height": 24,
+      "id": "media_d475a612-e335-4b25-966b-875152d1dd7d",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/branch-brand",
+      "path": "",
+      "sha256": "b61ee911e0a1b1cae72503515fd19bc7e613e4ebfbea1a595f6f412dd214551b",
+      "width": 24
+    },
+    {
+      "blob": "blobs/e969d8863e6e5ea36581c4225257f43d5d912a0c1a1b9779b1ca282b4e4a2a15",
+      "byteLength": 309,
+      "height": 24,
+      "id": "media_12c4dc27-81a5-4f93-a39a-87c550262511",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/branch-muted",
+      "path": "",
+      "sha256": "e969d8863e6e5ea36581c4225257f43d5d912a0c1a1b9779b1ca282b4e4a2a15",
+      "width": 24
+    },
+    {
+      "blob": "blobs/fe371000a76676bc1a3af85fa5a2e0e3d3efa770b10e79f1abcc3150ebe1026d",
+      "byteLength": 209,
+      "height": 24,
+      "id": "media_7be599ac-7872-43d8-a161-4de2db3d588c",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/check-white",
+      "path": "",
+      "sha256": "fe371000a76676bc1a3af85fa5a2e0e3d3efa770b10e79f1abcc3150ebe1026d",
+      "width": 24
+    },
+    {
+      "blob": "blobs/6f75758e9134c1ef89a991b2c2c584a8df18e309ba66be2dd4f04a3bab381369",
+      "byteLength": 206,
+      "height": 24,
+      "id": "media_7f68cb6d-05e7-4516-be87-de2157cc039c",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/chevron-down-muted",
+      "path": "",
+      "sha256": "6f75758e9134c1ef89a991b2c2c584a8df18e309ba66be2dd4f04a3bab381369",
+      "width": 24
+    },
+    {
+      "blob": "blobs/e118b5c46d721efbde5cf904ada1782b918ddb48136874749ab6b24722f5cd35",
+      "byteLength": 208,
+      "height": 24,
+      "id": "media_b8c7cfe0-dc43-4f51-8ff6-3cf7d18253c2",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/chevron-left-muted",
+      "path": "",
+      "sha256": "e118b5c46d721efbde5cf904ada1782b918ddb48136874749ab6b24722f5cd35",
+      "width": 24
+    },
+    {
+      "blob": "blobs/b63a46a250e76bead6471cfd5a57eaa7874fd24eff1406443edf347242c0c2b4",
+      "byteLength": 207,
+      "height": 24,
+      "id": "media_5fb7aec3-49a4-4dfa-831c-1b14d55bd63f",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/chevron-right-muted",
+      "path": "",
+      "sha256": "b63a46a250e76bead6471cfd5a57eaa7874fd24eff1406443edf347242c0c2b4",
+      "width": 24
+    },
+    {
+      "blob": "blobs/2976358befc24c9d9d80d203259c84b24ed7468d6cc8006a994a8a79e0feaea6",
+      "byteLength": 274,
+      "height": 24,
+      "id": "media_dfe3ff88-d3f5-4578-971b-122648155e5f",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/ellipsis-muted",
+      "path": "",
+      "sha256": "2976358befc24c9d9d80d203259c84b24ed7468d6cc8006a994a8a79e0feaea6",
+      "width": 24
+    },
+    {
+      "blob": "blobs/140f60782a2d0d75250b96ee2766bd27d519b1198974367bf70e3b4518a68ef8",
+      "byteLength": 312,
+      "height": 24,
+      "id": "media_15aa7d26-5bec-4f3f-a147-c2ea00e3c008",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/folder-brand",
+      "path": "",
+      "sha256": "140f60782a2d0d75250b96ee2766bd27d519b1198974367bf70e3b4518a68ef8",
+      "width": 24
+    },
+    {
+      "blob": "blobs/efc80953457ccefb9785e5bbc3627674a81ea86f08ba11c8b9b5013909529db1",
+      "byteLength": 312,
+      "height": 24,
+      "id": "media_73df4d87-1f44-4a33-a554-95aedbf0650c",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/folder-muted",
+      "path": "",
+      "sha256": "efc80953457ccefb9785e5bbc3627674a81ea86f08ba11c8b9b5013909529db1",
+      "width": 24
+    },
+    {
+      "blob": "blobs/9fd6988924fee21c8d6a13a04fe33503bf8f3efd1059b9c5d6ebc7f71e541728",
+      "byteLength": 293,
+      "height": 24,
+      "id": "media_7017b210-fa93-4a45-b87c-e2283ac1ef1c",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/globe-brand",
+      "path": "",
+      "sha256": "9fd6988924fee21c8d6a13a04fe33503bf8f3efd1059b9c5d6ebc7f71e541728",
+      "width": 24
+    },
+    {
+      "blob": "blobs/74936fa23ad8fdd0aa132681e0ec6d9e388b2c0ed3721d37fd80e95504f15e58",
+      "byteLength": 293,
+      "height": 24,
+      "id": "media_ed6f7af0-7909-44a5-b5b0-38e5c803c655",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/globe-muted",
+      "path": "",
+      "sha256": "74936fa23ad8fdd0aa132681e0ec6d9e388b2c0ed3721d37fd80e95504f15e58",
+      "width": 24
+    },
+    {
+      "blob": "blobs/5205125f716d3c99ac757bc1553a1234ab3a5eb35a746e260ada533010261a83",
+      "byteLength": 374,
+      "height": 24,
+      "id": "media_3d86f45d-6fbf-4fdf-97b0-1bf6823d068b",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/grid-brand",
+      "path": "",
+      "sha256": "5205125f716d3c99ac757bc1553a1234ab3a5eb35a746e260ada533010261a83",
+      "width": 24
+    },
+    {
+      "blob": "blobs/c04107abe5bbd2f747fce0a1d2c186451937784b0746392e38380f20f20b70ba",
+      "byteLength": 374,
+      "height": 24,
+      "id": "media_9fe1d094-3f50-40b6-ad8c-03314075a0dc",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/grid-muted",
+      "path": "",
+      "sha256": "c04107abe5bbd2f747fce0a1d2c186451937784b0746392e38380f20f20b70ba",
+      "width": 24
+    },
+    {
+      "blob": "blobs/388cd21783bfe629db360e422933b20371847c15df55384170d610a93e1e218c",
+      "byteLength": 284,
+      "height": 24,
+      "id": "media_a6259dd6-7aca-4236-aefc-e9f9da975496",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/help-brand",
+      "path": "",
+      "sha256": "388cd21783bfe629db360e422933b20371847c15df55384170d610a93e1e218c",
+      "width": 24
+    },
+    {
+      "blob": "blobs/4c154aa3bbce49cafcc816aa147e24834ca9fe8079435902b228a1d281d4dbd8",
+      "byteLength": 284,
+      "height": 24,
+      "id": "media_585b8ac4-f813-4cca-b562-28082a3f85a5",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/help-muted",
+      "path": "",
+      "sha256": "4c154aa3bbce49cafcc816aa147e24834ca9fe8079435902b228a1d281d4dbd8",
+      "width": 24
+    },
+    {
+      "blob": "blobs/e5d12b6904c97979a27df64ffdb348334108f3be948c199b5bcebf4544309f92",
+      "byteLength": 286,
+      "height": 24,
+      "id": "media_0e05b4a9-7308-4da3-989f-f0e1bd18eb6d",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/history-brand",
+      "path": "",
+      "sha256": "e5d12b6904c97979a27df64ffdb348334108f3be948c199b5bcebf4544309f92",
+      "width": 24
+    },
+    {
+      "blob": "blobs/62150b1da80adff77b9de641e635b63eb9403692e84d461cb22b41b767bf0254",
+      "byteLength": 286,
+      "height": 24,
+      "id": "media_fc753d1b-2118-4380-a923-da434bf61b44",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/history-muted",
+      "path": "",
+      "sha256": "62150b1da80adff77b9de641e635b63eb9403692e84d461cb22b41b767bf0254",
+      "width": 24
+    },
+    {
+      "blob": "blobs/adc2299e1f84b6f45bfb4817c94f60bfb77ebbd93d22b43cc4714da0e1dd3ab8",
+      "byteLength": 414,
+      "height": 24,
+      "id": "media_618f19a4-4139-451a-9a95-2d71ed27b9ac",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/layers-brand",
+      "path": "",
+      "sha256": "adc2299e1f84b6f45bfb4817c94f60bfb77ebbd93d22b43cc4714da0e1dd3ab8",
+      "width": 24
+    },
+    {
+      "blob": "blobs/69cf68ec85634f59aa39aab13f5c12f537d5052be85eb131ab937090b573c5a9",
+      "byteLength": 414,
+      "height": 24,
+      "id": "media_09fe741a-c1cb-44d8-a14d-45064c0fa872",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/layers-muted",
+      "path": "",
+      "sha256": "69cf68ec85634f59aa39aab13f5c12f537d5052be85eb131ab937090b573c5a9",
+      "width": 24
+    },
+    {
+      "blob": "blobs/524671f46d604d8a6ab80441fc92801297193761bc010e0b7c1e8d85dc927300",
+      "byteLength": 262,
+      "height": 24,
+      "id": "media_12abd547-6c7b-4296-af95-5e7f6177d869",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/library-brand",
+      "path": "",
+      "sha256": "524671f46d604d8a6ab80441fc92801297193761bc010e0b7c1e8d85dc927300",
+      "width": 24
+    },
+    {
+      "blob": "blobs/40c0359494d252227800ecba18520e65adf33c815711e3e15ec464ae7ece93fd",
+      "byteLength": 262,
+      "height": 24,
+      "id": "media_6b50d824-1aec-49c8-ad86-2c3c3f3383a6",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/library-muted",
+      "path": "",
+      "sha256": "40c0359494d252227800ecba18520e65adf33c815711e3e15ec464ae7ece93fd",
+      "width": 24
+    },
+    {
+      "blob": "blobs/6acc2586157c70369012f4850d7a73b423682e7b737bdcdcfaf1ddf6ee981e3e",
+      "byteLength": 294,
+      "height": 24,
+      "id": "media_aebc79aa-5f2e-42ca-b0d5-725893b4f948",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/menu-muted",
+      "path": "",
+      "sha256": "6acc2586157c70369012f4850d7a73b423682e7b737bdcdcfaf1ddf6ee981e3e",
+      "width": 24
+    },
+    {
+      "blob": "blobs/638a85106cca3cc08223ce5c993e654f172c5dd447d3d9d37bc337a7523140f7",
+      "byteLength": 222,
+      "height": 24,
+      "id": "media_50b1d563-dac1-4b00-9dff-57a8530200b4",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/plus-muted",
+      "path": "",
+      "sha256": "638a85106cca3cc08223ce5c993e654f172c5dd447d3d9d37bc337a7523140f7",
+      "width": 24
+    },
+    {
+      "blob": "blobs/c14b56b6f8ee89d20204a9b521aae58f14c4a49d0f49e190a2d80958c9c58557",
+      "byteLength": 239,
+      "height": 24,
+      "id": "media_3e6d7407-cf3c-4e9b-ad61-8b86965aef5c",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/search-muted",
+      "path": "",
+      "sha256": "c14b56b6f8ee89d20204a9b521aae58f14c4a49d0f49e190a2d80958c9c58557",
+      "width": 24
+    },
+    {
+      "blob": "blobs/e7a5fc09dfb09a94610761b4a45f7702c5d7945bc6ee5af349738ae4a13f5660",
+      "byteLength": 226,
+      "height": 24,
+      "id": "media_d3d52e7c-2df1-4640-aa38-d1f486421bd4",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/x-muted",
+      "path": "",
+      "sha256": "e7a5fc09dfb09a94610761b4a45f7702c5d7945bc6ee5af349738ae4a13f5660",
+      "width": 24
+    },
+    {
+      "blob": "blobs/43a7685068798c1dcfebfe9a1877c5d52ac76eec4f62bf61329a5198aacbd01c",
+      "byteLength": 202,
+      "height": 24,
+      "id": "media_644bb8ed-3248-469e-8460-da8e7db496c4",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/dash-white",
+      "path": "",
+      "sha256": "43a7685068798c1dcfebfe9a1877c5d52ac76eec4f62bf61329a5198aacbd01c",
+      "width": 24
+    },
+    {
+      "blob": "blobs/e1c89aa0f8163a92a46d7aa4156837d774f52c04b68709ed3dd791634fbebad3",
+      "byteLength": 354,
+      "height": 24,
+      "id": "media_b95c6c42-dded-44ee-82a6-4f7ae8358eb2",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/inbox-brand",
+      "path": "",
+      "sha256": "e1c89aa0f8163a92a46d7aa4156837d774f52c04b68709ed3dd791634fbebad3",
+      "width": 24
+    },
+    {
+      "blob": "blobs/ca7cf332a9bc86b9c0e877e2c32089de335f936713653c4846faa466acde71c4",
+      "byteLength": 209,
+      "height": 24,
+      "id": "media_b4937dc0-915f-4db7-a52e-f586b61081df",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/tick-white",
+      "path": "",
+      "sha256": "ca7cf332a9bc86b9c0e877e2c32089de335f936713653c4846faa466acde71c4",
+      "width": 24
+    },
+    {
+      "blob": "blobs/6498bfd6431f79c58a4561061a132b12baed8e9875dd14fcec8470a6a4353413",
+      "byteLength": 265,
+      "height": 24,
+      "id": "media_55079486-231b-4549-ab5b-6232ae3f4f1a",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/user-brand",
+      "path": "",
+      "sha256": "6498bfd6431f79c58a4561061a132b12baed8e9875dd14fcec8470a6a4353413",
+      "width": 24
+    },
+    {
+      "blob": "blobs/05fe3dada88b32d17ef5762fd119d3c794c600fb7b1848466b87a3447bb66d5b",
+      "byteLength": 339,
+      "height": 24,
+      "id": "media_3768617d-2b19-4479-b542-5492e19d14c1",
+      "mimeType": "image/svg+xml",
+      "name": "Icons/users-brand",
+      "path": "",
+      "sha256": "05fe3dada88b32d17ef5762fd119d3c794c600fb7b1848466b87a3447bb66d5b",
+      "width": 24
+    }
+  ],
+  "typographies": []
+}

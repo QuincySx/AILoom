@@ -13,7 +13,7 @@
 3. `base.css` 与 features/pages：应用壳和页面布局、业务组合，不定义新的颜色值。
 4. `workspace.css`：页面和业务组合的布局。内容容器上限 1120px，Large／Medium 的全局导航宽 184／164px、配置目录宽 208／192px；≤700px 使用顶栏主导航与目录选择器。尺寸差异统一定义在 `tokens.css`。
 
-实现依据是唯一的 SmallPen 设计包 [`ailoom-ui.smallpen`](../design/brand/ailoom-ui.smallpen/)，revision `6d5c1204a6eecaddaf65008ca78b12c9ad59e935ec9586380282264a8a7fa2b5`。旧品牌包已移出项目，不能依据历史导出实现页面。`components/layout.js` 提供 AppHeader／PageHeader／面包屑；`components/sectionNav.js` 提供项目导航；`components/item.js` 提供 Item、分页与操作菜单。
+实现依据是唯一的 SmallPen 设计包 [`ailoom-ui.smallpen`](../design/brand/ailoom-ui.smallpen/)，revision `80a6d052deff862481f49acdd53886fd5859433c8c74d39c46bc349765060e92`，界面字体用 Noto Sans SC（SIL OFL 1.1，授权见包内 `FONT-LICENSE.txt`）。旧品牌包已移出项目，不能依据历史导出实现页面。`components/layout.js` 提供 AppHeader／PageHeader／面包屑；`components/sectionNav.js` 提供项目导航；`components/item.js` 提供 Item、分页与操作菜单。
 
 资源 Item 上下内边距 4px、左右 12px，内容自然撑高；小屏资源库条目收起装饰图标、左右收为 8px，保留主操作与更多操作。非交互工具行随控件高度为桌面 34px、小屏 44px，不创建内容高度 Token。标题 14/20、说明 12/16、控件标签 13/20。能力与技能列表不使用分页器。
 

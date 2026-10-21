@@ -1,0 +1,129 @@
+{
+  "basePresentationId": "pres_projects_u5fd94a7e_desktop",
+  "counterparts": [],
+  "id": "scr_projects_u5fd94a7e",
+  "name": "Projects / 选择文件夹目录",
+  "presentations": [
+    {
+      "id": "pres_projects_u5fd94a7e_desktop",
+      "interactions": [],
+      "name": "desktop",
+      "nodes": {
+        "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_return": {
+          "children": [],
+          "height": 34,
+          "id": "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_return",
+          "instance": {
+            "component": {
+              "assetId": "cmp_action",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_action_action_label:text": "返回配置"
+            },
+            "variant": {
+              "axis_state": "default",
+              "axis_style": "quiet"
+            }
+          },
+          "interactions": [
+            {
+              "action-type": "prev-screen",
+              "event-type": "click"
+            }
+          ],
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Return",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 78,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_tree": {
+          "children": [],
+          "height": 900,
+          "id": "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_tree",
+          "instance": {
+            "component": {
+              "assetId": "cmp_folder_context",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_folder_context_root:tokenBindings": {
+                "width": null
+              },
+              "node_folder_context_tree_docs:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "a63e74b0-c197-5651-bf1b-164a8b784030",
+                  "event-type": "click"
+                }
+              ],
+              "node_folder_context_tree_root:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "632d2f27-d9b9-5906-b950-67eba4d0eefa",
+                  "event-type": "click"
+                }
+              ]
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Tree",
+          "type": "INSTANCE",
+          "width": 208,
+          "x": 0,
+          "y": 0
+        },
+        "node_projects_u5fd94a7e_desktop_root": {
+          "children": [
+            "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_return",
+            "node_projects_u5fd94a7e_desktop_desktop_u4f7fff4d_tree"
+          ],
+          "fills": [
+            {
+              "color": "#FFFFFF",
+              "type": "solid"
+            }
+          ],
+          "height": 934,
+          "id": "node_projects_u5fd94a7e_desktop_root",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "auto",
+          "name": "选择文件夹目录 · desktop",
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_a202dc7622024cb8eb4b42cdb0a75016",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_2b0c3ee6dbc468329975747eb9a8a375",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "platform": "desktop",
+      "rootId": "node_projects_u5fd94a7e_desktop_root",
+      "viewport": {
+        "height": 934,
+        "width": 560
+      }
+    }
+  ]
+}

@@ -1,0 +1,554 @@
+{
+  "basePresentationId": "pres_global_u54c9a628_desktop",
+  "counterparts": [],
+  "id": "scr_global_u54c9a628",
+  "name": "Global / 技能设置",
+  "presentations": [
+    {
+      "id": "pres_global_u54c9a628_desktop",
+      "interactions": [],
+      "name": "desktop",
+      "nodes": {
+        "node_global_u54c9a628_desktop_desktop_u163e085a_app_navigation": {
+          "children": [],
+          "height": 900,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_app_navigation",
+          "instance": {
+            "component": {
+              "assetId": "cmp_app_navigation",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_app_navigation_navigation_global:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "20e7e36a-865c-5cca-8bc8-19db955d3c4e",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_global:variant": {
+                "axis_state": "selected"
+              },
+              "node_app_navigation_navigation_help:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "40462b1a-bf5d-5c3b-aeff-18b267d9b928",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_history:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "4c7ac977-fdba-5d9b-a632-a94d111a0c83",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_library:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "cf41e3db-1a48-526d-8111-417ffe617738",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_projects:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "f718a99b-b69e-5afc-8c03-b74512eac1fd",
+                  "event-type": "click"
+                }
+              ],
+              "node_app_navigation_navigation_projects:variant": {
+                "axis_state": "default"
+              }
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "fill",
+          "name": "App navigation",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_8d00b760df5923e592f1b58fa735c685",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_e26b6b83700125ccd996868350df63eb",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 184,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_breadcrumb",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_mobile_navigation"
+          ],
+          "fills": [],
+          "height": 582,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Main",
+          "type": "FRAME",
+          "width": 624,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_breadcrumb": {
+          "children": [],
+          "height": 52,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_breadcrumb",
+          "instance": {
+            "component": {
+              "assetId": "cmp_breadcrumb",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_breadcrumb_breadcrumb_crumb:text": "资源库 / 全局技能 / code-review"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Breadcrumb",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_8d00b760df5923e592f1b58fa735c685",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_mobile_navigation": {
+          "children": [],
+          "height": 60,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_mobile_navigation",
+          "instance": {
+            "component": {
+              "assetId": "cmp_mobile_navigation",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_mobile_navigation_mobile_menu:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "b923b542-1622-5088-ac74-edbd97230e58",
+                  "event-type": "click"
+                }
+              ],
+              "node_mobile_navigation_mobile_more:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "40462b1a-bf5d-5c3b-aeff-18b267d9b928",
+                  "event-type": "click"
+                }
+              ]
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "fix",
+          "name": "Mobile navigation",
+          "tokenBindings": {
+            "visible": {
+              "assetId": "tok_fa3de2b6a15e098355de38565d83e3b3",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "visible": false,
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content"
+          ],
+          "fills": [],
+          "height": 530,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace",
+          "layout": "flex",
+          "layout-align-items": "stretch",
+          "layout-flex-dir": "row",
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "layout-justify-content": "center",
+          "name": "Workspace",
+          "type": "FRAME",
+          "width": 624,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_result",
+            "node_global_u54c9a628_desktop_v40_frame_56"
+          ],
+          "fills": [],
+          "height": 530,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-gap": {
+            "column-gap": 24,
+            "row-gap": 24
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-max-w": 1120,
+          "layout-item-v-sizing": "auto",
+          "layout-padding": {
+            "p1": 32,
+            "p2": 32,
+            "p3": 32,
+            "p4": 32
+          },
+          "layout-padding-type": "multiple",
+          "name": "Content",
+          "tokenBindings": {
+            "itemSpacing": {
+              "assetId": "tok_64efca34972325b5bbb69c89824cd77a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingBottom": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingLeft": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingRight": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "paddingTop": {
+              "assetId": "tok_57c2a92722e864f23d3257fd9143080a",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 624,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_heading": {
+          "children": [],
+          "height": 66,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_heading",
+          "instance": {
+            "component": {
+              "assetId": "cmp_page_heading",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_page_heading_heading_copy_subtitle:text": "来自个人资源库",
+              "node_page_heading_heading_copy_title:text": "code-review"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-min-w": 240,
+          "layout-item-v-sizing": "auto",
+          "name": "Heading",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_result": {
+          "children": [],
+          "height": 66,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_result",
+          "instance": {
+            "component": {
+              "assetId": "cmp_notice",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_notice_notice_copy_detail:text": "通用目录已应用。Claude Code 的现有文件尚未被覆盖。",
+              "node_notice_notice_copy_title:text": "Claude Code 需要处理"
+            },
+            "variant": {
+              "axis_tone": "warning"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Result",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_agent_x",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_codex",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_claude",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_heading"
+          ],
+          "fills": [],
+          "height": 186,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-gap": {
+            "column-gap": 12,
+            "row-gap": 12
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "部署位置",
+          "type": "FRAME",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_agent_x": {
+          "children": [],
+          "height": 46,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_agent_x",
+          "instance": {
+            "component": {
+              "assetId": "cmp_tool_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_tool_item_tool_text_meta:text": "已随通用目录启用",
+              "node_tool_item_tool_text_meta:visible": true,
+              "node_tool_item_tool_text_name:text": "Agent X"
+            },
+            "variant": {
+              "axis_mode": "inherited"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Agent X",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_claude": {
+          "children": [],
+          "height": 46,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_claude",
+          "instance": {
+            "component": {
+              "assetId": "cmp_tool_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_tool_item_tool_text_meta:fills": [
+                {
+                  "color": "#96621B",
+                  "type": "solid"
+                }
+              ],
+              "node_tool_item_tool_text_meta:text": "检测到已有文件",
+              "node_tool_item_tool_text_meta:tokenBindings": {
+                "fill": {
+                  "assetId": "tok_a0db6676ba4e49380eb1b95d36960e73",
+                  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+                }
+              },
+              "node_tool_item_tool_text_meta:visible": true,
+              "node_tool_item_tool_text_name:text": "Claude Code"
+            },
+            "variant": {
+              "axis_mode": "editable"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Claude",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_codex": {
+          "children": [],
+          "height": 46,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_codex",
+          "instance": {
+            "component": {
+              "assetId": "cmp_tool_item",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_tool_item_tool_text_meta:text": "Codex、OpenCode 等 5 个 Agent 读取",
+              "node_tool_item_tool_text_meta:visible": true,
+              "node_tool_item_tool_text_name:text": "通用目录"
+            },
+            "variant": {
+              "axis_mode": "editable"
+            }
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Shared",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_heading": {
+          "children": [],
+          "height": 24,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_heading",
+          "instance": {
+            "component": {
+              "assetId": "cmp_section_heading",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_section_heading_heading_meta:text": "3 个位置",
+              "node_section_heading_heading_title:text": "部署位置"
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Heading",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_resolve": {
+          "children": [],
+          "height": 34,
+          "id": "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_resolve",
+          "instance": {
+            "component": {
+              "assetId": "cmp_action",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_action_action_label:text": "处理冲突"
+            },
+            "variant": {
+              "axis_state": "default",
+              "axis_style": "primary"
+            }
+          },
+          "interactions": [
+            {
+              "action-type": "navigate",
+              "destination": "8e550cb4-5980-539e-987c-42fe2f160490",
+              "event-type": "click"
+            }
+          ],
+          "layout-item-h-sizing": "auto",
+          "layout-item-v-sizing": "fix",
+          "name": "Resolve",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_96856e81810b88b635a5c5a489bc0e55",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "INSTANCE",
+          "width": 78,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_root": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_app_navigation",
+            "node_viewport_min_global_u54c9a628"
+          ],
+          "fills": [
+            {
+              "color": "#FFFFFF",
+              "type": "solid"
+            }
+          ],
+          "height": 900,
+          "id": "node_global_u54c9a628_desktop_root",
+          "layout": "flex",
+          "layout-flex-dir": "row",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "auto",
+          "name": "技能设置 · desktop",
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_a202dc7622024cb8eb4b42cdb0a75016",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_ff934b567e6d2ff8a8b49f47a5f125e5",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 1440,
+          "x": 0,
+          "y": 0
+        },
+        "node_global_u54c9a628_desktop_v40_frame_56": {
+          "children": [
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_uf8a3e64e_resolve",
+            "node_global_u54c9a628_desktop_desktop_u163e085a_main_workspace_content_heading"
+          ],
+          "fills": [],
+          "height": 34,
+          "id": "node_global_u54c9a628_desktop_v40_frame_56",
+          "layout": "flex",
+          "layout-align-items": "center",
+          "layout-flex-dir": "row",
+          "layout-gap": {
+            "column-gap": 12,
+            "row-gap": 8
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "layout-wrap-type": "wrap",
+          "name": "Heading row",
+          "type": "FRAME",
+          "width": 642,
+          "x": 0,
+          "y": 0
+        },
+        "node_viewport_min_global_u54c9a628": {
+          "children": [],
+          "height": 900,
+          "id": "node_viewport_min_global_u54c9a628",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "fix",
+          "name": "Viewport minimum · layout guide",
+          "tokenBindings": {
+            "height": {
+              "assetId": "tok_2c64798c046750acd72c9457ddf41caf",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 0,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "platform": "desktop",
+      "rootId": "node_global_u54c9a628_desktop_root",
+      "viewport": {
+        "height": 900,
+        "width": 1440
+      }
+    }
+  ]
+}

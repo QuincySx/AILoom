@@ -1,0 +1,59 @@
+{
+  "defaultScreenId": "scr_projects_u0690d026",
+  "entries": {
+    "assets": [
+      "assets/assets.json"
+    ],
+    "components": [
+      "components/components.json"
+    ],
+    "contexts": [],
+    "requirements": [],
+    "scenarios": [],
+    "screens": [
+      "screens/projects_u0690d026.json",
+      "screens/projects_ai_udc701291.json",
+      "screens/projects_u51185f80.json",
+      "screens/projects_u7c712b0d.json",
+      "screens/projects_ua7f585fa.json",
+      "screens/projects_u18e459e4.json",
+      "screens/projects_uef1e99bd.json",
+      "screens/projects_u7566249a.json",
+      "screens/projects_uada62f47.json",
+      "screens/projects_ubcdd6bbb.json",
+      "screens/projects_u4d3e98d5.json",
+      "screens/projects_u827816a6.json",
+      "screens/projects_uee2a8e53.json",
+      "screens/projects_u10ff3b9a.json",
+      "screens/projects_ud03642b8.json",
+      "screens/library_u3b7047dd.json",
+      "screens/library_u130b6c2a.json",
+      "screens/library_ud8588a41.json",
+      "screens/library_ubdaea29b.json",
+      "screens/library_uebdb9d3d.json",
+      "screens/library_u9f4eca1a.json",
+      "screens/library_u4f6f1390.json",
+      "screens/global_u5c9890de.json",
+      "screens/global_u08d0a46f.json",
+      "screens/global_u6dcee5cd.json",
+      "screens/library_ua107bac7.json",
+      "screens/history_u8a5040c5.json",
+      "screens/brand_ucb46545b.json",
+      "screens/projects_u63318b13.json",
+      "screens/help_u5ebc7c3f.json",
+      "screens/navigation_u7036857b.json",
+      "screens/projects_u4b947ace.json",
+      "screens/projects_ub0c71f9a.json",
+      "screens/projects_u5fd94a7e.json",
+      "screens/global_u54c9a628.json",
+      "screens/library_library_u9c297101.json"
+    ],
+    "tokens": [
+      "tokens/tokens.json"
+    ]
+  },
+  "formatVersion": 1,
+  "name": "AILoom · 工作台设计",
+  "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9",
+  "role": "foundation"
+}

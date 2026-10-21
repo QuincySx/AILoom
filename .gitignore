@@ -11,3 +11,7 @@ Cargo.lock.orig
 /.scratch/
 # 第三方 Skill 不随仓库发布，各自放在本机（见 .ailoom/team/THIRD_PARTY.md）
 /.ailoom/team/resources/skills/
+
+# 设计稿：仓库里只放 SmallPen 设计包；设计说明、导出图、备份与工具反馈留在本机
+/docs/design/brand/*
+!/docs/design/brand/ailoom-ui.smallpen/

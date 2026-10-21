@@ -1,0 +1,118 @@
+{
+  "basePresentationId": "pres_navigation_u7036857b_desktop",
+  "counterparts": [],
+  "id": "scr_navigation_u7036857b",
+  "name": "Navigation / 导航菜单",
+  "presentations": [
+    {
+      "id": "pres_navigation_u7036857b_desktop",
+      "interactions": [],
+      "name": "desktop",
+      "nodes": {
+        "node_navigation_u7036857b_desktop_desktop_ueaf69e62_menu": {
+          "children": [],
+          "height": 296,
+          "id": "node_navigation_u7036857b_desktop_desktop_ueaf69e62_menu",
+          "instance": {
+            "component": {
+              "assetId": "cmp_navigation_menu",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "overrides": {
+              "node_navigation_menu_menu_heading__node_dialog_header_header_close:interactions": [
+                {
+                  "action-type": "prev-screen",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_menu_links_global:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "20e7e36a-865c-5cca-8bc8-19db955d3c4e",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_menu_links_help:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "40462b1a-bf5d-5c3b-aeff-18b267d9b928",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_menu_links_history:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "4c7ac977-fdba-5d9b-a632-a94d111a0c83",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_menu_links_library:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "cf41e3db-1a48-526d-8111-417ffe617738",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_menu_links_projects:interactions": [
+                {
+                  "action-type": "navigate",
+                  "destination": "f718a99b-b69e-5afc-8c03-b74512eac1fd",
+                  "event-type": "click"
+                }
+              ],
+              "node_navigation_menu_root:tokenBindings": {
+                "width": null
+              }
+            },
+            "variant": {}
+          },
+          "layout-item-h-sizing": "fill",
+          "layout-item-v-sizing": "auto",
+          "name": "Menu",
+          "type": "INSTANCE",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        },
+        "node_navigation_u7036857b_desktop_root": {
+          "children": [
+            "node_navigation_u7036857b_desktop_desktop_ueaf69e62_menu"
+          ],
+          "fills": [
+            {
+              "color": "#FFFFFF",
+              "type": "solid"
+            }
+          ],
+          "height": 296,
+          "id": "node_navigation_u7036857b_desktop_root",
+          "layout": "flex",
+          "layout-flex-dir": "column",
+          "layout-item-h-sizing": "fix",
+          "layout-item-v-sizing": "auto",
+          "name": "导航菜单 · desktop",
+          "tokenBindings": {
+            "fill": {
+              "assetId": "tok_a202dc7622024cb8eb4b42cdb0a75016",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            },
+            "width": {
+              "assetId": "tok_2b0c3ee6dbc468329975747eb9a8a375",
+              "packageId": "pkg_11f266a71c5a4968b2f3a5a22bcb71c9"
+            }
+          },
+          "type": "FRAME",
+          "width": 560,
+          "x": 0,
+          "y": 0
+        }
+      },
+      "platform": "desktop",
+      "rootId": "node_navigation_u7036857b_desktop_root",
+      "viewport": {
+        "height": 296,
+        "width": 560
+      }
+    }
+  ]
+}
