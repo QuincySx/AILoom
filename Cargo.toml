@@ -39,6 +39,10 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# 调试构建也优化哈希：服务启动要算整个程序文件的 sha256，快照摘要同样依赖它。
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 strip = true
 lto = "thin"

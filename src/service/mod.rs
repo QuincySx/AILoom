@@ -30,22 +30,51 @@ fn schema_v1() -> u32 {
 }
 
 /// Captured when the server starts, so replacing the executable on disk cannot
-/// make an old process report the new binary's identity.
+/// make an old process report the new binary's identity. The hash is computed
+/// once here for installers; comparisons use the cheap file fingerprint.
 pub(crate) fn executable_identity() -> Value {
     static BUILD: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
-    BUILD.get_or_init(|| {
-        let executable = std::env::current_exe().ok();
-        let sha256 = executable
-            .as_ref()
-            .and_then(|p| fs::read(p).ok())
-            .map(|bytes| crate::ids::sha256_hex(&bytes));
-        json!({"version": env!("CARGO_PKG_VERSION"), "executable": executable, "sha256": sha256})
-    }).clone()
+    BUILD
+        .get_or_init(|| {
+            let mut identity = current_executable();
+            identity["sha256"] = identity["executable"]
+                .as_str()
+                .and_then(|p| fs::read(p).ok())
+                .map(|bytes| crate::ids::sha256_hex(&bytes))
+                .into();
+            identity
+        })
+        .clone()
+}
+
+/// Path and file fingerprint of the running program, without reading its bytes:
+/// `service status` runs often and the executable can be hundreds of MB.
+fn current_executable() -> Value {
+    let executable = std::env::current_exe().ok();
+    let fingerprint = executable.as_deref().and_then(file_fingerprint);
+    json!({"version": env!("CARGO_PKG_VERSION"), "executable": executable, "fingerprint": fingerprint})
+}
+
+/// Replacing (rename over) or rewriting the file changes at least one of these.
+fn file_fingerprint(path: &Path) -> Option<Value> {
+    let meta = fs::metadata(path).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos()
+        .to_string();
+    #[cfg(unix)]
+    let inode = Some(std::os::unix::fs::MetadataExt::ino(&meta));
+    #[cfg(not(unix))]
+    let inode: Option<u64> = None;
+    Some(json!({"len": meta.len(), "modified": modified, "inode": inode}))
 }
 
 fn same_executable(running: &Value, current: &Value) -> bool {
-    running["sha256"].as_str().is_some()
-        && running["sha256"] == current["sha256"]
+    running["fingerprint"].is_object()
+        && running["fingerprint"] == current["fingerprint"]
         && running["executable"] == current["executable"]
 }
 
@@ -278,7 +307,7 @@ pub fn status(root: &Path) -> Result<Value> {
         Ok((r, probe)) => Ok(
             json!({"state":if probe["stopping"]==true {"stopping"} else {"running"},
             "running":true,"pid":r.pid,"port":r.port,"data_root":root,"autostart":startup,
-            "build":probe["build"], "update_required":!same_executable(&probe["build"], &executable_identity())}),
+            "build":probe["build"], "update_required":!same_executable(&probe["build"], &current_executable())}),
         ),
         Err(_) => Ok(
             json!({"state":"unreachable","running":true,"data_root":root,"autostart":startup,
@@ -301,7 +330,7 @@ pub fn start(root: &Path, port: u16) -> Result<Value> {
         if probe["stopping"] == true {
             return Err(failure("服务正在停止，请稍后重试"));
         }
-        let current = executable_identity();
+        let current = current_executable();
         if !same_executable(&probe["build"], &current) {
             return Err(
                 failure("网页服务仍由另一个安装位置或旧构建运行，尚未切换到当前程序")
@@ -528,16 +557,30 @@ mod identity_tests {
 
     #[test]
     fn replaced_binary_and_legacy_service_require_restart() {
-        let current = json!({"executable":"/same/ailoom", "sha256":"new"});
+        let current =
+            json!({"executable":"/same/ailoom", "fingerprint":{"len":2,"modified":"9","inode":7}});
         assert!(same_executable(&current, &current));
         assert!(!same_executable(
-            &json!({"executable":"/same/ailoom", "sha256":"old"}),
+            &json!({"executable":"/same/ailoom", "fingerprint":{"len":2,"modified":"9","inode":8}}),
             &current
         ));
         assert!(!same_executable(&Value::Null, &current));
+        // Services started before fingerprints existed only recorded a hash.
         assert!(!same_executable(
-            &json!({"executable":"/same/ailoom"}),
+            &json!({"executable":"/same/ailoom", "sha256":"x"}),
             &current
         ));
+    }
+
+    #[test]
+    fn rewriting_the_executable_changes_its_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ailoom");
+        fs::write(&path, b"old").unwrap();
+        let before = file_fingerprint(&path).unwrap();
+        let replacement = dir.path().join("ailoom.new");
+        fs::write(&replacement, b"newer").unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert_ne!(file_fingerprint(&path).unwrap(), before);
     }
 }
