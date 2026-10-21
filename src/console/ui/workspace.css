@@ -243,7 +243,8 @@
 .global-add-catalog aside { max-height:48dvh;overflow:auto;overscroll-behavior:contain; }
 .workspace-resource-list { max-height:44dvh;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable; }
 /* Keep native scrolling and content-driven rows; defer offscreen paint in large libraries. */
-.repository-resource.ui-item,.global-list .ui-item { content-visibility:auto;contain-intrinsic-size:auto 44px; }
+/* 未渲染行的占位高度要等于实际行高（宽屏一行 40px，窄屏两行 52px），否则滚动定位会偏。 */
+.repository-resource.ui-item,.global-list .ui-item { content-visibility:auto;contain-intrinsic-size:auto 40px; }
 .global-add-group-heading { display:flex;align-items:center;justify-content:space-between;gap:var(--sp-2);font-size:var(--fs-tiny);font-weight:400;color:var(--muted-foreground); }
 .global-add-row { display:flex;align-items:center;gap:var(--sp-2);padding:var(--item-regular-padding) 0;border-bottom:1px solid var(--border); }
 .global-add-row>div { flex:1;min-width:0; }
@@ -257,6 +258,7 @@
 .native-files-page .native-files { border:0;margin:0;padding:0; }
 
 @media(max-width:700px) {
+  .repository-resource.ui-item,.global-list .ui-item { contain-intrinsic-size:auto 52px; }
   .app-header { inset:0 0 auto;flex-direction:row;align-items:center;gap:var(--sp-3);width:100%;height:var(--header-height);padding:0 var(--sp-4);border-right:0;border-bottom:1px solid var(--border); }
   .app-header .brand { padding:0; }
   .app-menu-toggle { display:inline-flex;min-width:44px;min-height:44px;padding:0!important;justify-content:center!important; }
@@ -473,7 +475,7 @@
   .workspace-applybar { flex-wrap:wrap; }
   .library-scope>[data-search] { flex-basis:calc(100% - 90px); }
   .repository-resource .ui-item-leading { display:none; }
-  .repository-resource .ui-item-primary { padding-inline:var(--sp-2); }
-  .repository-resource .ui-item-actions { padding-right:var(--sp-2); }
+  .repository-resource .ui-item-primary,.global-list .ui-item-primary { padding-inline:var(--sp-2); }
+  .repository-resource .ui-item-actions,.global-list .ui-item-actions { padding-right:var(--sp-2); }
   .repository-resource .ui-item-description { -webkit-line-clamp:2; }
 }

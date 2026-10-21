@@ -29,7 +29,7 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
     const height=width<=700?844:1000;
     if(await evaluate('innerWidth')!==width||await evaluate('innerHeight')!==height)await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     await new Promise(resolve=>setTimeout(resolve,120));
-    const geometry=await evaluate(`({width:innerWidth,scroll:document.documentElement.scrollWidth,header:document.querySelector('.app-header').getBoundingClientRect().height,headerWidth:document.querySelector('.app-header').getBoundingClientRect().width,laidOutItems:[...document.querySelectorAll('.ui-item')].filter(e=>e.getClientRects().length).map(e=>({height:e.getBoundingClientRect().height,width:e.getBoundingClientRect().width})),dialogs:[...document.querySelectorAll('dialog:modal')].map(d=>({width:d.getBoundingClientRect().width,height:d.getBoundingClientRect().height,scroll:d.scrollHeight,client:d.clientHeight,scrollWidth:d.scrollWidth,clientWidth:d.clientWidth}))})`);
+    const geometry=await evaluate(`({width:innerWidth,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,header:document.querySelector('.app-header').getBoundingClientRect().height,headerWidth:document.querySelector('.app-header').getBoundingClientRect().width,laidOutItems:[...document.querySelectorAll('.ui-item')].filter(e=>e.getClientRects().length).map(e=>({height:e.getBoundingClientRect().height,width:e.getBoundingClientRect().width})),dialogs:[...document.querySelectorAll('dialog:modal')].map(d=>({width:d.getBoundingClientRect().width,height:d.getBoundingClientRect().height,scroll:d.scrollHeight,client:d.clientHeight,scrollWidth:d.scrollWidth,clientWidth:d.clientWidth}))})`);
     const shell=await evaluate(`(()=>{const rail=document.querySelector('.workspace-rail'),crumb=document.querySelector('#page-breadcrumb'),app=document.querySelector('#app');return {breadcrumbVisible:!!crumb.getClientRects().length,breadcrumbHeight:crumb.getBoundingClientRect().height,rail:rail&&getComputedStyle(rail).display!=='none'?{x:rail.getBoundingClientRect().x,width:rail.getBoundingClientRect().width,radius:getComputedStyle(rail).borderRadius}:null,background:getComputedStyle(app).backgroundColor,bodyBackground:getComputedStyle(document.documentElement).backgroundColor};})()`);
     if(width>700&&(!shell.breadcrumbVisible||shell.breadcrumbHeight!==52))throw Error(name+' has a misplaced breadcrumb');
     if(width<=700&&shell.breadcrumbVisible)throw Error(name+' duplicates the mobile navigation');
@@ -38,7 +38,7 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
     geometry.shell=shell;
     if(geometry.scroll>width+1)throw Error(name+' overflows '+width+': '+JSON.stringify(geometry));
     if(geometry.dialogs.some(d=>d.scrollWidth>d.clientWidth+1))throw Error(name+' has horizontal dialog overflow');
-    if(geometry.header!==(width<=700?60:height)||geometry.headerWidth!==(width<=700?width:width<1200?164:184))throw Error('Application navigation differs from design');
+    if(geometry.header!==(width<=700?60:height)||geometry.headerWidth!==(width<=700?geometry.client:width<1200?164:184))throw Error('Application navigation differs from design');
     const narrowText=await evaluate("[...document.querySelectorAll('.global-list .ui-item-content,.repository-resource .ui-item-content')].filter(e=>e.getClientRects().length).some(e=>e.getBoundingClientRect().width<140)");
     if(narrowText)throw Error(name+' compresses item text below 140px at '+width);
     await screenshot(output+'-'+name+'-'+width+'.png');records.push({name,...geometry});
@@ -57,7 +57,8 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
   if(await evaluate("!!document.querySelector('.library-page [data-page],.library-page .pagination')"))throw Error('Library still requires pagination');
   await evaluate("[...document.querySelectorAll('[data-library-id]')].at(-1).scrollIntoView({block:'center'})");
   await new Promise(r=>setTimeout(r,120));
-  if(!await evaluate("(()=>{const r=[...document.querySelectorAll('[data-library-id]')].at(-1).getBoundingClientRect();return r.top<innerHeight&&r.bottom>0&&scrollY>0})()"))throw Error('Last resource is not reachable by continuous scrolling');
+  const last=await evaluate("(()=>{const r=[...document.querySelectorAll('[data-library-id]')].at(-1).getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight,scrollY,scrollHeight:document.documentElement.scrollHeight}})()");
+  if(!(last.top<last.height&&last.bottom>0&&last.scrollY>0))throw Error('Last resource is not reachable by continuous scrolling: '+JSON.stringify(last));
   await capture('library-end',390);
   await evaluate("window.scrollTo(0,0)");
   await evaluate("{const search=document.querySelector('[data-search]');search.value='same-name-skill';search.dispatchEvent(new Event('input'))}");

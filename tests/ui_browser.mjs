@@ -64,6 +64,8 @@ async function chooseRepository(value) {
 await send('Runtime.enable');
 await send('Page.enable');
 await send('Page.bringToFront');
+// 统一用占宽度的经典滚动条（Linux CI 的默认），macOS 的浮动滚动条会掩盖宽度问题。
+await send('Page.addScriptToEvaluateOnNewDocument', { source: "addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='::-webkit-scrollbar{width:15px;height:15px}';document.head.append(s);})" });
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url });
 await waitFor(mode==='report'?'!!document.querySelector("main")?.textContent.trim()':'!!document.querySelector("#app")?.textContent.trim()');
