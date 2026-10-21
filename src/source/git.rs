@@ -250,7 +250,9 @@ impl GitSource {
         if repo.exists() {
             // Equivalent cache identities can use different SSH users/URL forms.
             // Always fetch with the caller's chosen machine connection.
-            gitx::git(&repo, &["remote", "set-url", "--", "origin", &self.url])?;
+            gitx::git(&repo, &["remote", "set-url", "--", "origin", &self.url]).map_err(|e| {
+                self.fetch_error(e, "更新缓存仓库的远端地址失败；已有锁定快照仍可使用")
+            })?;
             gitx::git(
                 &repo,
                 &[
@@ -265,9 +267,24 @@ impl GitSource {
             )
             .map_err(|e| self.fetch_error(e, "获取资源源失败；已有锁定快照仍可使用"))?;
             if self.ref_.is_none() {
-                gitx::git(&repo, &["remote", "set-head", "origin", "--auto"]).map_err(|e| {
-                    self.fetch_error(e, "无法确认远端默认分支；已有锁定快照仍可使用")
-                })?;
+                if let Err(e) = gitx::git(&repo, &["remote", "set-head", "origin", "--auto"]) {
+                    // 远端 HEAD 未指向分支（detached 且有多个候选）时 git 无法判断；
+                    // 之前记录的默认分支仍在就继续沿用，否则请用户指定。
+                    let known = gitx::git_optional(
+                        &repo,
+                        &[
+                            "rev-parse",
+                            "--verify",
+                            "-q",
+                            "refs/remotes/origin/HEAD^{commit}",
+                        ],
+                    );
+                    if known.is_none_or(|c| c.is_empty()) {
+                        return Err(self
+                            .fetch_error(e, "无法确认远端默认分支；已有锁定快照仍可使用")
+                            .fix("远端没有可识别的默认分支：在来源里指定分支或标签。已有锁定版本与已部署文件保持不变"));
+                    }
+                }
             }
         } else {
             if let Some(parent) = repo.parent() {

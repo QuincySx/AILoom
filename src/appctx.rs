@@ -66,18 +66,26 @@ impl AppContext {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
             Err(e) => return Err(e.into()),
         };
+        // 每个命令都先读这份配置，报错必须说明怎么恢复，否则连 init 都无法运行。
+        let fix = format!(
+            "修正或删除 {} 后重试；删除后各来源改用默认下载目录，原目录里的内容不会被删除",
+            path.display()
+        );
         let roots: BTreeMap<String, PathBuf> = serde_json::from_slice(&bytes).map_err(|e| {
             crate::error::Error::new(
                 crate::error::code::SOURCE_CACHE_CORRUPT,
                 format!("本机下载目录配置损坏：{e}"),
             )
             .context(serde_json::json!({"path":path}))
+            .fix(fix.clone())
         })?;
         if roots.values().any(|root| !root.is_absolute()) {
             return Err(crate::error::Error::new(
                 crate::error::code::SOURCE_CACHE_CORRUPT,
                 "本机下载目录配置必须使用绝对路径",
-            ));
+            )
+            .context(serde_json::json!({"path":path}))
+            .fix(fix));
         }
         Ok(roots)
     }
@@ -112,5 +120,30 @@ impl AppContext {
                 .join(crate::workspace::AILOOM_DIR)
                 .join(crate::workspace::DECLARATION_FILE),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_source_storage_names_the_file_and_deleting_it_recovers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join(".ailoom/machine/source-storage.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for bad in [
+            "{not json",
+            r#"{"git+https://example.com/t":"relative/dir"}"#,
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            let err = AppContext::load_source_cache_roots(tmp.path()).unwrap_err();
+            assert_eq!(err.code, crate::error::code::SOURCE_CACHE_CORRUPT);
+            assert!(err.fix.unwrap().contains(&path.display().to_string()));
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert!(AppContext::load_source_cache_roots(tmp.path())
+            .unwrap()
+            .is_empty());
     }
 }

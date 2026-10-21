@@ -93,7 +93,7 @@ pub fn git_bytes(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::new(
             code::GIT_COMMAND_FAILED,
-            format!("git {} 失败", args.join(" ")),
+            format!("git {} 失败", command_summary(args)),
         )
         .context(serde_json::json!({
             "cwd": cwd.display().to_string(),
@@ -102,6 +102,17 @@ pub fn git_bytes(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
         })));
     }
     Ok(output.stdout)
+}
+
+/// 报错里展示的命令：凭据脱敏，过长时截断（分批 `git archive` 的路径参数可达上百 KB）。
+fn command_summary(args: &[&str]) -> String {
+    const MAX_CHARS: usize = 200;
+    let joined = redact_credentials(&args.join(" "));
+    if joined.chars().count() <= MAX_CHARS {
+        return joined;
+    }
+    let head: String = joined.chars().take(MAX_CHARS).collect();
+    format!("{head}…（共 {} 个参数）", args.len())
 }
 
 /// 运行 git，命令失败（如无远端）时返回 None 而非错误。
@@ -229,6 +240,22 @@ mod tests {
                 "从 https://a:one@x.example/r 转到 ssh://b:two@y.example/s，再到 http://z.example/t"
             ),
             "从 https://***@x.example/r 转到 ssh://***@y.example/s，再到 http://z.example/t"
+        );
+    }
+
+    #[test]
+    fn failed_command_message_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths: Vec<String> = (0..5000).map(|i| format!("skills/s{i}")).collect();
+        let mut args = vec!["--literal-pathspecs", "archive", "no-such-commit", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let err = git_bytes(dir.path(), &args).unwrap_err();
+        assert!(err.message.chars().count() < 260, "{}", err.message);
+        assert!(err.message.contains("archive"), "{}", err.message);
+        assert!(
+            err.message.contains("（共 5004 个参数）"),
+            "{}",
+            err.message
         );
     }
 

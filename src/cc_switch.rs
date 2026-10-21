@@ -367,8 +367,11 @@ fn file(data: &Path, stage: &str, id: &str) -> Result<PathBuf> {
 
 fn save(data: &Path, stage: &str, id: &str, value: &impl Serialize) -> Result<()> {
     let path = file(data, stage, id)?;
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    crate::sync_common::atomic_write(&path, &serde_json::to_vec_pretty(value)?)
+    crate::sync_common::write_preview(
+        path.parent().unwrap(),
+        id,
+        &serde_json::to_vec_pretty(value)?,
+    )
 }
 
 /// 清单只允许 Skill 数组或 {skills:[...]}，绝不接受整库备份。

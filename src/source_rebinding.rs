@@ -322,10 +322,9 @@ pub fn preview(data: &Path, target: &Target, change: &Change) -> Result<Value> {
         relationship: relationship.into(),
         validation,
     };
-    let dir = data.join("source-bindings/previews");
-    std::fs::create_dir_all(&dir)?;
-    crate::sync_common::atomic_write(
-        &dir.join(format!("{token}.json")),
+    crate::sync_common::write_preview(
+        &data.join("source-bindings/previews"),
+        &token,
         &serde_json::to_vec_pretty(&stored)?,
     )?;
     Ok(

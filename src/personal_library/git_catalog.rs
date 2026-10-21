@@ -176,10 +176,9 @@ pub fn preview(data: &Path, url: &str, ref_: Option<&str>) -> Result<Value> {
         skills,
         binding_stamp,
     };
-    let dir = data.join("library/git-previews");
-    std::fs::create_dir_all(&dir)?;
-    crate::sync_common::atomic_write(
-        &dir.join(format!("{token}.json")),
+    crate::sync_common::write_preview(
+        &data.join("library/git-previews"),
+        &token,
         &serde_json::to_vec_pretty(&stored)?,
     )?;
     Ok(

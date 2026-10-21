@@ -388,10 +388,9 @@ pub fn preview_external(
         }),
     };
     let token = crate::ids::new_id();
-    let dir = data.join("collections/previews");
-    std::fs::create_dir_all(&dir)?;
-    crate::sync_common::atomic_write(
-        &dir.join(format!("{token}.json")),
+    crate::sync_common::write_preview(
+        &data.join("collections/previews"),
+        &token,
         &serde_json::to_vec_pretty(&Preview {
             base_revision: registry.revision,
             source: source.clone(),
@@ -590,10 +589,9 @@ pub fn preview(
         base_revision: registry.revision,
         source: source.clone(),
     };
-    let dir = data.join("collections/previews");
-    std::fs::create_dir_all(&dir)?;
-    crate::sync_common::atomic_write(
-        &dir.join(format!("{token}.json")),
+    crate::sync_common::write_preview(
+        &data.join("collections/previews"),
+        &token,
         &serde_json::to_vec_pretty(&preview)?,
     )?;
     Ok(

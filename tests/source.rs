@@ -481,3 +481,45 @@ fn interrupted_snapshot_swap_is_recovered_offline() {
     assert!(!cache.join(".snap-old-4242").exists());
     assert!(!cache.join(".snap-tmp-4242").exists(), "暂存残留被清理");
 }
+
+#[test]
+fn ambiguous_detached_remote_head_keeps_the_known_default_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = tmp.path().join("work");
+    let up = tmp.path().join("up.git");
+    let cache = tmp.path().join("cache");
+    git_init(&work, false).unwrap();
+    write_file(&work, "a.txt", "v1");
+    git_commit_all(&work, "init", &["a.txt"]).unwrap();
+    ailoom::gitx::git(&work, &["branch", "dev"]).unwrap();
+    ailoom::gitx::git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            "--",
+            work.to_str().unwrap(),
+            up.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
+    let src = GitSource::new(up.to_str().unwrap(), None).unwrap();
+    let first = src.refresh(&cache).unwrap();
+
+    // 远端 HEAD 改成 detached，main 与 dev 指向同一 commit：git 无法自动判断默认分支。
+    let head = ailoom::gitx::git(&up, &["rev-parse", "HEAD"]).unwrap();
+    ailoom::gitx::git(&up, &["update-ref", "--no-deref", "HEAD", &head]).unwrap();
+    let again = src.refresh(&cache).unwrap();
+    assert_eq!(again.resolved_commit, first.resolved_commit);
+
+    // 从未记录过默认分支时，提示用户指定分支或标签。
+    ailoom::gitx::git(
+        &cache.join("repo"),
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    )
+    .unwrap();
+    let err = src.refresh(&cache).unwrap_err();
+    assert_eq!(err.code, ailoom::error::code::SOURCE_FETCH_FAILED);
+    assert!(err.fix.unwrap().contains("指定分支或标签"));
+}
