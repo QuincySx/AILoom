@@ -1,3 +1,11 @@
+Noto Sans SC
+Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+
+The fonts in this package are static 400 and 600 instances of NotoSansSC-VF.otf
+from https://github.com/notofonts/noto-cjk (Sans/Variable/OTF/Subset), generated
+with fontTools. They keep the original names "Noto Sans SC" and do not use the
+Reserved Font Name.
+
 This Font Software is licensed under the SIL Open Font License,
 Version 1.1.
 
