@@ -18,6 +18,8 @@ const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // Karpathy LLM Wiki 的单文档适配依据见 docs/research/KARPATHY-LLM-WIKI.md。
 const ORGANIZATION_PROMPT: &str = include_str!("res/organize-wiki.md");
+const DEFAULT_FOCUS: &str =
+    "全面整理本次全部来源，提炼可复用的仓库知识、开发约定、排障经验与维护建议，不额外限定主题。";
 
 fn fail(message: impl Into<String>) -> Error {
     Error::new(code::PRECONDITION_FAILED, message)
@@ -157,13 +159,14 @@ pub fn prepare(data: &Path, root: &Path, runner: &str, focus: &str) -> Result<Pr
 
 fn prompt(prepared: &Prepared) -> String {
     let input = &prepared.input;
+    let focus = prepared.focus.trim();
     let manifest = json!({
         "repository":input.root,
         "knowledge_directory":input.path,
         "source_documents":input.documents,
         "source_origins":input.origins,
         "previous_report":input.previous_report.as_ref().map(|_| &input.report_path),
-        "focus":prepared.focus,
+        "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
         "generated_at":crate::ids::now_iso(),
         "schema":"ailoom-repository-wiki/v1",
     });
@@ -556,6 +559,23 @@ mod tests {
             .any(|d| d == path));
         assert_eq!(source[0]["document"], "worktree-lesson.md");
         assert!(text.contains("不能用它的代码冒充来源分支的实现证据"));
+    }
+
+    #[test]
+    fn empty_focus_uses_the_builtin_wiki_rules_without_user_instructions() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        for focus in ["", " \n\t "] {
+            p.focus = focus.into();
+            let text = prompt(&p);
+            let task: serde_json::Value =
+                serde_json::from_str(text.rsplit("## 本次任务清单\n\n").next().unwrap()).unwrap();
+            assert_eq!(task["focus"], DEFAULT_FOCUS);
+            assert_eq!(task["source_documents"], json!(["learnings/migration.md"]));
+            assert!(text.starts_with(ORGANIZATION_PROMPT));
+            assert!(text.contains("处理冲突与演进"));
+            assert!(text.contains("不同证据状态不可混写成统一的确定结论"));
+        }
     }
 
     #[test]

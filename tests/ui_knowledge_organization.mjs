@@ -105,6 +105,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
 
   await waitFor("document.querySelector('[data-organize-count]')?.textContent==='3 篇知识文档可整理'");
   await assert("document.querySelector('[data-organize-runner]').value==='codex' && !document.querySelector('[data-organize-start]').disabled",'Codex is not the available default runner');
+  await assert("document.querySelector('[data-organize-default]').textContent.includes('无需填写提示词') && !document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default organization requires instructions or shows the supplemental input');
   await assert("document.querySelectorAll('[data-organize-runner] option').length===4 && document.querySelector('[data-organize-runner] option[value=pi]').disabled && !document.querySelector('[data-organize-runner] option[value=claude]').disabled && !document.querySelector('[data-organize-runner] option[value=cursor]').disabled",'Runner detection does not expose installed alternatives only');
   await assert("!document.querySelector('.knowledge-location').open && document.querySelector('.knowledge-location summary').textContent==='保存位置与恢复配置'",'Location and recovery settings are not collapsed below organization');
   await assert("document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && !document.querySelector('[data-organize-report]').hidden",'Previously saved report is missing');
@@ -116,6 +117,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await waitFor("!!document.querySelector('.knowledge-organization .select-menu:popover-open')");
   await assert("document.querySelector('.knowledge-organization [role=option][data-index=\"2\"]').getAttribute('aria-disabled')==='true'",'Unavailable Pi option remains selectable');
   await evaluate("document.querySelector('.knowledge-organization [role=option][data-index=\"1\"]').click()");
+  await evaluate("document.querySelector('[data-organize-options] summary').click()");
   await evaluate(`{const f=window.knowledgeOrganization;f.holdStatus=true;const focus=document.querySelector('[data-organize-focus]');focus.value='优先整理排障经验 '+f.injection;focus.dispatchEvent(new Event('input'));const detect=document.querySelector('[data-organize-detect]');detect.click();detect.click();void detect.onclick();}`);
   await waitFor("window.knowledgeOrganization.calls.status===2 && document.querySelector('[data-organize-start]').disabled && document.querySelector('[data-organize-detect]').disabled");
   await evaluate('window.knowledgeOrganization.holdStatus=false;window.knowledgeOrganization.releaseStatus()');
@@ -213,7 +215,17 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await noInjection();
   for(const width of [1440,390,320])await capture('history-draft',width);
   await capture('history-report',390,'[data-detail-body] .knowledge-organization-report');
+
+  // A fresh visit can start and finish with the supplemental instructions untouched.
+  await visitKnowledge();
+  await assert("!document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value==='' && !document.querySelector('[data-organize-start]').disabled",'A fresh visit does not offer a usable default organization action');
+  const defaultJob=await start();
+  await assert("window.knowledgeOrganization.calls.start.at(-1).focus===''",'Default action silently requires or fabricates user instructions');
+  await evaluate(`window.knowledgeOrganization.finish(${JSON.stringify(defaultJob)},'success','# 默认规则整理结果\\n\\n保留出处、维护建议和待核实事项。',true)`);
+  await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理完成') && !document.querySelector('[data-organize-start]').disabled");
+  await assert("!document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default completion opens or fills the optional input');
+  await capture('default-complete',390);
   await writeFile(output+'-layout.json',JSON.stringify(layouts,null,2)+'\n');
   const calls=await evaluate('window.knowledgeOrganization.calls');
-  console.log(JSON.stringify({checks:'runner/focus, duplicate guards, detection, polling errors/remount, saved report refresh, unsaved failed draft, cancellation retry, initial/status/start errors, empty notes/missing CLI, escaped text, history reports',startRequests:calls.start.length,cancelRequests:calls.cancel.length,statusRequests:calls.status,layouts:layouts.length}));
+  console.log(JSON.stringify({checks:'default rules without input, runner/focus, duplicate guards, detection, polling errors/remount, saved report refresh, unsaved failed draft, cancellation retry, initial/status/start errors, empty notes/missing CLI, escaped text, history reports',startRequests:calls.start.length,cancelRequests:calls.cancel.length,statusRequests:calls.status,layouts:layouts.length}));
 }
