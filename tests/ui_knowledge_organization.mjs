@@ -24,6 +24,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
     api.knowledge=async body=>{
       if(body.root!==root)throw Error('Unexpected fixture root');
       if(body.action==='inspect')return {git:null};
+      if(body.action==='ingestion-status')return {sources:[],document_count:0,revision_count:0,knowledge_path:'/fixture/Knowledge'};
       if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:'/fixture/Knowledge'}:null,default_path:'/fixture/Knowledge'};
       if(body.action==='checkpoint'){fixture.calls.checkpoint++;return {};}
       if(body.action==='organization-status'){

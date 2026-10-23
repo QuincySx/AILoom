@@ -99,5 +99,5 @@ export function KnowledgeOrganization(container, {rootPath}) {
   }
   root.innerHTML='<h2>整理知识</h2><p data-organize-message role="status">正在读取知识文档与本机工具…</p>';
   load();
-  return {destroy(){alive=false;clearTimeout(timer);root.remove();}};
+  return {refresh:load,destroy(){alive=false;clearTimeout(timer);root.remove();}};
 }

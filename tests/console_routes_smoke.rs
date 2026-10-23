@@ -177,6 +177,131 @@ fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
 }
 
 #[test]
+fn knowledge_ingestion_api_requires_source_approval_and_binds_the_preview() {
+    common::isolate_in_process_roots();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = common::make_business_repo(tmp.path(), "ingestion-main");
+    let wt = tmp.path().join("ingestion-feature");
+    ailoom::gitx::git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "ingestion-feature",
+            wt.to_str().unwrap(),
+        ],
+    )
+    .unwrap();
+    std::fs::write(wt.join("lesson.md"), "# Collected\nbranch-specific lesson").unwrap();
+    let data = tmp.path().join("data");
+    ailoom::knowledge::location::run(
+        &data,
+        &ailoom::knowledge::location::Request {
+            action: "init".into(),
+            root: root.clone(),
+            path: Some(tmp.path().join("knowledge")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let server = ConsoleServer::start(&ConsoleOptions {
+        port: 0,
+        data_root: data,
+        open_browser: false,
+    })
+    .unwrap();
+    let (port, token) = (server.port, server.token.as_str());
+    let post = |body| call(port, Some(token), "POST", "/api/knowledge", Some(body));
+    let state_body = json!({"root":root,"action":"ingestion-status"});
+    assert_eq!(
+        call(
+            port,
+            None,
+            "POST",
+            "/api/knowledge",
+            Some(state_body.clone())
+        )
+        .0,
+        401
+    );
+    assert_eq!(post(state_body.clone()).0, 403);
+    assert_eq!(
+        call(
+            port,
+            Some(token),
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":root}))
+        )
+        .0,
+        200
+    );
+    let (status, state) = post(state_body);
+    assert_eq!(status, 200, "{state}");
+    let canonical_wt = wt.canonicalize().unwrap();
+    let id = state["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["path"].as_str() == canonical_wt.to_str())
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    let preview_body = json!({"root":root,"action":"ingestion-preview","source_id":id});
+    assert_eq!(
+        post(preview_body.clone()).0,
+        403,
+        "another Worktree needs explicit directory approval"
+    );
+    assert_eq!(
+        call(
+            port,
+            Some(token),
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":wt}))
+        )
+        .0,
+        200
+    );
+    let (status, preview) = post(preview_body.clone());
+    assert_eq!(status, 200, "{preview}");
+    assert!(preview["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["path"] == "lesson.md"));
+    let apply = |expected: &Value, documents: Value| {
+        post(
+            json!({"root":root,"action":"ingestion-apply","source_id":id,"expected":expected,"documents":documents}),
+        )
+    };
+    assert_eq!(apply(&preview["expected"], json!(["../outside.md"])).0, 409);
+    assert_eq!(
+        post(json!({"root":root,"action":"ingestion-preview","source_id":"foreign-project"})).0,
+        400
+    );
+    std::fs::write(wt.join("lesson.md"), "# Collected\nupdated before save").unwrap();
+    assert_eq!(apply(&preview["expected"], json!(["lesson.md"])).0, 409);
+    let (_, preview) = post(preview_body.clone());
+    let (status, saved) = apply(&preview["expected"], json!(["lesson.md"]));
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!(saved["new_documents"], 1);
+    let (_, preview) = post(preview_body);
+    let (status, saved) = apply(&preview["expected"], json!(["lesson.md"]));
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!(saved["new_documents"], 0);
+    assert_eq!(saved["revision_count"], 1);
+    let (status, organized) = post(json!({"root":root,"action":"organization-status"}));
+    assert_eq!(status, 200, "{organized}");
+    assert_eq!(organized["source_count"], 1);
+    server.shutdown();
+    server.join();
+}
+
+#[test]
 fn prune_missing_worktrees_preserves_configuration_and_survives_rediscovery() {
     common::isolate_in_process_roots();
     let tmp = tempfile::tempdir().unwrap();

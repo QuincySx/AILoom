@@ -83,6 +83,7 @@ if(mode==='v27-flow')await (await import('./ui_design_v27.mjs')).verifyFlow({eva
 if(mode==='v27')await (await import('./ui_design_v27.mjs')).verifyDesign({evaluate,waitFor,send,screenshot,output});
 if(mode==='worktree-cleanup')await (await import('./ui_worktree_cleanup.mjs')).verifyWorktreeCleanup({evaluate,waitFor,send,screenshot,output});
 if(mode==='knowledge-organization')await (await import('./ui_knowledge_organization.mjs')).verifyKnowledgeOrganization({evaluate,waitFor,send,screenshot,output});
+if(mode==='knowledge-ingestion')await (await import('./ui_knowledge_ingestion.mjs')).verifyKnowledgeIngestion({evaluate,waitFor,send,screenshot,output});
 if(mode==='journey') {
   // 正常使用的连续流程；仅接受专用隔离 fixtures，不改真实项目或全局目录。
   const [project,skills,teamProject,replacement]=process.argv.slice(5);
@@ -819,7 +820,7 @@ if (mode === 'git-install') {
   await screenshot(output+'-real-add-more.png');
   await evaluate("document.querySelector('[data-git-cancel]').click()");
 }
-if (!['knowledge-organization','worktree-cleanup','v27-flow','v27','journey','before','compact-library','git-install','library-view','global-view','report','repository-filters','global-search','global-targets','global-targets-installed'].includes(mode)) {
+if (!['knowledge-ingestion','knowledge-organization','worktree-cleanup','v27-flow','v27','journey','before','compact-library','git-install','library-view','global-view','report','repository-filters','global-search','global-targets','global-targets-installed'].includes(mode)) {
   await evaluate('location.hash = "#/library"');
   await waitFor('!!document.querySelector("[data-add]")');
   await evaluate('document.querySelector("[data-add]").click()');

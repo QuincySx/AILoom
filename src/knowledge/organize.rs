@@ -161,6 +161,7 @@ fn prompt(prepared: &Prepared) -> String {
         "repository":input.root,
         "knowledge_directory":input.path,
         "source_documents":input.documents,
+        "source_origins":input.origins,
         "previous_report":input.previous_report.as_ref().map(|_| &input.report_path),
         "focus":prepared.focus,
         "generated_at":crate::ids::now_iso(),
@@ -519,6 +520,42 @@ mod tests {
         assert!(publish(&data, &p, "不应覆盖").is_err());
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "用户手工修订");
         assert!(publish(&data, &p, "").is_err());
+    }
+
+    #[test]
+    fn imported_documents_supply_origins_to_the_actual_task_manifest() {
+        let (_tmp, root, data) = fixture();
+        std::fs::write(
+            root.join("worktree-lesson.md"),
+            "# Branch context\nKeep provenance",
+        )
+        .unwrap();
+        let sources = location::ingest::status(&data, &root).unwrap();
+        let id = sources["sources"][0]["id"].as_str().unwrap();
+        let preview = location::ingest::preview(&data, &root, id).unwrap();
+        location::ingest::apply(
+            &data,
+            &root,
+            id,
+            preview["expected"].as_str().unwrap(),
+            &["worktree-lesson.md".into()],
+        )
+        .unwrap();
+        let p = prepared(&data, &root);
+        let text = prompt(&p);
+        let task: serde_json::Value =
+            serde_json::from_str(text.rsplit("## 本次任务清单\n\n").next().unwrap()).unwrap();
+        assert_eq!(task["source_documents"].as_array().unwrap().len(), 2);
+        let origins = task["source_origins"].as_object().unwrap();
+        assert_eq!(origins.len(), 1);
+        let (path, source) = origins.iter().next().unwrap();
+        assert!(task["source_documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d == path));
+        assert_eq!(source[0]["document"], "worktree-lesson.md");
+        assert!(text.contains("不能用它的代码冒充来源分支的实现证据"));
     }
 
     #[test]

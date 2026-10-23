@@ -115,4 +115,5 @@ run v27-flow "$WORK/project-b"
 run v27
 run worktree-cleanup
 run knowledge-organization
+run knowledge-ingestion
 exit $failed

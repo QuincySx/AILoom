@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
+pub mod ingest;
+
 const MARKER: &str = "ailoom-knowledge.json";
 type Tree = BTreeMap<PathBuf, Vec<u8>>;
 #[derive(Clone, Serialize, Deserialize)]
@@ -241,6 +243,7 @@ pub(super) struct OrganizationInput {
     pub documents: Vec<PathBuf>,
     pub report_path: PathBuf,
     pub previous_report: Option<String>,
+    pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     fingerprint: String,
 }
 
@@ -259,6 +262,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         .map(|d| d.project_id)
         .unwrap_or(id);
     let report_path = PathBuf::from("docs/organized").join(format!("{project_id}.md"));
+    let origins = ingest::current_documents(&tree, &project_id)?;
     let documents: BTreeMap<PathBuf, Vec<u8>> = tree
         .into_iter()
         .filter(|(p, _)| {
@@ -266,6 +270,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
                 && !p.starts_with("projects")
                 && !p.starts_with("resources")
                 && !p.starts_with("docs/organized")
+                && (!p.starts_with(ingest::PREFIX) || origins.contains_key(p))
                 && !archived.iter().any(|id| p == Path::new(id))
         })
         .collect();
@@ -275,7 +280,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         Err(e) => return Err(e.into()),
     };
     let fingerprint = crate::ids::sha256_hex(&serde_json::to_vec(
-        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report}),
+        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report,"origins":origins}),
     )?);
     Ok(OrganizationInput {
         knowledge_id: b.id.clone(),
@@ -284,6 +289,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         documents: documents.into_keys().collect(),
         report_path,
         previous_report,
+        origins,
         fingerprint,
     })
 }
@@ -715,10 +721,11 @@ pub fn recall_filtered(
 ) -> Result<Value> {
     let _guard = lock(data)?;
     let cat = load(data)?;
-    let (id, _) = project(data, root, &cat)?;
+    let (id, owner) = project(data, root, &cat)?;
     let b = binding(&cat, &id)?;
     let tree = checked_tree(b)?;
     let ctx = state_context(data, root, b)?;
+    let origins = ingest::current_documents(&tree, &ingest::project_key(&id, &owner)?)?;
     let archived = super::feedback::archived_ids(&ctx);
     let mut index = super::index::KnowledgeIndex {
         meta: super::index::IndexMeta {
@@ -735,6 +742,9 @@ pub fn recall_filtered(
     };
     for (p, v) in &tree {
         if p.extension().and_then(|s| s.to_str()) != Some("md") {
+            continue;
+        }
+        if p.starts_with(ingest::PREFIX) && !origins.contains_key(p) {
             continue;
         }
         let Ok(body) = std::str::from_utf8(v) else {
@@ -788,7 +798,18 @@ pub fn recall_filtered(
         &ctx,
         &hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(),
     )?;
-    Ok(json!({"results":hits,"knowledge_id":b.id,"query":query}))
+    let results: Vec<Value> = hits
+        .into_iter()
+        .map(|hit| {
+            let mut value = json!(hit);
+            if let Some(source) = origins.get(Path::new(value["id"].as_str().unwrap_or(""))) {
+                value["origins"] = json!(source);
+                value["evidence_state"] = json!("source_record");
+            }
+            value
+        })
+        .collect();
+    Ok(json!({"results":results,"knowledge_id":b.id,"query":query}))
 }
 
 fn state_context(data: &Path, root: &Path, b: &Binding) -> Result<crate::appctx::AppContext> {

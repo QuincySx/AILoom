@@ -42,6 +42,52 @@ pub(super) fn post_knowledge(state: &Arc<ServerState>, req: &Request) -> Respons
             if r.action == "organization-status" {
                 return super::knowledge_organize::status(state, &r.root);
             }
+            if r.action == "ingestion-status" {
+                return collection_response(crate::knowledge::location::ingest::status(
+                    &state.data_root,
+                    &r.root,
+                ));
+            }
+            if matches!(r.action.as_str(), "ingestion-preview" | "ingestion-apply") {
+                let Some(source_id) = req.body["source_id"].as_str() else {
+                    return Response::json(400, json!({"error":"请选择资料来源"}));
+                };
+                let status =
+                    match crate::knowledge::location::ingest::status(&state.data_root, &r.root) {
+                        Ok(v) => v,
+                        Err(e) => return Response::error(400, &e),
+                    };
+                let source = status["sources"]
+                    .as_array()
+                    .and_then(|s| s.iter().find(|s| s["id"] == source_id));
+                let Some(path) = source.and_then(|s| s["path"].as_str()) else {
+                    return Response::json(400, json!({"error":"资料来源不属于本项目"}));
+                };
+                if let Err(e) = ensure_within_roots(state, Path::new(path)) {
+                    return Response::json(403, json!({"error":e}));
+                }
+                if r.action == "ingestion-preview" {
+                    return collection_response(crate::knowledge::location::ingest::preview(
+                        &state.data_root,
+                        &r.root,
+                        source_id,
+                    ));
+                }
+                let expected = req.body["expected"].as_str().unwrap_or("");
+                let documents = match serde_json::from_value::<Vec<std::path::PathBuf>>(
+                    req.body["documents"].clone(),
+                ) {
+                    Ok(v) => v,
+                    Err(_) => return Response::json(400, json!({"error":"请提供选中文档清单"})),
+                };
+                return collection_response(crate::knowledge::location::ingest::apply(
+                    &state.data_root,
+                    &r.root,
+                    source_id,
+                    expected,
+                    &documents,
+                ));
+            }
             if r.action == "organize" {
                 return super::knowledge_organize::start(state, &r.root, req);
             }

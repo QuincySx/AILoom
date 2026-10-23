@@ -1,6 +1,7 @@
 import { recoveryFields, cloneDestination } from './knowledgeRecovery.js';
 import { api, esc } from '../services/api.js';
 import { KnowledgeOrganization } from './knowledgeOrganization.js';
+import { KnowledgeIngestion } from './knowledgeIngestion.js';
 
 export async function directoryInfo(root, path) {
   if(!path)return '';
@@ -14,15 +15,16 @@ export function KnowledgePanel(container, {rootPath}) {
   const root=document.createElement('section');root.className='knowledge-settings';container.append(root);
   let alive=true, state=null, preview=null, edited=false, busy=false, generation=0;
   let organization=null;
+  let ingestion=null;
   const q=s=>root.querySelector(s);
   const request=body=>api.knowledge({root:rootPath,...body});
   function message(text){if(alive)q('[data-message]').textContent=text;}
   function disable(value){if(alive)q('[data-form]').querySelectorAll('input,select,button').forEach(el=>el.disabled=value);}
   async function load(){state=await request({action:'status'});if(alive)render();}
   function render(){
-    organization?.destroy();organization=null;
+    organization?.destroy();organization=null;ingestion?.destroy();ingestion=null;
     const loc=state.location, recovery=!loc&&state.recovery;
-    root.innerHTML=`${state.initialized?'<div data-organization></div>':''}<details class="knowledge-location" ${state.initialized?'':'open'}><summary>${state.initialized?'保存位置与恢复配置':'设置项目知识库'}</summary><p><strong>${state.initialized?'项目知识库':'设置项目知识库'}</strong>${state.initialized?` · ${esc(state.files)} 个文件`:''}</p>
+    root.innerHTML=`${state.initialized?'<div data-ingestion></div><div data-organization></div>':''}<details class="knowledge-location" ${state.initialized?'':'open'}><summary>${state.initialized?'保存位置与恢复配置':'设置项目知识库'}</summary><p><strong>${state.initialized?'项目知识库':'设置项目知识库'}</strong>${state.initialized?` · ${esc(state.files)} 个文件`:''}</p>
       <p class="muted">此项目的所有工作目录共用这个保存位置。</p>
       <form data-form>
         ${recoveryFields(recovery)}
@@ -33,7 +35,7 @@ export function KnowledgePanel(container, {rootPath}) {
 ${loc?'<button type="button" data-checkpoint>保存恢复配置</button>':''}
           </div>
       </form></details>`;
-    if(state.initialized)organization=KnowledgeOrganization(q('[data-organization]'),{rootPath});
+    if(state.initialized){organization=KnowledgeOrganization(q('[data-organization]'),{rootPath});ingestion=KnowledgeIngestion(q('[data-ingestion]'),{rootPath,onSaved:()=>organization?.refresh()});}
     async function inspect() {
       const version=++generation;
       try{const text=await directoryInfo(rootPath,q('[name=path]').value.trim());if(alive&&version===generation)q('[data-directory-info]').textContent=text;}
@@ -68,5 +70,5 @@ ${loc?'<button type="button" data-checkpoint>保存恢复配置</button>':''}
   }
   root.innerHTML='<p data-message role="status">正在读取知识库…</p>';
   load().catch(e=>message(e.message));
-  return {isDirty:()=>edited||busy,destroy(){alive=false;organization?.destroy();root.remove();}};
+  return {isDirty:()=>edited||busy||ingestion?.isDirty(),destroy(){alive=false;organization?.destroy();ingestion?.destroy();root.remove();}};
 }
