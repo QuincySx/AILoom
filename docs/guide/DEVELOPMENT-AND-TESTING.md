@@ -39,6 +39,8 @@ npm --prefix packaging/npm run install:local -- --no-restart
 
 升级安装后运行 `ailoom service restart`，再刷新网页。修复版 CLI 不会静默复用不同安装位置或旧构建启动的服务。已有任务先完成，正常停止后使用原端口启动当前程序。
 
+这里的“当前程序”指实际执行重启的程序。使用 mise 连续执行升级与重启时，PATH 可能尚未刷新，应使用 `mise exec npm:ailoom-cli@0.4.0-rc.3 -- ailoom service restart` 指定新版本，再核对 `build.version` 和 `update_required=false`；完整步骤见 [安装与升级](INSTALL.md#升级)。
+
 ## 开发入口
 
 在仓库根运行：

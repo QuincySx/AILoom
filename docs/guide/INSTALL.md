@@ -5,7 +5,7 @@
 用 npm（需要 Node 20 及以上；包里带着 macOS、Linux、Windows 的预编译版本，约 21 MB）：
 
 ```bash
-npm install -g ailoom-cli
+npm install -g --ignore-scripts ailoom-cli
 ailoom version
 ailoom web                  # 启动后台服务并打开网页
 ```
@@ -25,13 +25,27 @@ ailoom web                  # 启动后台服务并打开网页
 
 ## 升级
 
-npm 安装的运行 `npm install -g ailoom-cli@latest`；脚本安装的重新运行一次 `scripts/install.sh`。如果网页服务正在运行，装完会自动重启成新版本；不想自动重启就设置 `AILOOM_INSTALL_RESTART=0`，之后手动运行：
+npm 安装只更新程序包，已经运行的网页服务需要用新版本程序重启。常规版本使用 `latest`；试装候选版时，将它替换为明确的候选版本号。
 
 ```bash
+npm install -g --ignore-scripts ailoom-cli@latest
 ailoom service restart
+ailoom --json service status
 ```
 
-如果提示「有一个旧版本启动的网页服务仍在运行」：运行 `ailoom service status` 看它的 PID，结束这个进程后再运行 `ailoom web`。
+使用 mise 升级当前候选版时，明确指定执行重启和核对的版本：
+
+```bash
+npm_config_ignore_scripts=true mise use -g --pin npm:ailoom-cli@0.4.0-rc.3
+mise exec npm:ailoom-cli@0.4.0-rc.3 -- ailoom service restart
+mise exec npm:ailoom-cli@0.4.0-rc.3 -- ailoom --json service status
+```
+
+mise 的 shell 激活通常在下一次命令提示符出现时刷新 PATH；连续执行安装和普通 `ailoom service restart`，可能仍由旧版本重启自己。`mise exec` 为这次命令明确选择版本，不依赖提示符刷新。见 [mise 官方说明](https://mise.jdx.dev/faq.html)。
+
+核对状态中的 `build.version` 是否为安装的版本、`update_required` 是否为 `false`，然后刷新网页。若出现 `E9101`，先核对命令版本并用新版本执行重启；只有状态明确为 `unmanaged`、无法自动停止时，才按错误提示处理旧进程。
+
+脚本安装的重新运行一次 `scripts/install.sh`，默认会尝试重启正在运行的服务；`AILOOM_INSTALL_RESTART=0` 可关闭自动重启。关闭后，手动执行上述重启和状态核对。
 
 旧版本留下的数据，新版本直接就能用，不需要手工迁移；个别格式会在第一次同步时自动更新。
 
