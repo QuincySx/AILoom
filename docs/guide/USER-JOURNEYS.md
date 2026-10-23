@@ -151,6 +151,7 @@ flowchart TD
 | 独立 Git 知识库 | 先配置远端同步；新机器选择已克隆目录或从 Git 克隆到新目录 |
 | 外部普通文件夹 | 自己同步文件夹到新机器，再关联正确知识库 |
 | 多 Worktree / 子目录 | 共用项目知识库，恢复已有的配置；未出现的 Worktree 保留待恢复状态 |
+| 零散经验需要整理 | 项目 → 知识库 → 选择本机 AI CLI → 开始整理；保留原文并保存可检索的仓库维护建议 |
 | 新机器有不同配置或知识库 ID 不符 | 停在冲突或校验错误；先核对，不能直接覆盖 |
 | Git 提交 / 推送冲突 | 显式处理 Git 同步冲突；本地经验仍保留 |
 
@@ -172,7 +173,7 @@ flowchart TD
 | 项目个人选择 | `personal effective / select / instructions / plan / sync / recover / deploy-status / undo / scan-skills / migrate-nongit` | 对应目录配置、说明、预览应用、恢复和普通文件夹迁移 |
 | 全局 Skill | `global status / select / plan / sync / recover / takeover / restore` | 对应逐 Skill 工具选择、应用、同名替换及还原 |
 | 知识库位置与迁移 | `knowledge status / init / checkpoint / clone / recover / move / configure / sync` | 网页提供位置与恢复；配置远端和显式同步主要在 CLI |
-| 知识保存和维护 | `knowledge save / recall / feedback / maintenance / promote / archive / restore`；`recall` | 高级维护以 CLI / Agent 调用为主，不能当作资源库 Skill 更新 |
+| 知识保存和维护 | `knowledge save / recall / feedback / maintenance / promote / archive / restore`；`recall` | 网页可调用本机 AI CLI 手动整理经验与维护建议；反馈、归档等高级维护以 CLI / Agent 调用为主 |
 | 知识输入 | `import`；`pr --action draft`；`contribute` | `import` 顶层导入知识文档，和 `library import` 导入 Skill 不同 |
 | 团队资源贡献 | `push`、`contribute-self`；`migrate` | 资源贡献与独立源迁移；可能提交 / 推送 Git，不是普通应用配置 |
 | 观测和统计 | `hook`；`hooks install / remove / exec`；`session metrics / summary / ingest`；`dashboard`；`report push / retry / digest / status` | 高级 CLI 链路；`dashboard` 是独立观测服务，不是 `web` |

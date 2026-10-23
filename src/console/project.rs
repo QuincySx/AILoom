@@ -343,6 +343,36 @@ pub(super) fn get_deploy_status(state: &Arc<ServerState>, req: &Request) -> Resp
     }
 }
 
+/// `POST /api/repo/prune`：只清理失联目录的登记，不改目录、Git 或个人配置。
+pub(super) fn post_repo_prune(state: &Arc<ServerState>, req: &Request) -> Response {
+    let Some(repo_id) = req.body["repo_id"].as_str() else {
+        return Response::json(400, json!({"error":"需要 repo_id"}));
+    };
+    // 只接受已登记的项目，不能将请求参数直接当数据区路径。
+    if !read_repos_summary(&state.data_root)
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["repo_id"] == repo_id)
+    {
+        return Response::json(404, json!({"error":"项目未登记"}));
+    }
+    let mut reg = match crate::repo_registry::load_or_create_by_id(&state.data_root, repo_id) {
+        Ok(reg) => reg,
+        Err(e) => return Response::error(500, &e),
+    };
+    let removed = match reg.prune_missing_worktrees() {
+        Ok(removed) => removed,
+        Err(e) => return Response::error(400, &e),
+    };
+    if !removed.is_empty() {
+        if let Err(e) = reg.save(&state.data_root) {
+            return Response::error(500, &e);
+        }
+    }
+    Response::json(200, json!({"removed":removed,"worktrees":reg.worktrees}))
+}
+
 /// `POST /api/repo/relink`
 pub(super) fn post_repo_relink(state: &Arc<ServerState>, req: &Request) -> Response {
     // F04/F05：失联 Worktree 重关联。新路径必须真实属于本仓库（common-dir 一致）；

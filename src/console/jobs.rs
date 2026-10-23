@@ -18,6 +18,7 @@ use std::sync::Arc;
 pub enum JobKind {
     Plan,
     Apply,
+    KnowledgeOrganize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -114,7 +115,7 @@ fn current_fingerprint(target: &Path) -> Option<String> {
     Some(format!("sha256:{}", sha256_hex(&bytes)))
 }
 
-fn persist_job(data_root: &Path, job: &Job) {
+pub(super) fn persist_job(data_root: &Path, job: &Job) {
     let dir = jobs_dir(data_root);
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(bytes) = serde_json::to_vec_pretty(job) {
@@ -161,7 +162,7 @@ pub fn load_all_jobs(data_root: &Path) -> (std::collections::BTreeMap<String, Jo
         if matches!(job.status, JobStatus::Queued | JobStatus::Running) {
             job.status = JobStatus::Interrupted;
             job.progress
-                .push("服务重启时任务中断；不自动重放，可重新发起计划/应用".into());
+                .push("服务重启时任务中断；不自动重放，可手动重新发起".into());
             interrupted.push(job.id.clone());
             let bytes = serde_json::to_vec_pretty(&job).unwrap_or_default();
             let _ = std::fs::write(&p, bytes);
@@ -266,13 +267,17 @@ fn nowstamp() -> String {
     now_iso()
 }
 
-fn set_status(state: &ServerState, id: &str, status: JobStatus, note: &str) {
+pub(super) fn set_status(state: &ServerState, id: &str, status: JobStatus, note: &str) {
     let mut jobs = state.jobs.lock_ok();
     if let Some(job) = jobs.get_mut(id) {
         if matches!(status, JobStatus::Cancelled) || job.status != JobStatus::Cancelled {
             job.status = status;
         }
-        job.updated_at = nowstamp();
+        job.updated_at = if job.kind == JobKind::KnowledgeOrganize {
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+        } else {
+            nowstamp()
+        };
         job.progress.push(note.to_string());
         let job = job.clone();
         drop(jobs);
@@ -283,7 +288,7 @@ fn set_status(state: &ServerState, id: &str, status: JobStatus, note: &str) {
     }
 }
 
-fn is_cancelled(state: &ServerState, id: &str) -> bool {
+pub(super) fn is_cancelled(state: &ServerState, id: &str) -> bool {
     state
         .jobs
         .lock()
@@ -444,22 +449,20 @@ pub fn run_apply_job(state: &Arc<ServerState>, id: &str) {
     // 指纹校验：配置/源/目标任一变化 → 旧计划拒绝
     let current = compute_fingerprint(state, &root, scope.as_deref(), &prepared.plan);
     if current != fingerprint {
+        // 先准备失败详情，再公开终态；轮询方不能先读到 failed 而没有过期原因。
+        {
+            let mut jobs = state.jobs.lock_ok();
+            if let Some(job) = jobs.get_mut(id) {
+                job.error = Some("stale-plan".into());
+                job.result = json!({ "stale": true, "current_fingerprint": current });
+            }
+        }
         set_status(
             state,
             id,
             JobStatus::Failed,
             "计划已过期（配置/源/目标已变化），旧计划拒绝应用",
         );
-        let mut jobs = state.jobs.lock_ok();
-        if let Some(job) = jobs.get_mut(id) {
-            job.error = Some("stale-plan".into());
-            job.result = json!({ "stale": true, "current_fingerprint": current });
-            job.updated_at = nowstamp();
-            let job = job.clone();
-            drop(jobs);
-            // AIL-125：error/result 必须落盘，前端才能区分「过期」与其他失败。
-            persist_job(&state.data_root, &job);
-        }
         return;
     }
     // 记录撤销前像：仅本任务将写入的目标（AIL-120：捕获逻辑抽为共用函数）
@@ -611,7 +614,7 @@ pub fn request_cancel(state: &Arc<ServerState>, id: &str) -> bool {
     }
 }
 
-fn push_event(state: &ServerState, event: Value) {
+pub(super) fn push_event(state: &ServerState, event: Value) {
     state.events.lock_ok().push(event);
 }
 

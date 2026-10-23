@@ -279,6 +279,7 @@ test('知识库迁移失败后清除旧预览，下一次提交重新预览', as
     return elements.get(selector);
   };
   get('[data-form]').elements={path:get('[name=path]')};
+  get('[data-form]').querySelectorAll=()=>[];
   const section={set innerHTML(_){},querySelector:s=>s==='[data-recovery-mode]'?null:get(s),querySelectorAll:()=>[],remove(){}};
   const requests=[];
   let moves=0;
@@ -292,7 +293,7 @@ test('知识库迁移失败后清除旧预览，下一次提交重新预览', as
   const context=vm.createContext({document:{createElement:()=>section}});
   const module=new vm.SourceTextModule(await readFile('src/console/ui/features/knowledgePanel.js','utf8'),{context});
   await module.link(name=>{
-    const values=name.includes('knowledgeRecovery')?{recoveryFields:()=>'',cloneDestination:()=>''}:{api,esc:String};
+    const values=name.includes('knowledgeRecovery')?{recoveryFields:()=>'',cloneDestination:()=>''}:name.includes('knowledgeOrganization')?{KnowledgeOrganization:()=>({destroy(){}})}:{api,esc:String};
     return new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});
   });
   await module.evaluate();module.namespace.KnowledgePanel({append(){}},{rootPath:'/project'});

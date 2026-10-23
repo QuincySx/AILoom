@@ -205,6 +205,7 @@ export async function verifyFlow({evaluate,waitFor,screenshot,output,configureTo
   await waitFor("!!document.querySelector('.knowledge-settings [data-submit]')");
   if(await evaluate("!!document.querySelector('.workspace-rail')"))throw Error('Project knowledge unexpectedly shows the capability directory tree');
   const initialized=await evaluate("!!document.querySelector('.knowledge-settings [data-checkpoint]')");
+  await evaluate("document.querySelector('.knowledge-location').open=true");
   await evaluate(initialized?"document.querySelector('.knowledge-settings [data-checkpoint]').click()":"document.querySelector('.knowledge-settings [data-form]').requestSubmit()");
   await waitFor(initialized?"document.querySelector('.knowledge-settings')?.textContent.includes('恢复配置已保存')":"document.querySelector('.knowledge-settings')?.textContent.includes('知识库已关联')");
   await screenshot(output+'-knowledge.png');

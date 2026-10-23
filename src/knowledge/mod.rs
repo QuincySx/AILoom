@@ -5,6 +5,7 @@ pub mod index;
 pub mod search;
 
 pub mod location;
+pub mod organize;
 
 pub mod portable;
 pub mod state;

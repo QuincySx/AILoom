@@ -232,6 +232,81 @@ fn binding<'a>(cat: &'a Catalog, id: &str) -> Result<&'a Binding> {
         .get(id)
         .ok_or_else(|| fail("尚未初始化项目知识库"))
 }
+
+/// 整理只消费知识文档，不把恢复配置、资源快照或此前生成的整理结果当原始经验。
+pub(super) struct OrganizationInput {
+    pub knowledge_id: String,
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub documents: Vec<PathBuf>,
+    pub report_path: PathBuf,
+    pub previous_report: Option<String>,
+    fingerprint: String,
+}
+
+pub(super) fn organization_input(data: &Path, root: &Path) -> Result<OrganizationInput> {
+    let _guard = lock(data)?;
+    organization_input_unlocked(data, root)
+}
+
+fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationInput> {
+    let cat = load(data)?;
+    let (id, root) = project(data, root, &cat)?;
+    let b = binding(&cat, &id)?;
+    let tree = checked_tree(b)?;
+    let archived = super::feedback::archived_ids(&state_context(data, &root, b)?);
+    let project_id = super::portable::read(&root)?
+        .map(|d| d.project_id)
+        .unwrap_or(id);
+    let report_path = PathBuf::from("docs/organized").join(format!("{project_id}.md"));
+    let documents: BTreeMap<PathBuf, Vec<u8>> = tree
+        .into_iter()
+        .filter(|(p, _)| {
+            p.extension().and_then(|s| s.to_str()) == Some("md")
+                && !p.starts_with("projects")
+                && !p.starts_with("resources")
+                && !p.starts_with("docs/organized")
+                && !archived.iter().any(|id| p == Path::new(id))
+        })
+        .collect();
+    let previous_report = match std::fs::read_to_string(b.path.join(&report_path)) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    let fingerprint = crate::ids::sha256_hex(&serde_json::to_vec(
+        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report}),
+    )?);
+    Ok(OrganizationInput {
+        knowledge_id: b.id.clone(),
+        root,
+        path: b.path.clone(),
+        documents: documents.into_keys().collect(),
+        report_path,
+        previous_report,
+        fingerprint,
+    })
+}
+
+pub(super) fn publish_organization(
+    data: &Path,
+    input: &OrganizationInput,
+    report: &str,
+) -> Result<PathBuf> {
+    let _guard = lock(data)?;
+    let current = organization_input_unlocked(data, &input.root)?;
+    if current.fingerprint != input.fingerprint
+        || current.knowledge_id != input.knowledge_id
+        || current.path != input.path
+    {
+        return Err(fail(
+            "整理期间知识库位置或内容已变化，结果已保留在操作记录中，请重新整理",
+        ));
+    }
+    let dest = current.path.join(&input.report_path);
+    crate::sync_common::atomic_write(&dest, report.as_bytes())?;
+    Ok(dest)
+}
 #[derive(Default, Deserialize)]
 pub struct Request {
     pub action: String,

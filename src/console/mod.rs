@@ -242,6 +242,7 @@ mod fs;
 mod global;
 mod http;
 mod knowledge;
+mod knowledge_organize;
 mod library;
 mod profile;
 mod project;
@@ -317,6 +318,7 @@ const KNOWN_PATHS: &[&str] = &[
     "/api/project/scan-skills",
     "/api/projects/metadata",
     "/api/repo/discover",
+    "/api/repo/prune",
     "/api/repo/relink",
     "/api/resources",
     "/api/resources/mcp-detail",
@@ -560,6 +562,7 @@ pub fn route(req: &Request, state: &Arc<ServerState>) -> Response {
             }
         }
         ("POST", "/api/workflows/export") => workflows::post_workflows_export(state, req),
+        ("POST", "/api/repo/prune") => project::post_repo_prune(state, req),
         ("POST", "/api/repo/relink") => project::post_repo_relink(state, req),
         ("POST", "/api/shutdown") => {
             *state.shutdown_flag.lock_ok() = true;

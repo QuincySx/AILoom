@@ -113,4 +113,6 @@ run design "$WORK/project-b" "$WORK/skills/browser-skill"
 run source-failure "$(cd "$WORK/project-sf" && pwd -P)" "$(cd "$WORK/team-new" && pwd -P)"
 run v27-flow "$WORK/project-b"
 run v27
+run worktree-cleanup
+run knowledge-organization
 exit $failed

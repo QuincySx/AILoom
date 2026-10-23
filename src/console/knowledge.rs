@@ -39,6 +39,12 @@ pub(super) fn post_knowledge(state: &Arc<ServerState>, req: &Request) -> Respons
                 Ok(p) => p,
                 Err(e) => return Response::json(403, json!({"error":e})),
             };
+            if r.action == "organization-status" {
+                return super::knowledge_organize::status(state, &r.root);
+            }
+            if r.action == "organize" {
+                return super::knowledge_organize::start(state, &r.root, req);
+            }
             if let Some(p) = &r.path {
                 let dest = match crate::knowledge::location::destination(p) {
                     Ok(p) => p,

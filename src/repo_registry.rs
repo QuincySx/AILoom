@@ -461,6 +461,21 @@ impl RepoRegistry {
         added
     }
 
+    /// 显式清理已失联且路径仍不存在的登记；个人配置、指令和 Git 元数据保留。
+    pub fn prune_missing_worktrees(&mut self) -> Result<Vec<String>> {
+        let mut removed = Vec::new();
+        for (id, entry) in &self.worktrees {
+            // 不把访问失败当成不存在，也不清理刷新后已经恢复的目录。
+            if entry.status == WorktreeStatus::Missing && !entry.path.try_exists()? {
+                removed.push(id.clone());
+            }
+        }
+        for id in &removed {
+            self.worktrees.remove(id);
+        }
+        Ok(removed)
+    }
+
     /// 重关联失联 Worktree 到新位置（用户显式确认移动）。
     /// F04：新路径必须真实属于本仓库（common-dir 一致）。
     /// F05：common-dir 不一致 = 整仓搬迁 → 在分支/HEAD 证据吻合时执行身份迁移：

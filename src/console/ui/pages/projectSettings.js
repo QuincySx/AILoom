@@ -41,10 +41,12 @@ export function mount(container, ctx = {}) {
       repo = state.repos.find(r => r.repo_id === ctx.projectId);
       if (!repo) { error(new Error('项目不存在，请返回项目列表。')); return; }
       let remembered=null;try{remembered=JSON.parse(sessionStorage.getItem(RETURN_KEY));}catch{}
-      const wtPath = (remembered?.repoId===repo.repo_id?repo.worktrees?.[remembered.wt]?.path:null)
-        || Object.values(repo.worktrees || {}).find(w=>repo.common_dir===w.path+'/.git')?.path
-        || Object.values(repo.worktrees || {}).find(w => w.status !== 'missing')?.path;
-      if (!wtPath) { error(new Error('项目没有可用的工作目录。')); return; }
+      const worktrees = Object.values(repo.worktrees || {}), available = worktrees.filter(w=>w.status!=='missing');
+      const rememberedWorktree = remembered?.repoId===repo.repo_id?repo.worktrees?.[remembered.wt]:null;
+      const wtPath = (rememberedWorktree?.status!=='missing'?rememberedWorktree?.path:null)
+        || available.find(w=>repo.common_dir===w.path+'/.git')?.path || available[0]?.path
+        // 全部失联时仍可进入设置清理登记，清理后也保留项目设置入口。
+        || worktrees[0]?.path || repo.common_dir.replace(/\/\.git$/, '');
       try { await api.approveDir(wtPath); } catch { /* 失联目录后面按错误呈现 */ }
       target = sharedSettingsTarget({
         projectId: repo.repo_id, name: repo.project?.name || repo.repo_id,
@@ -103,7 +105,8 @@ export function mount(container, ctx = {}) {
       <div data-team-source-info role="status">正在读取来源…</div>
     </section>
     <section class="project-settings-directories">
-      <div class="tab-actions"><h2>工作目录</h2>${isGit ? '<button data-refresh>刷新分支目录</button>' : ''}</div>
+      <div class="tab-actions"><h2>工作目录</h2>${isGit ? '<div class="actions"><button data-prune disabled>清理失联目录</button><button data-refresh>刷新分支目录</button></div>' : ''}</div>
+      ${isGit ? '<p class="muted" data-prune-hint hidden>清理只移除已不存在目录的列表记录，保留原有配置。</p>' : ''}
       <div data-directories role="status">正在读取目录…</div>
     </section>`;
     const form = slot.querySelector('form');
@@ -135,11 +138,21 @@ export function mount(container, ctx = {}) {
     const directorySlot = slot.querySelector('[data-directories]');
     const version = renderVersion;
     const active = () => !disposed && version === renderVersion;
+    const refresh = slot.querySelector('[data-refresh]'), prune = slot.querySelector('[data-prune]');
+    let updatingDirectories = false;
+    function directoryActions() {
+      if (!isGit) return;
+      const missing = Object.values(repo.worktrees || {}).some(w=>w.status==='missing');
+      refresh.disabled = updatingDirectories;
+      prune.disabled = updatingDirectories || !missing;
+      slot.querySelector('[data-prune-hint]').hidden = !missing;
+    }
     async function teamSource() {
       const section = slot.querySelector('[data-team-source]');
       const info = slot.querySelector('[data-team-source-info]');
       const edit = slot.querySelector('[data-edit-team-source]');
       edit.disabled = true;
+      if (!Object.values(repo.worktrees || {}).some(w=>w.status!=='missing')) { section.hidden = true; return; }
       try {
         const source = await api.projectSource({action:'read',root:target.rootPath});
         if (!active()) return;
@@ -179,15 +192,16 @@ export function mount(container, ctx = {}) {
         return row(isGit ? (w.branch?.replace(/^refs\/heads\//,'') || w.path.split('/').filter(Boolean).pop()) : (repo.project?.name || '项目目录'),'',isGit?'worktree':'project')
           + [...new Set(dirs.map(d=>d.path).filter(Boolean))].map(rel=>row(rel,rel,'directory')).join('')
           + (error && w.status !== 'missing' ? `<p class="field-error">${esc(error)}</p>` : '');
-      }).join('');
+      }).join('') || '<p class="muted">没有已登记的工作目录。</p>';
       directorySlot.querySelectorAll('[data-directory]').forEach(link => {
         link.onclick = () => sessionStorage.setItem(RETURN_KEY, JSON.stringify(rows[Number(link.dataset.directory)]));
       });
+      directoryActions();
     }
     directories();
-    const refresh = slot.querySelector('[data-refresh]');
     if (refresh) refresh.onclick = async () => {
-      refresh.disabled = true;
+      if (updatingDirectories) return;
+      updatingDirectories = true; directoryActions();
       try {
         await api.repoDiscover(target.rootPath);
         const state = await api.state();
@@ -197,7 +211,21 @@ export function mount(container, ctx = {}) {
         repo.worktrees = updated.worktrees;
         await directories();
       } catch (e) { if (active()) root.querySelector('[data-message]').textContent = e.message; }
-      finally { refresh.disabled = false; }
+      finally { updatingDirectories = false; if (active()) directoryActions(); }
+    };
+    if (prune) prune.onclick = async () => {
+      if (updatingDirectories || prune.disabled) return;
+      updatingDirectories = true; directoryActions();
+      try {
+        const result = await api.repoPrune(repo.repo_id);
+        if (!active()) return;
+        repo.worktrees = result.worktrees;
+        await directories();
+        if (active()) root.querySelector('[data-message]').textContent = result.removed.length
+          ? `已清理 ${result.removed.length} 个失联目录的记录，原有配置已保留。`
+          : '没有可清理的失联目录，目录可能已恢复，请刷新分支目录。';
+      } catch (e) { if (active()) root.querySelector('[data-message]').textContent = e.message; }
+      finally { updatingDirectories = false; if (active()) directoryActions(); }
     };
   }
 

@@ -64,6 +64,7 @@ export const api = {
   fsRead: (path) => request('GET', '/api/fs/read' + qs({ path })),
   // 仓库/作用域
   repoRelink: body => request('POST', '/api/repo/relink', body),
+  repoPrune: repo_id => request('POST', '/api/repo/prune', {repo_id}),
   repoDiscover: (path) => request('POST', '/api/repo/discover', { path }),
   select: (body) => request('POST', '/api/profile/select', body),
   effective: (root, scope, view) => request('GET', '/api/effective' + qs({ root, scope, view })),
@@ -119,6 +120,7 @@ export const api = {
   projectRecover: (root) => request('POST', '/api/project/recover', { root }),
   apply: (planJobId, idempotencyKey) => request('POST', '/api/jobs/apply', { plan_job_id: planJobId, idempotency_key: idempotencyKey }),
   job: (id) => request('GET', '/api/jobs/' + encodeURIComponent(id)),
+  cancelJob: id => request('POST', '/api/jobs/' + encodeURIComponent(id) + '/cancel', {}),
   jobs: () => request('GET', '/api/jobs'),
   undo: (id) => request('POST', '/api/jobs/undo', { id }),
   // 流程

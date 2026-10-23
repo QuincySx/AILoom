@@ -8,7 +8,7 @@ import { Item, paginate, Pagination, bindPagination } from '../components/item.j
 import { confirmAction } from '../components/dialog.js';
 import { notify } from '../state/store.js';
 
-const KIND_LABEL = { plan: '生成预览', apply: '应用配置' };
+const KIND_LABEL = { plan: '生成预览', apply: '应用配置', knowledge_organize:'整理知识库' };
 const STATUS_LABEL = {
   queued: '排队中', running: '执行中', success: '成功', failed: '失败',
   cancelled: '已取消', interrupted: '已中断', undone: '已撤销', undo_partial: '部分撤销',
@@ -26,7 +26,7 @@ export function mount(container, ctx) {
   container.appendChild(root);
   root.innerHTML = `${PageHeader({title:'操作记录',description:'预览、应用与撤销分别留痕，不自动重放。',actions:'<button data-refresh>刷新</button>'})}
     <div data-table class="history-list"></div><div data-pagination></div>
-    <section data-detail hidden class="step" tabindex="-1"><h2>应用结果</h2><div data-detail-body></div>
+    <section data-detail hidden class="step" tabindex="-1"><h2>操作结果</h2><div data-detail-body></div>
       <p data-undo-actions><button data-undo data-variant="destructive" disabled>撤销本次应用</button> <span class="muted">保留此后修改过的文件。</span></p></section>
     <div data-msg class="muted" role="status" aria-live="polite"></div>`;
   const msg = root.querySelector('[data-msg]');
@@ -48,6 +48,7 @@ export function mount(container, ctx) {
     const changes=Array.isArray(j.result?.actions)?j.result.actions:Array.isArray(j.result?.applied)?j.result.applied:[];
     const log=changes.map(change=>typeof change==='string'?change:[change.action||'applied',change.path||change.resource_id||''].join('  ')).join('\n');
     detailBody.innerHTML = `<div class="task-summary"><strong>${esc(kindLabel(j.kind))}</strong><span class="badge ${STATUS_TONE[j.status]||''}">${esc(statusLabel(j.status))}</span></div><p class="path">${esc(j.root)}${j.scope?'/'+esc(j.scope):''}</p><p class="muted">${esc(timeLabel(j.updated_at))}</p>${log?`<pre class="log">${esc(log)}</pre>`:''}${j.error?`<p class="field-error" role="alert">${esc(j.error)}</p>`:''}<details><summary>技术详情</summary><dl><dt>记录 ID</dt><dd>${esc(j.id)}</dd><dt>创建时间</dt><dd>${esc(timeLabel(j.created_at))}</dd><dt>子目录</dt><dd>${esc(j.scope||'根目录')}</dd></dl>${progress}</details>`;
+    if(j.kind==='knowledge_organize'&&j.result?.report)detailBody.insertAdjacentHTML('beforeend',`<p class="muted">${j.result.saved?'已保存到知识库，后续检索可用。':'本次结果尚未保存到知识库。'}</p><pre class="knowledge-organization-report">${esc(j.result.report)}</pre>`);
     if(announce)msg.textContent = `已选 ${kindLabel(j.kind)} · ${statusLabel(j.status)}。`;
     if(announce)detail.scrollIntoView({block:'nearest'});
   }

@@ -57,6 +57,293 @@ fn enc(s: &str) -> String {
 }
 
 #[test]
+fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
+    common::isolate_in_process_roots();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("project");
+    let data = tmp.path().join("data");
+    std::fs::create_dir(&root).unwrap();
+    ailoom::knowledge::location::run(
+        &data,
+        &ailoom::knowledge::location::Request {
+            action: "init".into(),
+            root: root.clone(),
+            path: Some(tmp.path().join("knowledge")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let server = ConsoleServer::start(&ConsoleOptions {
+        port: 0,
+        data_root: data.clone(),
+        open_browser: false,
+    })
+    .unwrap();
+    let (port, token) = (server.port, server.token.as_str());
+    let status_body = json!({"root":root,"action":"organization-status"});
+    assert_eq!(
+        call(
+            port,
+            None,
+            "POST",
+            "/api/knowledge",
+            Some(status_body.clone())
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        call(
+            port,
+            Some(token),
+            "POST",
+            "/api/knowledge",
+            Some(status_body.clone())
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        call(
+            port,
+            Some(token),
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":root}))
+        )
+        .0,
+        200
+    );
+    let (status, result) = call(
+        port,
+        Some(token),
+        "POST",
+        "/api/knowledge",
+        Some(status_body.clone()),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["source_count"], 0);
+    assert!(result["report"].is_null());
+    let runners = result["runners"].as_array().unwrap();
+    assert!(runners.iter().any(|r| r["id"] == "codex"));
+    for runner in runners {
+        assert_eq!(
+            runner["available"].as_bool().unwrap(),
+            runner["executable"].is_string()
+        );
+    }
+    // 无知识时不启动真实 CLI，未接入的命令或超长任务说明也不能启动进程。
+    for body in [
+        json!({"root":root,"action":"organize","runner":"codex"}),
+        json!({"root":root,"action":"organize","runner":"/bin/sh"}),
+        json!({"root":root,"action":"organize","runner":"codex; echo injected"}),
+        json!({"root":root,"action":"organize","focus":"长".repeat(2001)}),
+    ] {
+        let (status, result) = call(port, Some(token), "POST", "/api/knowledge", Some(body));
+        assert_eq!(status, 400, "{result}");
+        assert!(result["error"].is_string());
+    }
+    assert_eq!(
+        call(port, Some(token), "GET", "/api/jobs", None).1["jobs"],
+        json!([])
+    );
+    let note = tmp.path().join("note.md");
+    std::fs::write(&note, "# 排障经验\n检查迁移行数").unwrap();
+    ailoom::knowledge::location::save(&data, &root, &note, "migration").unwrap();
+    let (status, result) = call(
+        port,
+        Some(token),
+        "POST",
+        "/api/knowledge",
+        Some(status_body.clone()),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["source_count"], 1, "恢复配置不计入经验数量");
+    let report = std::path::Path::new(result["report_path"].as_str().unwrap());
+    std::fs::create_dir_all(report.parent().unwrap()).unwrap();
+    std::fs::write(report, "# 已有维护建议\n保留这份结果").unwrap();
+    let (status, result) = call(
+        port,
+        Some(token),
+        "POST",
+        "/api/knowledge",
+        Some(status_body),
+    );
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["source_count"], 1, "之前的整理报告不计入原始知识");
+    assert!(result["report"].as_str().unwrap().contains("保留这份结果"));
+    server.shutdown();
+    server.join();
+}
+
+#[test]
+fn prune_missing_worktrees_preserves_configuration_and_survives_rediscovery() {
+    common::isolate_in_process_roots();
+    let tmp = tempfile::tempdir().unwrap();
+    let main = common::make_business_repo(tmp.path(), "main");
+    let git = |args: &[&str]| ailoom::gitx::git(&main, args).unwrap();
+    let removed = tmp.path().join("removed");
+    let stale = tmp.path().join("stale");
+    let restored = tmp.path().join("restored");
+    for (path, branch) in [
+        (&removed, "removed"),
+        (&stale, "stale"),
+        (&restored, "restored"),
+    ] {
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            path.to_str().unwrap(),
+            "-b",
+            branch,
+        ]);
+    }
+    let data = tmp.path().join("data");
+    let server = ConsoleServer::start(&ConsoleOptions {
+        port: 0,
+        data_root: data.clone(),
+        open_browser: false,
+    })
+    .unwrap();
+    let (port, tok) = (server.port, server.token.as_str());
+    assert_eq!(
+        call(
+            port,
+            Some(tok),
+            "POST",
+            "/api/fs/approve",
+            Some(json!({"path":main}))
+        )
+        .0,
+        200
+    );
+    let discover = || {
+        let (status, result) = call(
+            port,
+            Some(tok),
+            "POST",
+            "/api/repo/discover",
+            Some(json!({"path":main})),
+        );
+        assert_eq!(status, 200, "{result}");
+        result
+    };
+    let discovered = discover();
+    let repo_id = discovered["repo_id"].as_str().unwrap();
+    let registry = || ailoom::repo_registry::load_or_create_by_id(&data, repo_id).unwrap();
+    let original = registry();
+    let removed_ids: Vec<String> = original
+        .worktrees
+        .iter()
+        .filter(|(_, wt)| {
+            wt.path == removed.canonicalize().unwrap() || wt.path == stale.canonicalize().unwrap()
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    assert_eq!(removed_ids.len(), 2);
+    let profile = ailoom::profile::PersonalProfile::profile_path(&data);
+    std::fs::create_dir_all(profile.parent().unwrap()).unwrap();
+    let profile_text = format!(
+        "schema_version = 1\n[repos.\"{repo_id}\".worktrees.\"{}\"]\ninherit_resources = false\n",
+        removed_ids[0]
+    );
+    std::fs::write(&profile, &profile_text).unwrap();
+    let instructions =
+        ailoom::personal_instructions::entry_path(&data, repo_id, Some(&removed_ids[0]));
+    std::fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+    std::fs::write(&instructions, "保留失联目录的个人指令").unwrap();
+
+    git(&["worktree", "remove", removed.to_str().unwrap()]);
+    std::fs::remove_dir_all(&stale).unwrap();
+    let moved = tmp.path().join("temporarily-moved");
+    std::fs::rename(&restored, &moved).unwrap();
+    discover();
+    assert_eq!(
+        registry()
+            .worktrees
+            .values()
+            .filter(|wt| wt.status == ailoom::repo_registry::WorktreeStatus::Missing)
+            .count(),
+        3
+    );
+    // 刷新后路径恢复，清理必须重新检查而不是仅信任 missing 标记。
+    std::fs::rename(&moved, &restored).unwrap();
+    let git_before = git(&["worktree", "list", "--porcelain"]);
+    let body = Some(json!({"repo_id":repo_id}));
+    assert_eq!(
+        call(port, None, "POST", "/api/repo/prune", body.clone()).0,
+        401
+    );
+    assert_eq!(call(port, Some(tok), "GET", "/api/repo/prune", None).0, 405);
+    assert_eq!(
+        call(port, Some(tok), "POST", "/api/repo/prune", Some(json!({}))).0,
+        400
+    );
+    for id in ["unknown", "../main/.git"] {
+        assert_eq!(
+            call(
+                port,
+                Some(tok),
+                "POST",
+                "/api/repo/prune",
+                Some(json!({"repo_id":id}))
+            )
+            .0,
+            404
+        );
+    }
+    let (status, result) = call(port, Some(tok), "POST", "/api/repo/prune", body.clone());
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["removed"], json!(removed_ids));
+    assert_eq!(result["worktrees"].as_object().unwrap().len(), 2);
+    assert_eq!(registry().worktrees.len(), 2, "清理结果必须保存到磁盘");
+    assert_eq!(std::fs::read_to_string(&profile).unwrap(), profile_text);
+    assert_eq!(
+        std::fs::read_to_string(&instructions).unwrap(),
+        "保留失联目录的个人指令"
+    );
+    assert_eq!(
+        git(&["worktree", "list", "--porcelain"]),
+        git_before,
+        "不修改 Git Worktree 元数据"
+    );
+    assert!(main.is_dir() && restored.is_dir());
+    discover();
+    assert_eq!(
+        registry().worktrees.len(),
+        2,
+        "Git 中残留的失联路径不能重新登记"
+    );
+    let (status, result) = call(port, Some(tok), "POST", "/api/repo/prune", body.clone());
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["removed"], json!([]), "重复清理应为空操作");
+
+    // 所有工作目录都失联时，也能不依赖可用工作目录清理登记并保留项目。
+    let discovery = ailoom::repo_registry::discover_repo(&main).unwrap();
+    std::fs::rename(&main, tmp.path().join("main-gone")).unwrap();
+    std::fs::rename(&restored, &moved).unwrap();
+    let mut reg = registry();
+    reg.refresh_worktrees(&discovery, "missing");
+    reg.save(&data).unwrap();
+    let (status, result) = call(port, Some(tok), "POST", "/api/repo/prune", body);
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["removed"].as_array().unwrap().len(), 2);
+    assert!(registry().worktrees.is_empty());
+    let (status, state) = call(port, Some(tok), "GET", "/api/state", None);
+    assert_eq!(status, 200, "{state}");
+    assert!(state["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["repo_id"] == repo_id));
+    assert_eq!(std::fs::read_to_string(&profile).unwrap(), profile_text);
+    assert!(instructions.is_file());
+    server.shutdown();
+    server.join();
+}
+
+#[test]
 fn previously_untested_routes_respond_with_json_and_no_server_errors() {
     common::isolate_in_process_roots();
     let tmp = tempfile::tempdir().unwrap();
@@ -163,6 +450,7 @@ fn previously_untested_routes_respond_with_json_and_no_server_errors() {
         "/api/library/import-git",
         "/api/library/update",
         "/api/profile/scope",
+        "/api/repo/prune",
         "/api/repo/relink",
         "/api/workflows/bind",
         "/api/workflows/record-input",

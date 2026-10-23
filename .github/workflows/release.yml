@@ -1,13 +1,16 @@
-# Release pipeline, started by hand (workflow_dispatch):
+# Release pipeline, started by a version tag or by hand (workflow_dispatch):
 # - builds ailoom for five targets; each artifact is ailoom-<triple> plus ailoom-<triple>.sha256;
 # - by default publishes the npm package ailoom-cli, which carries all five binaries
 #   (packaging/npm/build.mjs), via npm Trusted Publishing (OIDC, no token).
 #   A version already on npm is skipped, so a rerun is safe.
+#   Prerelease versions use npm's next tag; other versions use latest.
 # Uncheck "publish" to only build.
 
 name: release
 
 on:
+  push:
+    tags: ['v[0-9]*']
   workflow_dispatch:
     inputs:
       publish:
@@ -43,8 +46,17 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate release version and notes
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "Version tag does not match Cargo.toml" >&2
+            exit 1
+          fi
+          LC_ALL=C grep -Fq "## ${version}（" CHANGELOG.md || { echo "Missing release notes for $version" >&2; exit 1; }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
       - name: Install Linux ARM64 cross linker
@@ -68,7 +80,7 @@ jobs:
           bin="target/${{ matrix.target }}/release/ailoom.exe"
           cp "$bin" "ailoom-${{ matrix.triple }}.exe"
           sha256sum "ailoom-${{ matrix.triple }}.exe" > "ailoom-${{ matrix.triple }}.exe.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ailoom-${{ matrix.triple }}
           path: |
@@ -80,13 +92,13 @@ jobs:
     name: publish npm
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ inputs.publish == true }}
+    if: ${{ github.event_name == 'push' || inputs.publish == true }}
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           merge-multiple: true
           path: dist
@@ -96,13 +108,14 @@ jobs:
           for sum in *.sha256; do
             sha256sum -c "$sum"
           done
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # Trusted Publishing needs npm 11.5.1+
-      - name: Update npm
-        run: npm install -g npm@latest
+      # Node 24 ships npm 11; fail explicitly if its bundled npm is too old for OIDC.
+      - name: Check npm Trusted Publishing support
+        run: |
+          node --input-type=module -e 'import { execFileSync } from "node:child_process"; const version = execFileSync("npm", ["--version"], { encoding: "utf8" }).trim(); const [major, minor, patch] = version.split(".").map(Number); if (!(major > 11 || major === 11 && (minor > 5 || minor === 5 && patch >= 1))) throw new Error(`npm ${version} is too old for Trusted Publishing`); console.log(`Using bundled npm ${version}`);'
       - name: Assemble package
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
@@ -113,5 +126,9 @@ jobs:
           if npm view "ailoom-cli@$VERSION" version >/dev/null 2>&1; then
             echo "ailoom-cli@$VERSION is already on npm, skipping"
           else
-            npm publish "$RUNNER_TEMP/npm" --ignore-scripts --access public
+            case "$VERSION" in
+              *-*) channel=next ;;
+              *) channel=latest ;;
+            esac
+            npm publish "$RUNNER_TEMP/npm" --ignore-scripts --access public --provenance --tag "$channel"
           fi
