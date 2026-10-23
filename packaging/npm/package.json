@@ -1,6 +1,6 @@
 {
   "name": "ailoom-cli",
-  "version": "0.4.0-rc.1",
+  "version": "0.4.0-rc.2",
   "description": "AILoom CLI: prebuilt ailoom binaries for macOS, Linux and Windows (no Rust toolchain required)",
   "license": "Apache-2.0",
   "type": "module",

@@ -124,9 +124,11 @@
 .project-settings-directories .actions { margin:0; }
 .knowledge-organization { max-width:800px; }
 .knowledge-organization h2 { margin-top:0; }
-.knowledge-organization-options { display:flex;align-items:flex-end;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-4); }
-.knowledge-organization-options label { flex:1 1 200px; }
+.knowledge-organization-options { display:flex;align-items:flex-end;gap:var(--sp-3);flex-wrap:wrap;margin:var(--sp-4) 0; }
+.knowledge-organization-options label { flex:1 1 200px;min-width:0;margin:0;display:flex;flex-direction:column;gap:var(--sp-2); }
 .knowledge-organization-options button { flex-shrink:0; }
+.knowledge-organization>label { display:flex;flex-direction:column;gap:var(--sp-2); }
+.knowledge-organization [data-organize-focus] { height:calc(var(--control-height) * 3);min-height:calc(var(--control-height) * 2);font-family:var(--font-sans);font-weight:400; }
 .knowledge-organization progress { width:100%;margin-top:var(--sp-3); }
 .knowledge-organization-report { white-space:pre-wrap;overflow-wrap:anywhere;max-height:70vh;overflow:auto;padding:var(--sp-4);background:var(--muted);border:1px solid var(--border);border-radius:var(--radius); }
 .knowledge-location { margin-top:var(--sp-6); }
