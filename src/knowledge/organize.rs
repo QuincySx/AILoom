@@ -19,7 +19,7 @@ const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // Karpathy LLM Wiki 的单文档适配依据见 docs/research/KARPATHY-LLM-WIKI.md。
 const ORGANIZATION_PROMPT: &str = include_str!("res/organize-wiki.md");
 const DEFAULT_FOCUS: &str =
-    "全面整理本次全部来源，提炼可复用的仓库知识、开发约定、排障经验与维护建议，不额外限定主题。";
+    "全面整理本次全部来源中的业务知识、开发流程、模块约束、决策取舍和问题经验，保留当时背景、适用条件、演变与出处，不额外限定主题。";
 
 fn fail(message: impl Into<String>) -> Error {
     Error::new(code::PRECONDITION_FAILED, message)
@@ -306,7 +306,7 @@ fn generate_with_timeout(
     let prompt = prompt(prepared);
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
     let started = Instant::now();
-    progress("正在读取知识文档并提炼仓库维护建议");
+    progress("正在读取资料并编纂仓库开发知识");
     let status = loop {
         if cancelled() {
             terminate(&mut child);

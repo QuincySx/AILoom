@@ -18,7 +18,7 @@
 - [公共契约](CONTRACTS.md)：文件格式、`schema_version`、错误码与退出码、冲突矩阵、变更记录。
 - [术语表 CONTEXT.md](../CONTEXT.md)：领域术语以此为准，UI 与 CLI 文案跟随。
 - [能力矩阵 `capabilities/`](capabilities/)：各宿主的官方来源、核实日期与支持程度——[Claude Code](capabilities/claude-code.md) · [Codex](capabilities/codex.md) · [附加宿主](capabilities/extra-hosts.md) · [Cursor / Antigravity（旧）](capabilities/cursor-antigravity.md) · [alva](capabilities/alva.md)。
-- 设计规格 `specs/`：[资源管理生命周期](specs/resource-management-lifecycle.md) · [项目优先的控制台](specs/project-first-console.md) · [控制台组件与样式](specs/console-design-system.md) · [CC Switch 来源迁移](specs/cc-switch-source-migration.md) · [SkillStore 与 Require](specs/0001-skill-store-require.md)。
+- 设计规格 `specs/`：[开发知识生命周期](specs/development-knowledge-lifecycle.md) · [资源管理生命周期](specs/resource-management-lifecycle.md) · [项目优先的控制台](specs/project-first-console.md) · [控制台组件与样式](specs/console-design-system.md) · [CC Switch 来源迁移](specs/cc-switch-source-migration.md) · [SkillStore 与 Require](specs/0001-skill-store-require.md)。
 - 架构决策 `adr/`：[Skill 实体进 Store](adr/0001-skill-store-symlink.md) · [仓库身份与个人层](adr/0002-repository-scope-personal-layer.md)。
 - 范围：[范围与关键约束](SCOPE.md) · [参考能力覆盖表](COVERAGE.md) · [参考证据](REFERENCES.md)。
 

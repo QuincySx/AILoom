@@ -168,7 +168,7 @@ fn finish(
         id,
         status,
         match status {
-            JobStatus::Success => "整理完成，维护知识与建议已保存，后续检索可用",
+            JobStatus::Success => "整理完成，开发知识已保存；内容尚需独立评估，后续检索可用",
             JobStatus::Cancelled => "整理已取消",
             _ => "整理失败，原有知识与上次整理结果保留",
         },

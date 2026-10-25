@@ -24,7 +24,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
     const tools=state.runners||[];
     if(!tools.some(r=>r.id===runner&&r.available))runner=tools.find(r=>r.available)?.id||'codex';
     const report=state.report;
-    root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>已内置整理规则，无需填写提示词，直接开始即可。默认整理全部已入库资料：合并重复经验，按主题组织仓库约定、设计决策和排障方法，保留出处、分支与版本范围，提炼维护建议和待核实事项。</p>
+    root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>已内置整理规则，无需填写提示词，直接开始即可。默认整理全部已入库资料中的业务知识、开发流程、模块约束、决策取舍和问题经验，保留当时背景、适用条件、演变与出处。</p>
       <p data-organize-count>${esc(state.source_count||0)} 篇知识文档可整理</p>
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>
       <details data-organize-options ${focus.trim()?'open':''}><summary>补充整理要求（可选）</summary><label>额外关注的内容<textarea data-organize-focus rows="2" maxlength="2000" placeholder="留空即按默认规则全面整理，例如也可补充：优先整理硬件连接的排障经验">${esc(focus)}</textarea></label></details>
@@ -32,7 +32,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
       ${!state.source_count?'<p class="muted">先保存工作经验，再进行整理。配置恢复副本和资源快照不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
-      <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库维护知识与建议</summary><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
+      <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库开发知识</summary><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
       <details data-organize-draft hidden><summary>本次未保存的整理草稿</summary><pre class="knowledge-organization-report"></pre></details>`;
     q('[data-organize-runner]').onchange=()=>{remember();controls();};
     q('[data-organize-focus]').oninput=remember;
