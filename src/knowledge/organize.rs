@@ -459,6 +459,25 @@ mod tests {
         format!("# 仓库开发知识\n\n## index\n\n[迁移](#topic-migration)\n\n## overview\n\n测试资料范围。\n\n## topics\n\n### topic-migration\n\n主题：数据库迁移。\n\n{body}\n\n## maintenance\n\n参见[迁移](#topic-migration)。\n\n## questions\n\n无。\n\n## sources\n\n测试来源。\n\n## changes\n\n首次编纂。\n\n## validation\n\n尚未经独立评估。\n")
     }
 
+    #[test]
+    fn missing_knowledge_topics_keep_the_previous_homepage_and_explain_the_failure() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        for body in ["", "本轮暂无可发布的知识单元。"] {
+            let report = test_report("unused");
+            let (head, tail) = report.split_once("## topics\n").unwrap();
+            let (_, rest) = tail.split_once("## maintenance\n").unwrap();
+            let draft = format!("{head}## topics\n\n{body}\n\n## maintenance\n{rest}");
+            let error = publish(&data, &p, &draft).unwrap_err();
+            assert!(error.message.contains("AI 未生成知识主题"));
+            assert_eq!(
+                std::fs::read(p.input.path.join("README.md")).unwrap(),
+                before
+            );
+        }
+    }
+
     fn legacy_link(data: &Path, root: &Path, library: &Path) {
         let temporary = root.parent().unwrap().join(format!(
             "{}-old-library",
@@ -600,6 +619,10 @@ mod tests {
         assert_eq!(result["worktree_count"], 2);
         assert_eq!(result["documents_read"], 3);
         assert_eq!(p.source_count(), 2, "identical bodies are reused");
+        assert!(
+            p.input.excluded_documents.is_empty(),
+            "current manifest-owned snapshots must not also be excluded"
+        );
         assert_eq!(
             p.worktrees().len(),
             2,
@@ -643,6 +666,15 @@ mod tests {
             p.source_count(),
             2,
             "only current revisions are normal input"
+        );
+        assert!(p
+            .input
+            .documents
+            .iter()
+            .all(|path| !p.input.excluded_documents.contains(path)));
+        assert!(
+            p.input.excluded_documents.is_empty(),
+            "recorded historical snapshots are not ownership-unknown documents"
         );
         let copies = walkdir::WalkDir::new(library.join("sources"))
             .into_iter()

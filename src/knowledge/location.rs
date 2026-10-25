@@ -291,6 +291,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     layout::validate_project(&tree, &project_id)?;
     let report_path = PathBuf::from("README.md");
     let origins = ingest::current_documents(&tree, &project_id)?;
+    let recorded = ingest::recorded_paths(&tree, &project_id)?;
     let previous_documents = wiki::current(&tree, &project_id)?;
     let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
     let excluded_documents = tree
@@ -305,6 +306,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
                 && !p.starts_with("imports")
                 && !p.starts_with("resources")
                 && !p.starts_with("docs/organized")
+                && !recorded.contains(*p)
                 && !wiki::source_owned(p, bytes, &project_id, single_owner)
         })
         .map(|(p, _)| p.clone())

@@ -365,6 +365,15 @@ fn sections(report: &str) -> Result<BTreeMap<String, String>> {
 }
 
 fn topics(body: &str) -> Result<BTreeMap<String, String>> {
+    let mut fence = None;
+    if !body
+        .lines()
+        .any(|line| !code_line(line, &mut fence) && line.starts_with("### topic-"))
+    {
+        return Err(fail(
+            "AI 未生成知识主题，本次草稿未写入知识库；请查看资料读取情况后重试",
+        ));
+    }
     let mut result = BTreeMap::<String, String>::new();
     let mut key = None;
     let mut fence = None;

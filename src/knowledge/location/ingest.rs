@@ -60,6 +60,15 @@ fn manifest(tree: &Tree, project: &str) -> Result<Manifest> {
     Ok(m)
 }
 
+/// Every recorded snapshot has a known owner, including historical revisions.
+pub(super) fn recorded_paths(tree: &Tree, project: &str) -> Result<BTreeSet<PathBuf>> {
+    Ok(manifest(tree, project)?
+        .records
+        .into_iter()
+        .map(|record| layout::source(tree, project, &record.hash))
+        .collect())
+}
+
 /// Only the latest revision for each worktree/document is current. Historical originals remain on disk.
 pub(super) fn current_documents(
     tree: &Tree,
