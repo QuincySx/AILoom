@@ -18,6 +18,30 @@ fn url_key(value: &str) -> String {
     }
 }
 
+/// A root package manifest may explicitly declare the canonical repository while
+/// Git uses a private SSH host alias. This is evidence, not a guessed host mapping.
+fn declared_repository(root: &Path) -> Option<String> {
+    let path = root.join("package.json");
+    let meta = path.symlink_metadata().ok()?;
+    if !meta.is_file() || meta.len() > 128 * 1024 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let repository = &value["repository"];
+    let url = repository
+        .as_str()
+        .or_else(|| repository["url"].as_str())?
+        .trim();
+    let url = url.strip_prefix("git+").unwrap_or(url);
+    if !super::super::portable::portable_url(url)
+        || crate::repository_identity::validate_url(url).is_err()
+        || crate::gitx::redact_credentials(url) != url
+    {
+        return None;
+    }
+    Some(url.to_string())
+}
+
 pub(super) fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
     let query = query.trim();
     if query.is_empty() || query.chars().count() > 512 {
@@ -93,6 +117,7 @@ pub(super) fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
             .map(|d| d.project_id.as_str())
             .unwrap_or(repo);
         let mut urls = Vec::new();
+        let declared = declared_repository(&b.project_root);
         if crate::repo_registry::find_git_root(&b.project_root).is_some() {
             for remote in git(&b.project_root, &["remote"])
                 .unwrap_or_default()
@@ -105,9 +130,14 @@ pub(super) fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
             }
         }
         let kind = if by_url {
-            urls.iter()
-                .any(|u| canonical(u) == canonical(query))
-                .then_some((0, "git_url"))
+            if urls.iter().any(|u| canonical(u) == canonical(query)) {
+                Some((0, "git_url"))
+            } else {
+                declared
+                    .as_ref()
+                    .is_some_and(|u| canonical(u) == canonical(query))
+                    .then_some((1, "declared_repository_url"))
+            }
         } else if by_path {
             let direct = query_path
                 .as_ref()
@@ -144,6 +174,7 @@ pub(super) fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
             .join("index.md");
         matches.push((rank,json!({"repo_id":repo,"project_id":project_id,"name":name,"match":kind,
             "repository_root":b.project_root,"repository_urls":urls.iter().filter(|u|crate::gitx::redact_credentials(u)==**u).collect::<Vec<_>>(),
+            "declared_repository_url":declared,
             "knowledge_id":b.id,"knowledge_path":b.path,"available":b.path.is_dir(),
             "wiki_index":index.is_file().then_some(index),"source_index":source_index.is_file().then_some(source_index),
             "recall_command":["ailoom","--json","knowledge","--action","recall","--root",b.project_root.to_string_lossy().as_ref(),"--query","<要查询的问题>"]

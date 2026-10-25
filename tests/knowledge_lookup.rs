@@ -86,6 +86,41 @@ fn cli_locates_url_path_and_partial_name_from_outside_the_repository() {
         assert!(found["candidates"][0].get("body").is_none());
         assert!(found["candidates"][0].get("documents").is_none());
     }
+    // Root metadata supplies explicit canonical identity when Git uses a host alias.
+    git(
+        &sdk,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@work-github:Example/Hardware-SDK.git",
+        ],
+    );
+    std::fs::write(
+        sdk.join("package.json"),
+        r#"{"repository":{"type":"git","url":"git+https://github.com/Example/Hardware-SDK.git"}}"#,
+    )
+    .unwrap();
+    let declared = location::locate(&data, "https://github.com/example/hardware-sdk", 5).unwrap();
+    assert_eq!(declared["status"], "found");
+    assert_eq!(
+        declared["candidates"][0]["match"],
+        "declared_repository_url"
+    );
+    assert_eq!(
+        declared["candidates"][0]["declared_repository_url"],
+        "https://github.com/Example/Hardware-SDK.git"
+    );
+    // Credentials in metadata never become lookup evidence or returned URLs.
+    std::fs::write(
+        sdk.join("package.json"),
+        r#"{"repository":"https://user:password@github.com/Example/Hardware-SDK.git"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        location::locate(&data, "https://github.com/example/hardware-sdk", 5).unwrap()["status"],
+        "not_found"
+    );
     let other = t.path().join("hardware-js-sdk-experiment");
     std::fs::create_dir(&other).unwrap();
     init(&data, &other, &t.path().join("other-knowledge"));
