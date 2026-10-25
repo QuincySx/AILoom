@@ -1,10 +1,10 @@
 import {esc} from '../services/api.js';
 
-export function projectNavigation({id,active='capabilities',settings=false}) {
+export function projectNavigation({id,active='capabilities',settings=false,settingsTab='settings'}) {
   const base='#/projects/'+encodeURIComponent(id);
   const tabs=settings
     ? [['settings','基本信息',base+'/settings'],['instructions','项目说明',base+'/instructions'],['knowledge','知识库',base+'/knowledge']]
-    : [['capabilities','AI 能力',base],['files','本地文件',base+'/files'],['settings','项目设置',base+'/settings']];
+    : [['capabilities','AI 能力',base],['files','本地文件',base+'/files'],['settings','项目设置',base+'/'+settingsTab]];
   return `<nav class="section-nav" aria-label="${settings?'项目设置':'项目导航'}">${tabs.map(([key,label,href])=>`<a href="${href}" ${key===active?'aria-current="page"':''}>${esc(label)}</a>`).join('')}</nav>`;
 }
 

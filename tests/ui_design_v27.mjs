@@ -20,6 +20,7 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
     api.nativeFiles=async body=>body.action==='read'?{content:'# 本地规则\n\n保留原文件，只读取或导入个人副本。',expected:'fixture',local:{}}:{targets:[{id:'claude-rules',kind:'rule',ext:'md',tool:'Claude',path:root+'/CLAUDE.md'}],files:[{label:'CLAUDE.md',name:'CLAUDE.md',path:root+'/CLAUDE.md',kind:'rule',tool:'Claude',target:'claude-rules'},{label:'AGENTS.md',name:'AGENTS.md',path:root+'/AGENTS.md',kind:'rule',tool:'Codex',target:'claude-rules',managed:true},{label:'reviewer.md',name:'reviewer.md',path:root+'/.claude/agents/reviewer.md',kind:'agent',tool:'Claude',target:'claude-rules'}]};
     api.globalSkills=async()=>({home:'/fixture',revision:1,pending:1,targets:[{key:'agents',label:'Codex',enabled:true,supported:true,dir:'/fixture/.agents/skills'},{key:'claude',label:'Claude',enabled:true,supported:true,dir:'/fixture/.claude/skills'}],skills:entries.filter(e=>e.kind==='skill').map((e,i)=>({...e,source_meta:e.source,source:e.source_name,global:i<64,targets:i%3===1?['claude']:i%3===2?['agents']:['agents','claude']})),deployed:entries.filter(e=>e.kind==='skill').slice(0,64).flatMap((e,i)=>(i%3===1?['claude']:i%3===2?['codex']:['codex','claude']).map(tool=>({resource_id:e.id,tool}))),actions:[{resource_id:entries[1].id,action:'conflict'}],foreign:[{name:'code-review',conflicts_with:entries[1].id,target:'claude',path:'/fixture/.claude/skills/code-review',location:{kind:'dir'}}],archive:[]});
     api.knowledge=async body=>body.action==='inspect'?{git:null}:{initialized:true,files:12,location:{path:'/fixture/Knowledge'},default_path:'/fixture/Knowledge'};
+    api.instructions=async()=>({content:'',revision:1});api.fsRead=async()=>({content:''});
     api.jobs=async()=>({jobs:[{id:'visual-job',kind:'apply',status:'success',root,scope:'apps/web',created_at:'2026-10-18T06:32:00Z',updated_at:'2026-10-18T06:32:00Z',progress:[],result:{actions:[{action:'create',path:'.agents/skills/guidelines-coding'},{action:'update',path:'AGENTS.md'}]}}]});
     localStorage.removeItem('ailoom-tree-preferences');sessionStorage.removeItem('ailoom-library-search');sessionStorage.removeItem('ailoom-return-after-settings');sessionStorage.removeItem('ailoom-directory-view');location.hash='#/library';
   })()`);
@@ -108,12 +109,44 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
   await evaluate("document.querySelector('.section-nav a[href$=\"/files\"]').click()");
   await waitFor("!!document.querySelector('.native-files [data-native-heading]')");
   for(const width of [1440,1024,390,320])await capture('project-files',width);
+  const filesRoute=await evaluate('location.hash');
   await evaluate("document.querySelector('.section-nav a[href$=\"/settings\"]').click()");
   await waitFor("!!document.querySelector('.project-settings-profile')");
+  const settingsHistory=await evaluate('history.length');
+  if(!await evaluate(`(()=>{const nav=document.querySelector('nav[aria-label="项目导航"]');return nav&&[...nav.querySelectorAll('a')].map(a=>a.textContent).join('|')==='AI 能力|本地文件|项目设置'&&nav.querySelector('[aria-current="page"]')?.textContent==='项目设置';})()`))throw Error('Settings lost the project tabs');
   if(await evaluate("!!document.querySelector('.workspace-rail')"))throw Error('Shared settings show a directory tree');
   for(const width of [1440,1024,390,320])await capture('project-settings',width);
   await evaluate("document.querySelector('.section-nav a[href$=\"/knowledge\"]').click()");
   await waitFor("!!document.querySelector('.knowledge-settings')");await capture('knowledge',390);
+  await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/instructions"]').click()`);
+  await waitFor(`document.querySelector('nav[aria-label="项目设置"] a[aria-current="page"]')?.textContent==='项目说明'&&!document.querySelector('[data-save]').disabled`);
+  await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/knowledge"]').click()`);
+  await waitFor("!!document.querySelector('.knowledge-settings')");
+  if(await evaluate('history.length')!==settingsHistory)throw Error('Settings tabs added browser history entries');
+  await evaluate('history.back()');
+  await waitFor(`location.hash===${JSON.stringify(filesRoute)}&&!!document.querySelector('.native-files [data-native-heading]')`);
+  await evaluate('history.forward()');
+  await waitFor("!!document.querySelector('.knowledge-settings')");
+  await evaluate(`document.querySelector('nav[aria-label="项目导航"] a[href$="/files"]').click()`);
+  await waitFor("!!document.querySelector('.native-files [data-native-heading]')");
+  // A Worktree subdirectory survives settings, Back, and Forward without changing the shared-settings root.
+  await evaluate("location.hash='#/projects/visual-git'");await waitFor("!!document.querySelector('[data-tool-change]')");
+  await evaluate("[...document.querySelectorAll('[data-tree-open]')].find(b=>{const key=JSON.parse(b.dataset.treeOpen);return key[1]==='feature'&&key[2]==='apps/web';}).click()");
+  await waitFor("document.querySelector('[data-switch-directory]').textContent.includes('feature/cli / apps/web')&&!!document.querySelector('[data-tool-change]')");
+  await evaluate(`document.querySelector('nav[aria-label="项目导航"] a[href$="/settings"]').click()`);await waitFor("!!document.querySelector('.project-settings-profile')");
+  await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/knowledge"]').click()`);await waitFor("!!document.querySelector('.knowledge-settings')");
+  await evaluate('history.back()');await waitFor("!!document.querySelector('[data-tool-change]')&&document.querySelector('[data-switch-directory]').textContent.includes('feature/cli / apps/web')");
+  await evaluate('history.forward()');await waitFor("!!document.querySelector('.knowledge-settings')");
+  if(!await evaluate(`(async()=>{const {currentTarget}=await import('/ui/state/target.js');return currentTarget().rootPath==='/fixture/AILoom-feature';})()`))throw Error('Forward to settings lost the selected Worktree');
+  // Cancelling Back must preserve both the draft and the browser history entry.
+  await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/settings"]').click()`);await waitFor("!!document.querySelector('.project-settings-profile')");
+  await evaluate(`{const name=document.querySelector('.project-settings-profile input[name=name]');name.value='unsaved project name';name.dispatchEvent(new Event('input',{bubbles:true}));history.back();}`);
+  await waitFor("!!document.querySelector('dialog:modal')");
+  await evaluate("[...document.querySelectorAll('dialog:modal button')].find(b=>b.textContent==='取消').click()");
+  await waitFor("!document.querySelector('dialog:modal')&&location.hash.endsWith('/settings')");
+  if(!await evaluate("document.querySelector('.project-settings-profile input[name=name]').value==='unsaved project name'"))throw Error('Cancelling Back lost the settings draft');
+  await evaluate("document.querySelector('.project-settings-profile').reset();history.back()");
+  await waitFor("!!document.querySelector('[data-tool-change]')&&document.querySelector('[data-switch-directory]').textContent.includes('feature/cli / apps/web')");
   await evaluate("location.hash='#/library/global'");await waitFor("document.querySelectorAll('[data-global-skill]').length===64");
   for(const width of [1440,1024,390,320]) {
     await capture('global',width);

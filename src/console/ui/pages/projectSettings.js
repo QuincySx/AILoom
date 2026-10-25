@@ -1,5 +1,5 @@
-// AIL-124：项目共享设置 —— 独立项目内路由（#/projects/<id>/settings）。
-// 与日常目录页显式分开：作用范围整个项目；Markdown 指令只在这里编辑。
+// AIL-124：项目共享设置 —— 保留项目导航，设置内页签共用一条历史记录。
+// 作用范围整个项目；Markdown 指令只在这里编辑。
 // 返回目录时保持原工作目录、子目录与页签（sessionStorage 一次性恢复）。
 
 import { api, esc } from '../services/api.js';
@@ -40,7 +40,10 @@ export function mount(container, ctx = {}) {
         ? {...r, worktrees:{local:{path:r.common_dir, status:'active'}}} : r);
       repo = state.repos.find(r => r.repo_id === ctx.projectId);
       if (!repo) { error(new Error('项目不存在，请返回项目列表。')); return; }
-      let remembered=null;try{remembered=JSON.parse(sessionStorage.getItem(RETURN_KEY));}catch{}
+      let remembered=null;
+      for (const key of [RETURN_KEY,'ailoom-directory-view']) {
+        try { const saved=JSON.parse(sessionStorage.getItem(key)); if(saved?.repoId===repo.repo_id){remembered=saved;break;} } catch {}
+      }
       const worktrees = Object.values(repo.worktrees || {}), available = worktrees.filter(w=>w.status!=='missing');
       const rememberedWorktree = remembered?.repoId===repo.repo_id?repo.worktrees?.[remembered.wt]:null;
       const wtPath = (rememberedWorktree?.status!=='missing'?rememberedWorktree?.path:null)
@@ -60,15 +63,20 @@ export function mount(container, ctx = {}) {
 
   function renderShell() {
     const name=repo.project?.name||Object.values(repo.worktrees||{})[0]?.path?.split('/').filter(Boolean).pop()||repo.repo_id;
-    const title=tab===1?'项目说明':tab===3?'知识库':'项目设置';
-    setBreadcrumb([{label:'项目',href:'#/projects'},{label:name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:title}]);
+    const section=tab===1?'instructions':tab===3?'knowledge':'settings';
+    setBreadcrumb([{label:'项目',href:'#/projects'},{label:name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:'项目设置'}]);
     // The breadcrumb already names the project and leads back to it.
-    root.innerHTML = `${PageHeader({title,description:tab===1?'所有工作目录共用这份说明。':tab===3?'保存和整理项目知识。':'共享设置对整个项目生效。'})}
-      ${projectNavigation({id:repo.repo_id,active:tab===1?'instructions':tab===3?'knowledge':'settings',settings:true})}
+    root.innerHTML = `${PageHeader({title:'项目设置',description:'共享设置对整个项目生效。'})}
+      ${projectNavigation({id:repo.repo_id,active:'settings',settingsTab:section})}
+      ${projectNavigation({id:repo.repo_id,active:section,settings:true})}
       <p data-message role="status"></p>
       <div data-content></div>`;
-    root.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => {
-      location.hash=`#/projects/${encodeURIComponent(repo.repo_id)}/${b.dataset.tab==='4'?'files':b.dataset.tab==='3'?'knowledge':'settings'}`;
+    root.querySelectorAll('nav[aria-label="项目设置"] a').forEach(link => { link.onclick = event => {
+      if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+      event.preventDefault();
+      const oldURL=location.href;
+      history.replaceState(history.state,'',link.getAttribute('href'));
+      window.dispatchEvent(new HashChangeEvent('hashchange',{oldURL,newURL:location.href}));
     }; });
   }
 

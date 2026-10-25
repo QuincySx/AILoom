@@ -36,9 +36,9 @@ ailoom --json service status
 使用 mise 升级当前候选版时，明确指定执行重启和核对的版本：
 
 ```bash
-npm_config_ignore_scripts=true mise use -g --pin npm:ailoom-cli@0.4.0-rc.5
-mise exec npm:ailoom-cli@0.4.0-rc.5 -- ailoom service restart
-mise exec npm:ailoom-cli@0.4.0-rc.5 -- ailoom --json service status
+npm_config_ignore_scripts=true mise use -g --pin npm:ailoom-cli@0.4.0-rc.6
+mise exec npm:ailoom-cli@0.4.0-rc.6 -- ailoom service restart
+mise exec npm:ailoom-cli@0.4.0-rc.6 -- ailoom --json service status
 ```
 
 mise 的 shell 激活通常在下一次命令提示符出现时刷新 PATH；连续执行安装和普通 `ailoom service restart`，可能仍由旧版本重启自己。`mise exec` 为这次命令明确选择版本，不依赖提示符刷新。见 [mise 官方说明](https://mise.jdx.dev/faq.html)。

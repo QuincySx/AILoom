@@ -33,6 +33,7 @@ const ROUTES = {
 
 let currentPage = null;
 let activeRoute = null;
+let activeHistoryIndex = null;
 let routeVersion = 0;
 let serviceStopped = false;
 
@@ -145,6 +146,12 @@ async function checkConnection() {
 async function route() {
   if (serviceStopped) return;
   const version = ++routeVersion;
+  // 取消后退/前进时恢复历史位置，不能覆盖其目标条目。
+  let historyIndex = history.state?.ailoomRouteIndex;
+  if (!Number.isInteger(historyIndex)) {
+    historyIndex = (activeHistoryIndex ?? -1) + 1;
+    history.replaceState({...history.state,ailoomRouteIndex:historyIndex}, '', location.href);
+  }
   // 已下线的旧入口：保留重定向，旧书签不失效
   if(location.hash==='#/projects/manage'){location.replace('#/projects');return;}
   if(location.hash==='#/native-files'){location.replace('#/library/global');return;}
@@ -155,11 +162,15 @@ async function route() {
   if (legacyMatch) { location.replace(`#/projects/${legacyMatch[1]}/settings`); return; }
   const projectMatch = !ROUTES[location.hash] && !settingsMatch && location.hash.match(/^#\/projects\/([^/]+)$/);
   if (!projectMatch && !settingsMatch && (!location.hash || !ROUTES[location.hash])) { location.replace('#/projects'); return; }
-  if (activeRoute === location.hash) return;
+  if (activeRoute === location.hash) { activeHistoryIndex = historyIndex; return; }
   if (currentPage?.isDirty?.()) {
     const proceed = await confirmAction('当前页面有未保存内容。确定放弃这些修改并离开？', {title:'离开当前页面', confirmLabel:'放弃并离开'});
     if (version !== routeVersion) return;
-    if (!proceed) { history.replaceState(null, '', activeRoute); return; }
+    if (!proceed) {
+      if (historyIndex === activeHistoryIndex) history.replaceState(history.state, '', activeRoute);
+      else history.go(activeHistoryIndex - historyIndex);
+      return;
+    }
   }
   const projectFiles = settingsMatch?.[2] === 'files';
   const def = settingsMatch ? {title:({instructions:'项目说明',knowledge:'知识库',files:'本地文件'})[settingsMatch[2]]||'项目设置', mount:projectFiles?pageWorkspace.mount:pageProjectSettings.mount}
@@ -183,6 +194,7 @@ async function route() {
     currentPage = def.mount(app, {});
   }
   activeRoute = location.hash;
+  activeHistoryIndex = historyIndex;
   renderNav();
 }
 
