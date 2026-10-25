@@ -166,12 +166,12 @@ pub(super) fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
             }
         };
         let Some((rank, kind)) = kind else { continue };
-        let index = b.path.join(wiki::base(project_id)).join("index.md");
-        let source_index = b
-            .path
-            .join("imports/worktrees")
-            .join(project_id)
-            .join("index.md");
+        let index = if b.path.join("README.md").is_file() {
+            b.path.join("README.md")
+        } else {
+            b.path.join(wiki::base(project_id)).join("index.md")
+        };
+        let source_index = layout::source_index_at(&b.path, project_id);
         matches.push((rank,json!({"repo_id":repo,"project_id":project_id,"name":name,"match":kind,
             "repository_root":b.project_root,"repository_urls":urls.iter().filter(|u|crate::gitx::redact_credentials(u)==**u).collect::<Vec<_>>(),
             "declared_repository_url":declared,

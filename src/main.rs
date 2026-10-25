@@ -82,6 +82,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             "status"
                 | "locate"
                 | "separate"
+                | "reset-wiki"
                 | "init"
                 | "move"
                 | "save"

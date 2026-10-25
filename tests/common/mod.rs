@@ -282,3 +282,46 @@ pub fn commit_rm(repo: &Path, rel: &str, msg: &str) {
 pub fn commit_only(repo: &Path, msg: &str) {
     git_commit_all(repo, msg, &["resources"]).unwrap();
 }
+
+/// Build a pre-rc.5 fixture so backwards compatibility is exercised by migrations.
+pub fn legacy_knowledge_library(root: &std::path::Path) {
+    let marker = root.join(".ailoom/library.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    let project = value["project_id"].as_str().unwrap().to_string();
+    value.as_object_mut().unwrap().remove("project_id");
+    let old = root.join("projects").join(&project);
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::rename(root.join(".ailoom/project"), &old).unwrap();
+    if root.join("sources/notes").exists() {
+        std::fs::rename(root.join("sources/notes"), old.join("learnings")).unwrap();
+    }
+    let sources = root.join("imports/worktrees").join(project);
+    std::fs::create_dir_all(&sources).unwrap();
+    if root.join(".ailoom/sources.json").is_file() {
+        std::fs::rename(
+            root.join(".ailoom/sources.json"),
+            sources.join("manifest.json"),
+        )
+        .unwrap();
+    }
+    for entry in std::fs::read_dir(root.join("sources")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            let name = if entry.file_name() == "README.md" {
+                "index.md".into()
+            } else {
+                entry.file_name()
+            };
+            std::fs::rename(entry.path(), sources.join(name)).unwrap();
+        }
+    }
+    std::fs::write(
+        root.join("ailoom-knowledge.json"),
+        serde_json::to_vec_pretty(&value).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(marker).unwrap();
+    std::fs::remove_file(root.join("README.md")).unwrap();
+    let _ = std::fs::remove_file(root.join(".ailoom/homepage.json"));
+}

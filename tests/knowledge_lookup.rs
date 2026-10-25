@@ -154,6 +154,8 @@ fn old_shared_library_splits_one_owner_at_a_time_without_copying_foreign_content
     let old_b = t.path().join("old-sdk");
     init(&data, &a, &shared);
     init(&data, &b, &old_b);
+    common::legacy_knowledge_library(&shared);
+    common::legacy_knowledge_library(&old_b);
     let da = portable::read(&a).unwrap().unwrap();
     let mut db = portable::read(&b).unwrap().unwrap();
     let old_a_id = da.knowledge_id.clone();
@@ -428,7 +430,7 @@ fn another_repository_cannot_adopt_an_existing_library_through_sync_or_recovery(
         },
     )
     .unwrap();
-    let before = std::fs::read(kb.join("ailoom-knowledge.json")).unwrap();
+    let before = std::fs::read(kb.join(".ailoom/library.json")).unwrap();
     let declaration = portable::read(&b).unwrap().unwrap();
     let error = location::run(
         &db,
@@ -441,7 +443,7 @@ fn another_repository_cannot_adopt_an_existing_library_through_sync_or_recovery(
     .unwrap_err();
     assert!(error.to_string().contains("其他仓库"), "{error}");
     assert_eq!(
-        std::fs::read(kb.join("ailoom-knowledge.json")).unwrap(),
+        std::fs::read(kb.join(".ailoom/library.json")).unwrap(),
         before
     );
     assert_eq!(

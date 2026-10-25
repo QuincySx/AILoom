@@ -230,7 +230,7 @@ fn wrong_identity_stale_preview_and_symlink_are_rejected_without_binding() {
     copy(&a, &b);
     copy(&ka, &kb);
     let p = run(&db, &b, "recover", Some(&kb));
-    std::fs::write(kb.join("docs/new.md"), "# New").unwrap();
+    std::fs::write(kb.join("sources/notes/new.md"), "# New").unwrap();
     let mut r = Request {
         action: "recover".into(),
         root: b.clone(),
@@ -242,7 +242,7 @@ fn wrong_identity_stale_preview_and_symlink_are_rejected_without_binding() {
     assert!(location::run(&db, &r).is_err());
     assert!(!db.join("knowledge/bindings.json").exists());
     std::fs::write(
-        kb.join("ailoom-knowledge.json"),
+        kb.join(".ailoom/library.json"),
         serde_json::to_vec(
             &serde_json::json!({"schema_version":1,"id":uuid::Uuid::new_v4().to_string()}),
         )
@@ -329,8 +329,7 @@ fn concurrent_device_state_does_not_silently_overwrite() {
     let kb = t.path().join("kb");
     std::fs::create_dir(&root).unwrap();
     run(&data, &root, "init", Some(&kb));
-    let d = portable::read(&root).unwrap().unwrap();
-    let state = kb.join("projects").join(d.project_id).join("state.json");
+    let state = kb.join(".ailoom/project/state.json");
     let mut other: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
     other["profile"] = serde_json::json!({"default":{"hosts":{"codex":"enable"}}});
     std::fs::write(&state, serde_json::to_vec(&other).unwrap()).unwrap();
@@ -538,10 +537,8 @@ fn separate_checkouts_on_one_machine_have_independent_conflict_baselines() {
         "Stale checkout edit"
     )
     .is_err());
-    let d = portable::read(&a).unwrap().unwrap();
-    let state: Value = serde_json::from_slice(
-        &std::fs::read(kb.join("projects").join(d.project_id).join("state.json")).unwrap(),
-    )
-    .unwrap();
+    let state: Value =
+        serde_json::from_slice(&std::fs::read(kb.join(".ailoom/project/state.json")).unwrap())
+            .unwrap();
     assert_eq!(state["instructions"]["project"], "First checkout edit");
 }

@@ -74,3 +74,14 @@ ailoom --json knowledge --action recall --root "/返回的仓库路径" --query 
 ```
 
 查找只返回入口，重名会列候选；各仓库的原文、Wiki 和读写绑定独立。同仓库的 Worktree 共用本仓库知识。
+
+项目知识库是可直接维护和通过 Git 分享的 Markdown 目录：
+
+```text
+README.md           知识首页
+wiki/               模块与主题正文，人工和 AI 都编辑这里
+sources/            原始资料、出处及补充笔记
+.ailoom/            内部记录与恢复配置，日常无需编辑
+```
+
+在 wiki/ 新增或改名 Markdown 会自动进入检索。旧 Wiki 需要重建时，先用 `ailoom knowledge --action reset-wiki --root <仓库>` 预览，再带返回的 expected 执行；之后在网页开始整理即可重新生成。

@@ -256,7 +256,7 @@ pub fn clone_repository(root: &Path, dest: &Path) -> Result<Value> {
         return Err(fail("知识库子目录越出克隆目录"));
     }
     let marker: Value =
-        serde_json::from_slice(&std::fs::read(path.join("ailoom-knowledge.json"))?)?;
+        serde_json::from_slice(&std::fs::read(location::layout::marker_at(&path))?)?;
     if marker["id"].as_str() != Some(&d.knowledge_id) {
         return Err(fail("克隆完成，但知识库 ID 不匹配；已保留目录供检查"));
     }

@@ -1,4 +1,4 @@
-//! Project-owned, linked wiki pages. Immutable editions are committed by one index write.
+//! Plain Markdown pages with stable paths for people and agents.
 use super::*;
 use std::collections::BTreeSet;
 
@@ -26,6 +26,50 @@ pub(super) fn base(project: &str) -> PathBuf {
 
 /// The entry carries the exact page set. Old editions never enter current recall.
 pub(super) fn current(tree: &Tree, project: &str) -> Result<Vec<Page>> {
+    if layout::modern(tree) || tree.contains_key(Path::new(".ailoom/wiki.json")) {
+        let mut pages = Vec::new();
+        for (path, bytes) in tree {
+            let Ok(relative) = path.strip_prefix("wiki") else {
+                continue;
+            };
+            if path.extension().is_none_or(|e| e != "md")
+                || (!layout::modern(tree) && relative == Path::new("index.md"))
+                || relative
+                    .components()
+                    .next()
+                    .and_then(|c| c.as_os_str().to_str())
+                    .is_some_and(|c| uuid::Uuid::parse_str(c).is_ok() || c == "editions")
+            {
+                continue;
+            }
+            let text = std::str::from_utf8(bytes).map_err(|_| fail("Wiki 文档不是 UTF-8 文本"))?;
+            if let Some((fm, _)) = crate::resource::split_frontmatter(text)? {
+                let meta: Value = serde_yaml::from_str(&fm)?;
+                if meta["project_id"].as_str().is_some_and(|id| id != project) {
+                    return Err(fail("Wiki 文档属于其他仓库"));
+                }
+            }
+            let stem = path.file_stem().unwrap().to_string_lossy();
+            let kind =
+                if ["sources", "changes", "maintenance", "questions"].contains(&stem.as_ref()) {
+                    stem.to_string()
+                } else {
+                    "topic".into()
+                };
+            let title = text
+                .lines()
+                .find_map(|l| l.strip_prefix("# "))
+                .unwrap_or(&stem)
+                .trim()
+                .to_string();
+            pages.push(Page {
+                path: path.clone(),
+                title,
+                kind,
+            });
+        }
+        return Ok(pages);
+    }
     let entry = base(project).join("index.md");
     let Some(bytes) = tree.get(&entry) else {
         return Ok(Vec::new());
@@ -79,14 +123,34 @@ pub(super) fn project_name(root: &Path) -> String {
         .into()
 }
 
+pub(super) fn navigation(tree: &Tree, path: &Path) -> bool {
+    path == Path::new("README.md")
+        && (layout::modern(tree)
+            || tree.contains_key(Path::new(".ailoom/wiki.json"))
+            || tree.contains_key(Path::new(".ailoom/homepage.json")))
+}
+
 /// Untagged legacy notes are accepted only for a library with one owner. Shared
 /// libraries require an explicit owner or shared:true; UUID ownership is not a team label.
 pub(super) fn source_owned(path: &Path, bytes: &[u8], project: &str, single_owner: bool) -> bool {
-    if path.starts_with("wiki")
+    if path.starts_with("sources")
+        && path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        return false;
+    }
+    if path == Path::new("sources/README.md")
+        || path.starts_with(".ailoom")
+        || path.starts_with("wiki")
         || path.starts_with("resources")
         || path.starts_with("docs/organized")
     {
         return false;
+    }
+    if path.starts_with("sources/notes") {
+        return true;
     }
     if path.starts_with("projects") {
         return path.starts_with(Path::new("projects").join(project).join("learnings"));
@@ -137,10 +201,19 @@ pub(super) fn tree_single_owner(tree: &Tree, project: &str) -> bool {
             .or_else(|| p.strip_prefix("wiki").ok())
             .and_then(|p| p.components().next())
             .and_then(|c| c.as_os_str().to_str());
-        if owner.is_some_and(|id| id != project && id != "index.md") {
+        if owner.is_some_and(|id| {
+            id != project
+                && (p.starts_with("projects")
+                    || p.starts_with("imports/worktrees")
+                    || uuid::Uuid::parse_str(id).is_ok())
+        }) {
             return false;
         }
-        if owner.is_none() && p.extension().is_some_and(|e| e == "md") {
+        if !p.starts_with("sources")
+            && !p.starts_with(".ailoom")
+            && (owner.is_none() || p.starts_with("wiki"))
+            && p.extension().is_some_and(|e| e == "md")
+        {
             if let Ok(text) = std::str::from_utf8(bytes) {
                 if let Ok(Some((fm, _))) = crate::resource::split_frontmatter(text) {
                     if let Ok(meta) = serde_yaml::from_str::<Value>(&fm) {
@@ -168,74 +241,85 @@ fn markdown_name(name: &str) -> String {
 /// It contains no machine paths and is not original evidence.
 pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<Tree> {
     let mut files = Tree::new();
-    let mut index = String::from("# 仓库开发知识\n\n本目录独立归属于当前仓库。原始资料在 `imports/worktrees/<project-id>/`，项目经验在 `projects/<project-id>/learnings/`，整理结果在 `wiki/<project-id>/`。先按项目和主题阅读；原文、历史稿及未评估稿不等于当前约定。\n\n| 项目 | 整理知识 | 原始资料 | 项目关联 |\n|---|---|---|---|\n");
-    let mut owners = BTreeSet::new();
-    for (repo, b) in cat
+    let repo = cat
         .projects
         .iter()
-        .filter(|(_, b)| b.id == binding.id && b.project_root == binding.project_root)
-    {
-        let id = match ingest::project_key(repo, &b.project_root) {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-        if id.is_empty() || !owners.insert(id.clone()) {
-            continue;
+        .find(|(_, b)| b.project_root == binding.project_root)
+        .map(|(id, _)| id.as_str())
+        .unwrap_or("");
+    let project = ingest::project_key(repo, &binding.project_root)?;
+    let name = markdown_name(&project_name(&binding.project_root));
+    let raw = layout::source_index(tree, &project);
+    let metadata = layout::project_dir(&binding.path, &project).join("project.json");
+    let guide = layout::project_dir(&binding.path, &project).join("README.md");
+    files.insert(metadata,serde_json::to_vec_pretty(&json!({"schema_version":1,"project_id":project,"knowledge_id":binding.id,"name":name,"declaration":".ailoom/knowledge.json","wiki":"README.md","raw_sources":raw}))?);
+    let instructions="直接编辑首页或 wiki/ 下的 Markdown 即可维护知识；新增文档会自动参与检索，无需填写清单。再次整理时 AI 会读取现有正文，整理期间的人工作改动会阻止覆盖。原文快照保留出处，编纂结论须核对适用条件与评估状态。\n\n需要其他仓库知识时：`ailoom --json knowledge --action locate --query '<仓库名、Git 地址或路径>'`。各仓库独立维护。";
+    files.insert(
+        guide,
+        format!("# {name} · 维护说明\n\n{instructions}\n").into_bytes(),
+    );
+    if !tree.contains_key(Path::new("README.md")) {
+        let mut home = format!(
+            "# {name} · 开发知识\n\n[原始资料]({})\n\n{instructions}\n\n## 模块与主题\n\n",
+            raw.display()
+        );
+        let pages = current(tree, &project)?;
+        if pages.is_empty() {
+            home.push_str("尚未整理。可直接在 wiki/ 新建 Markdown，或通过 AILoom 开始整理。\n");
         }
-        let name = project_name(&b.project_root);
-        let metadata = Path::new("projects").join(&id).join("project.json");
-        let entry = base(&id).join("index.md");
-        let raw = Path::new(ingest::PREFIX).join(&id).join("index.md");
-        let project_readme=format!("# {} · 仓库知识\n\n项目 ID：`{id}`\n\n知识库 ID：`{}`\n\n本库独立归属于此仓库；同一仓库的 Worktree 共用，其他仓库使用不同身份和目录。\n\n[本仓库知识入口](../../wiki/index.md) · [原文与出处](../../{}) · [机器可读关联](project.json)\n\n需要其他仓库的资料时，通过 CLI 按需查找其独立入口：\n\n```sh\nailoom --json knowledge --action locate --query '<仓库名、Git 地址或本地仓库路径>'\n```\n\n查询只返回匹配入口；读取时使用返回的 repository_root 作为 --root，各仓库知识分别维护。\n",markdown_name(&name),binding.id,raw.display());
-        files.insert(
-            Path::new("projects").join(&id).join("README.md"),
-            project_readme.into_bytes(),
-        );
-        files.insert(
-            metadata.clone(),
-            serde_json::to_vec_pretty(&json!({
-                "schema_version":1,"project_id":id,"knowledge_id":binding.id,
-                "name":name,"declaration":".ailoom/knowledge.json",
-                "raw_sources":Path::new(ingest::PREFIX).join(&id),
-                "notes":Path::new("projects").join(&id).join("learnings"),"wiki":entry,
-            "guide":Path::new("projects").join(&id).join("README.md"),
-            }))?,
-        );
-        let knowledge = if tree.contains_key(&entry) {
-            format!("[模块与主题]({id}/index.md)")
-        } else {
-            "尚未整理".into()
-        };
-        index.push_str(&format!(
-            "| {} | {knowledge} | [原文与出处](../{}) | [关联信息](../{}) |\n",
-            markdown_name(&name),
-            raw.display(),
-            Path::new("projects").join(&id).join("README.md").display()
-        ));
-        let origins = ingest::current_documents(tree, &id)?;
-        let mut raw_index = format!("# {} · 原始资料\n\n项目 ID：`{id}`。知识库 ID：`{}`。\n\n这些文件是不可变的原文快照，供溯源；不代表已整理、已验证或适用于当前分支。\n\n[项目目录](../../../wiki/index.md)\n\n", markdown_name(&name), binding.id);
-        for (path, values) in origins {
-            raw_index.push_str(&format!(
-                "- [原文 {}]({})：{}\n",
-                path.file_stem().unwrap_or_default().to_string_lossy(),
-                path.file_name().unwrap_or_default().to_string_lossy(),
-                values
-                    .iter()
-                    .map(|o| format!(
-                        "{} / `{}`（分支：{}；提交：{}；未提交修改：{}）",
-                        markdown_name(&o.directory),
-                        markdown_name(&o.document.to_string_lossy()),
-                        markdown_name(o.branch.as_deref().unwrap_or("未记录")),
-                        o.commit.as_deref().unwrap_or("未记录"),
-                        o.worktree_dirty
-                    ))
-                    .collect::<Vec<_>>()
-                    .join("；")
+        for page in pages {
+            home.push_str(&format!(
+                "- [{}]({})\n",
+                markdown_name(&page.title),
+                markdown_path(&page.path)
             ));
         }
-        files.insert(raw, raw_index.into_bytes());
+        files.insert("README.md".into(), home.into_bytes());
+        files.insert(
+            ".ailoom/homepage.json".into(),
+            b"{\"generated\":true}".to_vec(),
+        );
     }
-    files.insert(PathBuf::from("wiki/index.md"), index.into_bytes());
+    let mut raw_index=format!("# {name} · 原始资料\n\n[知识首页]({})\n\n保留原始记录和分支出处，供知识正文追溯。可在本目录补充笔记；哈希命名文件是不可变原文快照，日常维护请编辑 wiki/ 中的正文。\n\n",relative(&raw,Path::new("README.md")));
+    for (path, origins) in ingest::current_documents(tree, &project)? {
+        let label = origins
+            .first()
+            .map(|o| o.document.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        raw_index.push_str(&format!(
+            "- [{}]({})",
+            markdown_name(&label),
+            relative(&raw, &path)
+        ));
+        for origin in origins {
+            raw_index.push_str(&format!(
+                " · {}（{}，提交 {}）",
+                markdown_name(&origin.directory),
+                markdown_name(origin.branch.as_deref().unwrap_or("分支未记录")),
+                origin.commit.as_deref().unwrap_or("未记录")
+            ));
+        }
+        raw_index.push('\n');
+    }
+    let origins = ingest::current_documents(tree, &project)?;
+    for (path, bytes) in tree
+        .iter()
+        .filter(|(p, _)| !origins.contains_key(*p) && **p != raw && !navigation(tree, p))
+    {
+        if path.extension().is_some_and(|e| e == "md") && source_owned(path, bytes, &project, true)
+        {
+            let title = std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|text| text.lines().find_map(|line| line.strip_prefix("# ")))
+                .unwrap_or("补充记录");
+            raw_index.push_str(&format!(
+                "- [{}]({})\n",
+                markdown_name(title),
+                relative(&raw, path)
+            ));
+        }
+    }
+    files.insert(raw, raw_index.into_bytes());
     Ok(files)
 }
 
@@ -315,6 +399,38 @@ fn topics(body: &str) -> Result<BTreeMap<String, String>> {
     Ok(result)
 }
 
+pub(super) fn markdown_path(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .chars()
+        .map(|c| {
+            if " %()#[]<>\"'\t\r\n".contains(c) {
+                format!("%{:02X}", c as u32)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+fn decode_path(value: &str) -> Result<String> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let digit = |v: u8| char::from(v).to_digit(16);
+            if let (Some(a), Some(b)) = (digit(bytes[i + 1]), digit(bytes[i + 2])) {
+                output.push((a * 16 + b) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        output.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(output).map_err(|_| fail("原文链接不是有效 UTF-8"))
+}
+
 fn relative(from: &Path, to: &Path) -> String {
     let a: Vec<_> = from.parent().unwrap().components().collect();
     let b: Vec<_> = to.components().collect();
@@ -326,7 +442,7 @@ fn relative(from: &Path, to: &Path) -> String {
     for c in &b[common..] {
         p.push(c.as_os_str());
     }
-    p.to_string_lossy().replace('\\', "/")
+    markdown_path(&p)
 }
 
 /// Rebase only Markdown destinations, keeping code/prose and source claims intact.
@@ -386,7 +502,7 @@ fn links(
                     format!("{}#{anchor}", relative(from, p))
                 } else if let Some(p) = dest.strip_prefix("../../") {
                     let (p, fragment) = p.split_once('#').map_or((p, None), |(p, f)| (p, Some(f)));
-                    let p = PathBuf::from(p);
+                    let p = PathBuf::from(decode_path(p)?);
                     if p.components().any(|c| !matches!(c, Component::Normal(_)))
                         || !sources.contains(&p)
                         || !tree.contains_key(&p)
@@ -453,20 +569,17 @@ fn citations(text: &str) -> BTreeSet<String> {
 pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> Result<Tree> {
     let mut parts = sections(report)?;
     let topic_parts = topics(&parts["topics"])?;
-    let revision = crate::ids::sha256_hex(&serde_json::to_vec(&json!({
-        "format":2,"report":report,"input":input.fingerprint,"project_name":input.project_name,
-    }))?);
-    let edition = base(&input.project_id).join("editions").join(&revision);
-    let entry = base(&input.project_id).join("index.md");
+    let directory = PathBuf::from("wiki");
+    let entry = PathBuf::from("README.md");
     let mut targets = BTreeMap::new();
     for key in SECTIONS
         .iter()
         .filter(|s| !["index", "topics", "overview", "validation"].contains(s))
     {
-        targets.insert(key.to_string(), edition.join(format!("{key}.md")));
+        targets.insert(key.to_string(), directory.join(format!("{key}.md")));
     }
     for id in topic_parts.keys() {
-        targets.insert(id.clone(), edition.join("topics").join(format!("{id}.md")));
+        targets.insert(id.clone(), directory.join(format!("{id}.md")));
     }
     for key in ["index", "topics", "overview", "validation"] {
         targets.insert(key.into(), entry.clone());
@@ -508,7 +621,7 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
                 ));
             }
         }
-        let content=format!("---\nschema: ailoom-wiki-topic/v1\nproject_id: {}\nknowledge_id: {}\nreview_status: unreviewed\n---\n\n# {}\n\n<a id=\"{id}\"></a>\n\n[项目索引]({}) · [来源目录]({})\n\n{body}",input.project_id,input.knowledge_id,markdown_name(&title),relative(&path,&entry),relative(&path,&targets["sources"]));
+        let content=format!("---\nreview_status: unreviewed\nproject_id: {}\nknowledge_id: {}\n---\n\n# {}\n\n<a id=\"{id}\"></a>\n\n[项目索引]({}) · [来源目录]({})\n\n{body}",input.project_id,input.knowledge_id,markdown_name(&title),relative(&path,&entry),relative(&path,&targets["sources"]));
         files.insert(path.clone(), content.into_bytes());
         pages.push(Page {
             path,
@@ -547,11 +660,6 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
     if parts["index"].len() + parts["overview"].len() + parts["validation"].len() > 24 * 1024 {
         return Err(fail("项目索引超过 24 KB，请将正文移至模块主题页"));
     }
-    let manifest = edition.join("pages.json");
-    files.insert(manifest.clone(), serde_json::to_vec_pretty(&pages)?);
-    let fm = serde_yaml::to_string(
-        &json!({"schema":"ailoom-project-wiki/v1","project_id":input.project_id,"knowledge_id":input.knowledge_id,"review_status":"unreviewed","manifest":manifest.strip_prefix(base(&input.project_id))?}),
-    )?;
     let index = links(&parts["index"], &entry, &targets, &input.documents, tree)?;
     let overview = links(&parts["overview"], &entry, &targets, &input.documents, tree)?;
     let validation = links(
@@ -561,7 +669,8 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
         &input.documents,
         tree,
     )?;
-    let mut content=format!("---\n{fm}---\n\n# {} · 开发知识\n\n项目 ID：`{}` · 知识库 ID：`{}`\n\n[本仓库知识入口](../index.md) · [原文与出处](../../imports/worktrees/{}/index.md) · [仓库关联](../../projects/{}/README.md)\n\n<a id=\"overview\"></a>\n\n{overview}\n\n<a id=\"index\"></a><a id=\"topics\"></a>\n\n{index}\n\n## 更多入口\n\n",markdown_name(&input.project_name),input.project_id,input.knowledge_id,input.project_id,input.project_id);
+    let raw = layout::source_index(tree, &input.project_id);
+    let mut content=format!("# {} · 开发知识\n\n[原始资料]({}) · [维护建议](wiki/maintenance.md) · [待核实问题](wiki/questions.md)\n\n可直接编辑本首页或 wiki/ 下的 Markdown，人工与 AI 维护同一份正文。\n\n<a id=\"overview\"></a>\n\n{overview}\n\n<a id=\"index\"></a><a id=\"topics\"></a>\n\n{index}\n\n## 更多入口\n\n",markdown_name(&input.project_name),markdown_path(&raw));
     for p in pages.iter().filter(|p| p.kind != "topic") {
         content.push_str(&format!(
             "- [{}]({})\n",
@@ -573,5 +682,13 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
         "\n<a id=\"validation\"></a>\n\n## 自检与覆盖边界\n\n{validation}"
     ));
     files.insert(entry, content.into_bytes());
+    let generated: BTreeMap<_, _> = files
+        .iter()
+        .map(|(p, b)| (p.clone(), crate::ids::sha256_hex(b)))
+        .collect();
+    files.insert(
+        ".ailoom/wiki.json".into(),
+        serde_json::to_vec_pretty(&generated)?,
+    );
     Ok(files)
 }

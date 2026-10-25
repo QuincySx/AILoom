@@ -1,6 +1,6 @@
 //! Project-scoped recovery state. Only explicitly selected resources are packaged.
 use super::{
-    location::{digest, scan, write_tree, Binding},
+    location::{digest, layout, scan, write_tree, Binding},
     portable::Declaration,
 };
 use crate::{
@@ -151,8 +151,7 @@ fn scopes(p: &mut RepoProfile) -> Vec<&mut ScopeSelection> {
 }
 fn state_path(b: &Binding, d: &Declaration) -> PathBuf {
     b.path
-        .join("projects")
-        .join(&d.project_id)
+        .join(layout::project_dir(&b.path, &d.project_id))
         .join("state.json")
 }
 fn base_path(data: &Path, d: &Declaration, repo: &str) -> PathBuf {
@@ -306,7 +305,11 @@ pub fn checkpoint(data: &Path, repo: &str, b: &Binding, d: &Declaration) -> Resu
         }
         tree.insert(CATALOG.into(), serde_json::to_vec_pretty(&packaged)?);
         let hash = digest(&tree);
-        let rel = format!("projects/{}/resources/{hash}", d.project_id);
+        let rel = layout::project_dir(&b.path, &d.project_id)
+            .join("resources")
+            .join(&hash)
+            .to_string_lossy()
+            .to_string();
         packages.insert(rel.clone(), tree);
         sources.insert(portable_id, rel);
     }
@@ -512,7 +515,8 @@ pub fn restore(
     let mut available = BTreeSet::new();
     for (id, rel) in state.sources {
         crate::manifest::validate_relative_path("source.path", &rel)?;
-        if !Path::new(&rel).starts_with(format!("projects/{}/resources", d.project_id))
+        if !Path::new(&rel)
+            .starts_with(layout::project_dir(&b.path, &d.project_id).join("resources"))
             || !id.starts_with("collection-portable-")
         {
             return Err(fail("恢复来源路径无效"));
@@ -643,9 +647,9 @@ pub fn relocate(data: &Path, old: &Binding, next: &Binding) -> Result<()> {
 /// A legacy library split relocates only this project's packaged resources.
 pub fn relocate_project(data: &Path, old: &Binding, next: &Binding, project: &str) -> Result<()> {
     let mut old = old.clone();
-    old.path = old.path.join("projects").join(project);
+    old.path = old.path.join(layout::project_dir(&old.path, project));
     let mut next = next.clone();
-    next.path = next.path.join("projects").join(project);
+    next.path = next.path.join(layout::project_dir(&next.path, project));
     relocate(data, &old, &next)
 }
 

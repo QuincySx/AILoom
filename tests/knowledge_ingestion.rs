@@ -122,10 +122,14 @@ fn incremental_capture_keeps_history_and_recalls_only_current_revision() {
             .unwrap()
             .is_empty()
     );
-    let snapshots = walkdir::WalkDir::new(library.join("imports"))
+    let snapshots = walkdir::WalkDir::new(library.join("sources"))
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|s| s == "md"))
+        .filter(|e| {
+            e.path()
+                .file_stem()
+                .is_some_and(|s| s.to_string_lossy().len() == 64)
+        })
         .count();
     assert_eq!(snapshots, 2, "historical originals are retained");
 }
@@ -222,10 +226,10 @@ fn preview_is_bound_to_documents_and_manifest_and_rejects_unlisted_paths() {
     ] {
         assert!(ingest::apply(&data, &root, &id, expected, &paths).is_err());
     }
-    assert!(!library.join("imports").exists());
+    assert!(!library.join(".ailoom/sources.json").exists());
     std::fs::write(root.join("a.md"), "# Changed").unwrap();
     assert!(ingest::apply(&data, &root, &id, expected, &["a.md".into()]).is_err());
-    assert!(!library.join("imports").exists());
+    assert!(!library.join(".ailoom/sources.json").exists());
     let preview = ingest::preview(&data, &root, &id).unwrap();
     capture(&data, &root, &id, &["b.md"]);
     assert!(ingest::apply(
@@ -405,7 +409,7 @@ fn worktree_knowledge_copies_and_marked_libraries_never_become_new_originals() {
         .unwrap();
     }
     std::fs::copy(
-        root.join("knowledge/ailoom-knowledge.json"),
+        root.join("knowledge/.ailoom/library.json"),
         wt.join("other-library/ailoom-knowledge.json"),
     )
     .unwrap();

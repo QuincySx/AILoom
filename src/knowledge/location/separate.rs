@@ -34,7 +34,7 @@ fn same_project(a: &Path, b: &Path) -> bool {
 
 pub(super) fn validate_owner(tree: &Tree, project: &str) -> Result<()> {
     let marker: Value = serde_json::from_slice(
-        tree.get(Path::new(MARKER))
+        tree.get(layout::marker(tree))
             .ok_or_else(|| fail("知识库标识缺失"))?,
     )?;
     if marker["project_id"]
@@ -95,22 +95,41 @@ pub(super) fn run(
     if dest.exists() && (!dest.is_dir() || !scan(&dest)?.is_empty()) {
         return Err(fail("目标目录已有内容，请选择空目录"));
     }
+    let modern = layout::modern(&source);
     let prefixes = [
         Path::new("projects").join(project),
         Path::new("imports/worktrees").join(project),
         wiki::base(project),
+        layout::project_dir(&old.path, project),
+        if modern {
+            PathBuf::from("sources")
+        } else {
+            PathBuf::from("projects").join(project)
+        },
     ];
     let legacy = Path::new("docs/organized").join(format!("{project}.md"));
     let mut files: Tree = source
         .iter()
         .filter(|(p, bytes)| {
-            prefixes.iter().any(|prefix| p.starts_with(prefix))
+            (modern
+                && (p.starts_with("wiki")
+                    || **p == Path::new("README.md")
+                    || **p == Path::new(".ailoom/wiki.json")))
+                || prefixes.iter().any(|prefix| p.starts_with(prefix))
                 || **p == legacy
                 || (wiki::source_owned(p, bytes, project, false) && explicit_owner(bytes, project))
         })
         .map(|(p, v)| (p.clone(), v.clone()))
         .collect();
     files.remove(&Path::new("projects").join(project).join("relations.json"));
+    if modern {
+        if let Some(bytes) = source.get(Path::new(".ailoom/path-aliases.json")) {
+            files.insert(".ailoom/path-aliases.json".into(), bytes.clone());
+        }
+        if let Some(bytes) = source.get(Path::new(".ailoom/sources.json")) {
+            files.insert(".ailoom/sources.json".into(), bytes.clone());
+        }
+    }
     let unassigned: Vec<_> = source
         .iter()
         .filter(|(p, bytes)| {
@@ -120,7 +139,7 @@ pub(super) fn run(
         })
         .map(|(p, _)| p.clone())
         .collect();
-    let state = Path::new("projects").join(project).join("state.json");
+    let state = layout::project_dir(&old.path, project).join("state.json");
     let checkpoint = data
         .join("knowledge/checkpoints")
         .join(project)
@@ -150,7 +169,9 @@ pub(super) fn run(
         baseline: BTreeMap::new(),
     };
     for (p, bytes) in &mut files {
-        if p.starts_with(wiki::base(project)) && p.extension().is_some_and(|e| e == "md") {
+        if (p.starts_with(wiki::base(project)) || (modern && p.starts_with("wiki")))
+            && p.extension().is_some_and(|e| e == "md")
+        {
             let text =
                 String::from_utf8(bytes.clone()).map_err(|_| fail("Wiki 页面不是 UTF-8 文本"))?;
             *bytes = text
@@ -166,18 +187,42 @@ pub(super) fn run(
                 .into_bytes();
         }
     }
+    if modern {
+        if let Some(bytes) = source.get(Path::new(".ailoom/wiki.json")) {
+            let mut hashes: BTreeMap<PathBuf, String> = serde_json::from_slice(bytes)?;
+            for (path, hash) in &mut hashes {
+                if source
+                    .get(path)
+                    .is_some_and(|b| crate::ids::sha256_hex(b) == *hash)
+                {
+                    if let Some(bytes) = files.get(path) {
+                        *hash = crate::ids::sha256_hex(bytes);
+                    }
+                }
+            }
+            files.insert(
+                ".ailoom/wiki.json".into(),
+                serde_json::to_vec_pretty(&hashes)?,
+            );
+        }
+    }
     if let Some(bytes) = files.get_mut(&state) {
         let mut value: Value = serde_json::from_slice(bytes)?;
         value["knowledge_id"] = json!(next.id);
         *bytes = serde_json::to_vec_pretty(&value)?;
     }
     files.insert(
-        MARKER.into(),
+        layout::marker(&source).into(),
         serde_json::to_vec_pretty(&json!({"schema_version":1,"id":next.id,"project_id":project}))?,
     );
     let manifest = json!({"schema_version":1,"team_id":format!("knowledge-{project}"),"projects":{project:{"name":wiki::project_name(root)}},"namespaces":{"known":["common"],"shared":[]}});
     files.insert(
-        "ailoom.toml".into(),
+        (if modern {
+            ".ailoom/ailoom.toml"
+        } else {
+            "ailoom.toml"
+        })
+        .into(),
         toml::to_string_pretty(&manifest)?.into_bytes(),
     );
     let projected = Catalog {
@@ -200,6 +245,7 @@ pub(super) fn run(
             "复制核对失败或旧库已变化；旧绑定保持有效，复制目录保留供检查",
         ));
     }
+    rebuild::remap_feedback(data, &old)?;
     copy_feedback(data, &old, &next, &files)?;
     super::super::state::relocate_project(data, &old, &next, project)?;
     // Update existing declarations of this repository's worktrees, retaining rollback data.

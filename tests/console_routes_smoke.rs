@@ -123,7 +123,12 @@ fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
     );
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["source_count"], 0);
-    assert!(result["report"].is_null());
+    assert!(result["report"].as_str().unwrap().contains("尚未整理"));
+    assert_eq!(result["pages"], json!([]));
+    assert_eq!(
+        result["report_path"],
+        json!(std::fs::canonicalize(tmp.path().join("knowledge/README.md")).unwrap())
+    );
     let runners = result["runners"].as_array().unwrap();
     assert!(runners.iter().any(|r| r["id"] == "codex"));
     for runner in runners {
@@ -159,6 +164,7 @@ fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["source_count"], 1, "恢复配置不计入经验数量");
     // Previously generated v1 reports remain readable until structurally migrated.
+    common::legacy_knowledge_library(&tmp.path().join("knowledge"));
     let report = tmp
         .path()
         .join("knowledge/docs/organized")

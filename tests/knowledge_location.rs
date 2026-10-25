@@ -38,13 +38,10 @@ fn move_to(data: &Path, root: &Path, dest: &Path) -> Value {
     r.expected = p["expected"].as_str().map(str::to_owned);
     location::run(data, &r).unwrap()
 }
-fn notes(root: &Path) -> PathBuf {
-    let id = ailoom::knowledge::portable::read(root)
-        .unwrap()
-        .unwrap()
-        .project_id;
-    Path::new("projects").join(id).join("learnings")
+fn notes(_root: &Path) -> PathBuf {
+    "sources/notes".into()
 }
+
 fn note(data: &Path, root: &Path, dir: &Path, name: &str, body: &str) {
     let f = dir.join("draft.md");
     std::fs::write(&f, body).unwrap();
@@ -224,7 +221,7 @@ fn git_sync_round_trip_after_move_preserves_other_paths_and_reports_conflicts() 
         .unwrap()
         .project_id;
     ailoom::knowledge::portable::write(&root3, &declaration).unwrap();
-    std::fs::write(c.join("ailoom-knowledge.json"), serde_json::to_vec(&serde_json::json!({"schema_version":1,"id":declaration.knowledge_id,"project_id":declaration.project_id})).unwrap()).unwrap();
+    std::fs::write(c.join(".ailoom/library.json"), serde_json::to_vec(&serde_json::json!({"schema_version":1,"id":declaration.knowledge_id,"project_id":declaration.project_id})).unwrap()).unwrap();
     location::run(&data2, &req("sync", &root3, None)).unwrap();
     let moved = t.path().join("outside/moved");
     move_to(&data, &root, &moved);

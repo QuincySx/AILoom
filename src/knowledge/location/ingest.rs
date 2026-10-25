@@ -42,16 +42,8 @@ pub(super) fn project_key(id: &str, root: &Path) -> Result<String> {
         .unwrap_or_else(|| id.into()))
 }
 
-fn manifest_path(project: &str) -> PathBuf {
-    Path::new(PREFIX).join(project).join("manifest.json")
-}
-
-fn document_path(project: &str, hash: &str) -> PathBuf {
-    Path::new(PREFIX).join(project).join(format!("{hash}.md"))
-}
-
 fn manifest(tree: &Tree, project: &str) -> Result<Manifest> {
-    let Some(bytes) = tree.get(&manifest_path(project)) else {
+    let Some(bytes) = tree.get(&layout::manifest(tree, project)) else {
         return Ok(Manifest {
             schema_version: 1,
             ..Default::default()
@@ -86,7 +78,7 @@ pub(super) fn current_documents(
     }
     let mut result: BTreeMap<PathBuf, Vec<Origin>> = BTreeMap::new();
     for record in latest.into_values() {
-        let path = document_path(project, &record.hash);
+        let path = layout::source(tree, project, &record.hash);
         let bytes = tree
             .get(&path)
             .ok_or_else(|| fail("已采集的原文缺失，请恢复知识库原文"))?;
@@ -299,7 +291,7 @@ fn snapshot(
                 && !local_library
                     .as_ref()
                     .is_some_and(|p| e.path().starts_with(p))
-                && !(e.file_type().is_dir() && e.path().join(MARKER).is_file())
+                && !(e.file_type().is_dir() && layout::marker_at(e.path()).is_file())
                 && (e.path() == source.path
                     || !e.file_type().is_dir()
                     || crate::repo_registry::find_git_root(e.path()).as_deref() != Some(e.path()))
@@ -502,7 +494,7 @@ fn save_snapshot(
     automatic: bool,
 ) -> Result<Value> {
     let mut m = manifest(tree, key)?;
-    let metadata_path = manifest_path(key);
+    let metadata_path = layout::manifest(tree, key);
     // Compact metadata makes the per-record byte budget exact without repeatedly serializing history.
     let mut size = tree.values().map(Vec::len).sum::<usize>()
         - tree.get(&metadata_path).map_or(0, Vec::len)
@@ -520,7 +512,7 @@ fn save_snapshot(
         .iter()
         .filter(|(d, _)| selected.contains(&d.path))
     {
-        let path = document_path(key, &d.hash);
+        let path = layout::source(tree, key, &d.hash);
         if let Some(previous) = tree.get(&path) {
             if previous != bytes {
                 return Err(fail("知识库中的原文与内容摘要不符，未覆盖"));
@@ -711,6 +703,9 @@ mod tests {
             "the manifest is counted and a report slot remains"
         );
         assert_eq!(current_documents(&tree, "project").unwrap().len(), 1);
-        assert!(binding.path.join(manifest_path("project")).is_file());
+        assert!(binding
+            .path
+            .join(layout::manifest(&scan(&binding.path).unwrap(), "project"))
+            .is_file());
     }
 }

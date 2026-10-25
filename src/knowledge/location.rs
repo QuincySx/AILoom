@@ -8,12 +8,18 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 pub mod ingest;
+pub(crate) mod layout;
 mod lookup;
+mod publication;
+mod rebuild;
 mod separate;
 mod wiki;
 
 const MARKER: &str = "ailoom-knowledge.json";
 type Tree = BTreeMap<PathBuf, Vec<u8>>;
+pub(crate) fn legacy_wiki_index(project: &str) -> PathBuf {
+    wiki::base(project).join("index.md")
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Binding {
     pub id: String,
@@ -195,6 +201,12 @@ pub(super) fn scan(path: &Path) -> Result<Tree> {
         if !e.file_type().is_file() {
             return Err(fail("知识库包含非常规文件"));
         }
+        if e.path()
+            .strip_prefix(path)
+            .is_ok_and(|p| p == Path::new(".ailoom/wiki-transaction.json"))
+        {
+            continue;
+        }
         size += e.metadata().map_err(|e| fail(e.to_string()))?.len();
         if size > 128 * 1024 * 1024 || tree.len() >= 10000 {
             return Err(fail("知识库超过本次迁移限制（128 MB / 10000 文件）"));
@@ -222,9 +234,12 @@ pub(super) fn write_tree(path: &Path, tree: &Tree) -> Result<()> {
 }
 fn checked_tree(b: &Binding) -> Result<Tree> {
     uuid::Uuid::parse_str(&b.id).map_err(|_| fail("知识库标识无效"))?;
-    let tree = scan(&b.path)?;
+    let mut tree = scan(&b.path)?;
+    if publication::recover(&b.path)? {
+        tree = scan(&b.path)?;
+    }
     let marker: Value = serde_json::from_slice(
-        tree.get(Path::new(MARKER))
+        tree.get(layout::marker(&tree))
             .ok_or_else(|| fail("知识库标识缺失，位置未切换"))?,
     )?;
     if marker["schema_version"] != 1 || marker["id"].as_str() != Some(&b.id) {
@@ -273,7 +288,8 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     let project_id = super::portable::read(&root)?
         .map(|d| d.project_id)
         .unwrap_or(id);
-    let report_path = wiki::base(&project_id).join("index.md");
+    layout::validate_project(&tree, &project_id)?;
+    let report_path = PathBuf::from("README.md");
     let origins = ingest::current_documents(&tree, &project_id)?;
     let previous_documents = wiki::current(&tree, &project_id)?;
     let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
@@ -281,6 +297,9 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         .iter()
         .filter(|(p, bytes)| {
             p.extension().is_some_and(|e| e == "md")
+                && !p.starts_with(".ailoom")
+                && !wiki::navigation(&tree, p)
+                && **p != layout::source_index(&tree, &project_id)
                 && !p.starts_with("wiki")
                 && !p.starts_with("projects")
                 && !p.starts_with("imports")
@@ -294,6 +313,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         .iter()
         .filter(|(p, _)| {
             p.extension().and_then(|s| s.to_str()) == Some("md")
+                && !wiki::navigation(&tree, p)
                 && (origins.contains_key(*p)
                     || wiki::source_owned(p, &tree[*p], &project_id, single_owner))
                 && !archived.iter().any(|id| *p == Path::new(id))
@@ -303,6 +323,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     let legacy_path = Path::new("docs/organized").join(format!("{project_id}.md"));
     let previous_report = tree
         .get(&report_path)
+        .or_else(|| tree.get(&wiki::base(&project_id).join("index.md")))
         .or_else(|| tree.get(&legacy_path))
         .map(|bytes| String::from_utf8(bytes.clone()))
         .transpose()
@@ -364,29 +385,33 @@ pub(super) fn publish_organization(
             "整理期间知识库位置或内容已变化，结果已保留在操作记录中，请重新整理",
         ));
     }
-    let mut tree = scan(&current.path)?;
-    let mut files = wiki::compile(input, report, &tree)?;
-    for (p, v) in &files {
-        tree.insert(p.clone(), v.clone());
-    }
+    let tree = scan(&current.path)?;
     let cat = load(data)?;
-    let (id, _) = project(data, &input.root, &cat)?;
-    files.extend(wiki::catalog(&tree, &cat, binding(&cat, &id)?)?);
-    for (p, v) in &files {
-        tree.insert(p.clone(), v.clone());
+    let (owner, _) = project(data, &input.root, &cat)?;
+    if !wiki::single_owner(&cat, binding(&cat, &owner)?, &tree, &input.project_id) {
+        return Err(fail("旧共享库请先 separate 拆分，再整理"));
     }
-    if tree.len() > 10000 || tree.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024 {
+    if tree.contains_key(Path::new("README.md")) && !wiki::navigation(&tree, Path::new("README.md"))
+    {
         return Err(fail(
-            "整理结果超出知识库容量，本次草稿保留在操作记录中，原有结果保留",
+            "旧库 README 是原始资料，请先使用 reset-wiki 迁移原文，再生成知识首页",
         ));
     }
-    // Write an immutable edition first; the single project index is the commit.
-    let entry = files.remove(&input.report_path).unwrap();
-    let catalog = files.remove(Path::new("wiki/index.md")).unwrap();
-    write_tree(&current.path, &files)?;
+    let files = wiki::compile(input, report, &tree)?;
+    let mut projected = tree.clone();
+    projected.extend(files.clone());
+    let cat = load(data)?;
+    let (id, _) = project(data, &input.root, &cat)?;
+    let catalog = wiki::catalog(&projected, &cat, binding(&cat, &id)?)?;
+    projected.extend(catalog.clone());
+    if projected.len() > 10000
+        || projected.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024
+    {
+        return Err(fail("整理结果超出知识库容量，原有正文保留"));
+    }
+    write_tree(&current.path, &catalog)?;
+    publication::commit(&current.path, &tree, files, &input.previous_documents)?;
     let dest = current.path.join(&input.report_path);
-    crate::sync_common::atomic_write(&current.path.join("wiki/index.md"), &catalog)?;
-    crate::sync_common::atomic_write(&dest, &entry)?;
     Ok(dest)
 }
 
@@ -405,7 +430,7 @@ pub fn migrate_organization(data: &Path, root: &Path) -> Result<Value> {
         let files = wiki::catalog(&tree, &cat, b)?;
         write_tree(&b.path, &files)?;
         return Ok(
-            json!({"migrated":false,"reason":"no_report","catalog":b.path.join("wiki/index.md")}),
+            json!({"migrated":false,"reason":"no_report","catalog":b.path.join("README.md")}),
         );
     };
     let path = publish_organization(data, &input, report)?;
@@ -509,6 +534,9 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
     let _guard = lock(data)?;
     let mut cat = load(data)?;
     let (id, root) = project(data, &r.root, &cat)?;
+    if r.action == "reset-wiki" {
+        return rebuild::run(data, r, &cat, &id, &root);
+    }
     if r.action == "separate" {
         return separate::run(data, r, &mut cat, &id, &root);
     }
@@ -557,7 +585,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         let tree = checked_tree(&b)?;
         // Older libraries had no marker owner and could contain several projects.
         // Register them for explicit separation without restoring another project's state.
-        let marker: Value = serde_json::from_slice(&tree[Path::new(MARKER)])?;
+        let marker: Value = serde_json::from_slice(&tree[layout::marker(&tree)])?;
         let legacy_shared = marker["project_id"].is_null()
             && !wiki::single_owner(&Catalog::default(), &b, &tree, &declaration.project_id)
             && tree
@@ -620,6 +648,10 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                     Value::Null
                 };
                 super::portable::write(&b.project_root, &declaration)?;
+                if b.remote.is_none() {
+                    let tree = checked_tree(b)?;
+                    write_tree(&b.path, &wiki::catalog(&tree, &cat, b)?)?;
+                }
                 return Ok(json!({"initialized":true,"project_id":id,"location":b,"state":state}));
             }
             return Err(fail("项目已有知识库，请使用迁移位置"));
@@ -634,8 +666,8 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             baseline: BTreeMap::new(),
         };
         sync_settings(&mut b, r)?;
-        if dest.join(MARKER).is_file() {
-            let v: Value = serde_json::from_slice(&std::fs::read(dest.join(MARKER))?)?;
+        if layout::marker_at(&dest).is_file() {
+            let v: Value = serde_json::from_slice(&std::fs::read(layout::marker_at(&dest))?)?;
             b.id = v["id"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -672,17 +704,17 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                     }
                 }
             }
-            std::fs::create_dir_all(dest.join("learnings"))?;
-            std::fs::create_dir_all(dest.join("docs"))?;
+            std::fs::create_dir_all(dest.join("sources/notes"))?;
+            std::fs::create_dir_all(dest.join("wiki"))?;
             crate::sync_common::atomic_write(
-                &dest.join(MARKER),
+                &dest.join(layout::HIDDEN_MARKER),
                 &serde_json::to_vec_pretty(&json!({"schema_version":1,"id":b.id}))?,
             )?;
         }
         let declaration = super::portable::describe(&b)?;
         separate::validate_owner(&checked_tree(&b)?, &declaration.project_id)?;
         crate::sync_common::atomic_write(
-            &dest.join(MARKER),
+            &layout::marker_at(&dest),
             &serde_json::to_vec_pretty(
                 &json!({"schema_version":1,"id":b.id,"project_id":declaration.project_id}),
             )?,
@@ -698,6 +730,10 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         } else {
             Value::Null
         };
+        if b.remote.is_none() {
+            let tree = checked_tree(&b)?;
+            write_tree(&b.path, &wiki::catalog(&tree, &cat, &b)?)?;
+        }
         return Ok(json!({"initialized":true,"project_id":id,"location":b,"state":state}));
     }
     let old = binding(&cat, &id)?.clone();
@@ -876,12 +912,12 @@ pub fn save(data: &Path, root: &Path, file: &Path, name: &str) -> Result<Value> 
         format!("{name}.md")
     };
     let project_id = ingest::project_key(&id, &owner)?;
-    let dest = b
-        .path
-        .join("projects")
-        .join(&project_id)
-        .join("learnings")
-        .join(name);
+    let directory = if b.path.join(layout::HIDDEN_MARKER).is_file() {
+        PathBuf::from("sources/notes")
+    } else {
+        Path::new("projects").join(&project_id).join("learnings")
+    };
+    let dest = b.path.join(directory).join(name);
     // No silent overwrite of another note; repeated identical saves are idempotent.
     if dest.exists() && std::fs::read(&dest)? != content {
         return Err(fail("同名知识已存在，请使用新名称"));
@@ -906,6 +942,7 @@ pub fn recall_filtered(
     let tree = checked_tree(b)?;
     let ctx = state_context(data, root, b)?;
     let project_id = ingest::project_key(&id, &owner)?;
+    layout::validate_project(&tree, &project_id)?;
     let origins = ingest::current_documents(&tree, &project_id)?;
     let pages = wiki::current(&tree, &project_id)?;
     let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
@@ -938,7 +975,8 @@ pub fn recall_filtered(
         {
             continue;
         }
-        let current_page = p == &wiki::base(&project_id).join("index.md")
+        let current_page = p == Path::new("README.md")
+            || p == &wiki::base(&project_id).join("index.md")
             || pages.iter().any(|page| page.path == *p);
         let legacy_page = pages.is_empty() && p == &legacy;
         if !current_page
@@ -1013,13 +1051,14 @@ pub fn recall_filtered(
         .collect();
     Ok(
         json!({"results":results,"knowledge_id":b.id,"project_id":project_id,"query":query,
-        "source_index":b.path.join("imports/worktrees").join(&project_id).join("index.md"),
-        "wiki_index":b.path.join(wiki::base(&project_id)).join("index.md"),
+        "source_index":layout::source_index_at(&b.path,&project_id),
+        "wiki_index":b.path.join("README.md"),
         "scope":"current_repository"}),
     )
 }
 
 fn state_context(data: &Path, root: &Path, b: &Binding) -> Result<crate::appctx::AppContext> {
+    rebuild::remap_feedback(data, b)?;
     let mut layout = crate::paths::layout_for(data, &format!("knowledge-{}", b.id), &b.id);
     layout.ws_dir = data.join("knowledge/state").join(&b.id);
     layout.index_dir = layout.ws_dir.join("index");
@@ -1113,7 +1152,7 @@ fn sync(data: &Path, cat: &mut Catalog, b: &Binding, local: &Tree) -> Result<Val
     let original = local.clone();
     let mut next = b.clone();
     let mut local = local.clone();
-    if let Some(marker) = incoming.get(Path::new(MARKER)) {
+    if let Some(marker) = incoming.get(layout::marker(&incoming)) {
         let m: Value = serde_json::from_slice(marker)?;
         let declaration =
             super::portable::read(&b.project_root)?.ok_or_else(|| fail("项目恢复配置缺失"))?;
@@ -1125,7 +1164,9 @@ fn sync(data: &Path, cat: &mut Catalog, b: &Binding, local: &Tree) -> Result<Val
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| fail("远端知识库标识无效"))?
                     .into();
-                local.insert(PathBuf::from(MARKER), marker.clone());
+                let old_marker = layout::marker(&local).to_path_buf();
+                local.remove(&old_marker);
+                local.insert(layout::marker(&incoming).to_path_buf(), marker.clone());
             } else {
                 return Err(fail("远端子目录属于另一份知识库，请更换子目录"));
             }
@@ -1177,7 +1218,7 @@ fn sync(data: &Path, cat: &mut Catalog, b: &Binding, local: &Tree) -> Result<Val
             conflicts.join("、")
         )));
     }
-    if !merged.contains_key(Path::new(MARKER)) {
+    if !merged.contains_key(layout::marker(&merged)) {
         return Err(fail("知识库标识不能删除"));
     }
     // Never publish writes based on a stale copy of externally edited local files.

@@ -106,7 +106,7 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
         "report":input.previous_report.as_ref().map(|text| crate::resource::split_frontmatter(text).ok().flatten().map(|(_,body)|body).unwrap_or_else(||text.clone())),
         "project_id":input.project_id,
         "project_name":input.project_name,
-        "raw_path":input.path.join("imports/worktrees").join(&input.project_id),
+        "raw_path":location::layout::source_index_at(&input.path,&input.project_id).parent(),
         "pages":input.previous_documents,
         "excluded_documents":input.excluded_documents,
         "runners":runners(),
@@ -187,9 +187,7 @@ fn prompt(prepared: &Prepared) -> String {
         "source_documents":input.documents,
         "source_origins":input.origins,
         "collection":prepared.collection,
-        "previous_report":input.previous_report.as_ref().map(|_| if input.previous_documents.is_empty() {
-            PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))
-        } else { input.report_path.clone() }),
+        "previous_report":input.previous_report.as_ref().map(|_| if input.path.join(&input.report_path).is_file() { input.report_path.clone() } else if input.path.join(location::legacy_wiki_index(&input.project_id)).is_file() {location::legacy_wiki_index(&input.project_id)} else {PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))}),
         "previous_documents":input.previous_documents,
         "excluded_documents":input.excluded_documents,
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
@@ -448,9 +446,13 @@ mod tests {
     }
 
     fn note_path(p: &Prepared) -> PathBuf {
-        Path::new("projects")
-            .join(&p.input.project_id)
-            .join("learnings/migration.md")
+        if p.input.path.join(location::layout::HIDDEN_MARKER).is_file() {
+            "sources/notes/migration.md".into()
+        } else {
+            Path::new("projects")
+                .join(&p.input.project_id)
+                .join("learnings/migration.md")
+        }
     }
 
     fn test_report(body: &str) -> String {
@@ -472,6 +474,28 @@ mod tests {
             },
         )
         .unwrap();
+        // Recreate the old shared on-disk format, which remains readable until separated.
+        if library.join(location::layout::HIDDEN_MARKER).is_file() {
+            let mut marker: Value = serde_json::from_slice(
+                &std::fs::read(library.join(location::layout::HIDDEN_MARKER)).unwrap(),
+            )
+            .unwrap();
+            let owner = marker["project_id"].as_str().unwrap().to_string();
+            marker.as_object_mut().unwrap().remove("project_id");
+            std::fs::write(
+                library.join("ailoom-knowledge.json"),
+                serde_json::to_vec(&marker).unwrap(),
+            )
+            .unwrap();
+            std::fs::remove_file(library.join(location::layout::HIDDEN_MARKER)).unwrap();
+            let old = library.join("projects").join(owner);
+            std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+            std::fs::rename(library.join(".ailoom/project"), &old).unwrap();
+            if library.join("sources/notes").is_dir() {
+                std::fs::rename(library.join("sources/notes"), old.join("learnings")).unwrap();
+            }
+            std::fs::remove_file(library.join("README.md")).unwrap();
+        }
         let catalog = data.join("knowledge/bindings.json");
         let mut cat: Value = serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
         let marker: Value =
@@ -620,10 +644,14 @@ mod tests {
             2,
             "only current revisions are normal input"
         );
-        let copies = walkdir::WalkDir::new(library.join("imports"))
+        let copies = walkdir::WalkDir::new(library.join("sources"))
             .into_iter()
             .filter_map(std::result::Result::ok)
-            .filter(|e| e.path().extension().is_some_and(|s| s == "md"))
+            .filter(|e| {
+                e.path()
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().len() == 64)
+            })
             .count();
         assert_eq!(copies, 3, "old source revisions stay available");
         std::fs::rename(&feature, tmp.path().join("retired")).unwrap();
@@ -694,7 +722,7 @@ mod tests {
         let mut p = prepared(&data, &root);
         let original = std::fs::read(p.input.path.join(note_path(&p))).unwrap();
         for name in [
-            "projects/recovery/copy.md",
+            ".ailoom/project/recovery/copy.md",
             "resources/snapshot/tool.md",
             "docs/organized/other.md",
         ] {
@@ -732,7 +760,7 @@ mod tests {
             .previous_report
             .as_deref()
             .unwrap()
-            .contains("项目 ID"));
+            .contains("可直接编辑"));
         assert!(
             location::recall(&data, &root, "数据库迁移", 20).unwrap()["results"]
                 .as_array()
@@ -769,16 +797,32 @@ mod tests {
         legacy_link(&data, &other, &first.input.path);
         let second = prepared(&data, &other);
         assert_eq!(first.knowledge_id(), second.knowledge_id());
-        assert_ne!(first.report_key(), second.report_key());
+        let first = prepared(&data, &root);
+        assert!(publish(&data, &first, &test_report("第一个项目维护建议")).is_err());
+        assert!(publish(&data, &second, &test_report("第二个项目维护建议")).is_err());
+        for (root, name) in [(&root, "a"), (&other, "b")] {
+            let request = location::Request {
+                action: "separate".into(),
+                root: root.clone(),
+                path: Some(tmp.path().join(name)),
+                ..Default::default()
+            };
+            let preview = location::run(&data, &request).unwrap();
+            location::run(
+                &data,
+                &location::Request {
+                    execute: true,
+                    expected: preview["expected"].as_str().map(String::from),
+                    ..request
+                },
+            )
+            .unwrap();
+        }
+        let first = prepared(&data, &root);
+        let second = prepared(&data, &other);
         let a = publish(&data, &first, &test_report("第一个项目维护建议")).unwrap();
         let b = publish(&data, &second, &test_report("第二个项目维护建议")).unwrap();
         assert_ne!(a, b);
-        assert!(std::fs::read_to_string(a)
-            .unwrap()
-            .contains(&first.input.project_id));
-        assert!(std::fs::read_to_string(b)
-            .unwrap()
-            .contains(&second.input.project_id));
         assert_eq!(
             second.source_count(),
             0,
@@ -879,12 +923,7 @@ mod tests {
             .iter()
             .any(|h| h["excerpt"].as_str().unwrap().contains("SDK-only")));
         publish(&data, &app, &test_report("App integration contract")).unwrap();
-        let guide = app
-            .input
-            .path
-            .join("projects")
-            .join(&app.input.project_id)
-            .join("README.md");
+        let guide = app.input.path.join(".ailoom/project/README.md");
         let text = std::fs::read_to_string(guide).unwrap();
         assert!(text.contains("--action locate"));
         assert!(!text.contains(tmp.path().to_str().unwrap()));
@@ -921,6 +960,79 @@ mod tests {
             std::fs::read(current.input.path.join(&current.input.report_path)).unwrap(),
             entry
         );
+    }
+
+    #[test]
+    fn people_and_ai_edit_the_same_markdown_and_manual_pages_survive_organization() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        publish(&data, &p, &test_report("generated-contract")).unwrap();
+        assert_eq!(p.report_key(), Path::new("README.md"));
+        let topic = p.input.path.join("wiki/topic-migration.md");
+        let manual = p.input.path.join("wiki/index.md");
+        std::fs::write(&manual, "# 人工记录\nhandwritten-unique-contract").unwrap();
+        std::fs::write(
+            p.input.path.join("wiki/维护 说明.md"),
+            "# 维护说明\nhuman-text",
+        )
+        .unwrap();
+        std::fs::write(&topic, "# 修改后的取舍\nmanual-decision-unique").unwrap();
+        let hits = location::recall(&data, &root, "handwritten-unique-contract", 5).unwrap();
+        assert!(hits["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["id"] == "wiki/index.md"));
+        let p = prepared(&data, &root);
+        assert!(p
+            .input
+            .previous_documents
+            .iter()
+            .any(|p| p.path == Path::new("wiki/index.md")));
+        let stale = std::fs::read(&topic).unwrap();
+        std::fs::write(&topic, "# 再次人工更新\nlatest-human-contract").unwrap();
+        assert!(publish(&data, &p, &test_report("stale AI result")).is_err());
+        assert_ne!(std::fs::read(&topic).unwrap(), stale);
+        let next = prepared(&data, &root);
+        publish(
+            &data,
+            &next,
+            &test_report("new module").replace("topic-migration", "topic-other"),
+        )
+        .unwrap();
+        assert!(std::fs::read_to_string(&topic)
+            .unwrap()
+            .contains("latest-human-contract"));
+        assert!(std::fs::read_to_string(&manual)
+            .unwrap()
+            .contains("handwritten-unique-contract"));
+        let home = std::fs::read_to_string(p.input.path.join("README.md")).unwrap();
+        assert!(home.contains("wiki/index.md") && home.contains("wiki/topic-migration.md"));
+        assert!(home.contains("wiki/维护%20说明.md"));
+    }
+
+    #[test]
+    fn interrupted_publication_recovers_but_never_overwrites_later_human_edits() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let home = p.input.path.join("README.md");
+        let before = std::fs::read(&home).unwrap();
+        let after = b"# partial AI publication";
+        let journal = p.input.path.join(".ailoom/wiki-transaction.json");
+        let record = json!({"before":{"README.md":before},"after":{"README.md":crate::ids::sha256_hex(after)}});
+        std::fs::write(&journal, serde_json::to_vec(&record).unwrap()).unwrap();
+        std::fs::write(&home, after).unwrap();
+        prepared(&data, &root);
+        assert_eq!(std::fs::read(&home).unwrap(), before);
+        assert!(!journal.exists());
+        std::fs::write(&journal, serde_json::to_vec(&record).unwrap()).unwrap();
+        std::fs::write(&home, "# later human update").unwrap();
+        assert!(location::organization_input(&data, &root).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&home).unwrap(),
+            "# later human update"
+        );
+        assert!(journal.exists());
     }
 
     #[test]
@@ -972,9 +1084,10 @@ mod tests {
             1
         );
         assert!(location::recall(&data, &root, "迁移", 5).is_ok());
-        std::fs::create_dir_all(p.input.path.join("wiki/index.md")).unwrap();
+        std::fs::remove_file(p.input.path.join("sources/README.md")).unwrap();
+        std::fs::create_dir_all(p.input.path.join("sources/README.md")).unwrap();
         assert!(publish(&data, &current, &test_report("must-not-commit")).is_err());
-        assert!(!p.input.path.join(&p.input.report_path).exists());
+        assert!(p.input.path.join(&p.input.report_path).exists());
         assert!(prepared(&data, &root).input.previous_documents.is_empty());
     }
 
@@ -988,7 +1101,7 @@ mod tests {
             .unwrap_err()
             .message
             .contains("内容已变化"));
-        assert!(!dest.exists());
+        assert!(dest.exists());
         let p = prepared(&data, &root);
         publish(&data, &p, &test_report("上次结果")).unwrap();
         let p = prepared(&data, &root);
@@ -1059,7 +1172,7 @@ mod tests {
         assert!(prepare(&data, &root, "codex", &"长".repeat(2001)).is_err());
         let p = prepared(&data, &root);
         let prompt = prompt(&p);
-        assert!(prompt.contains("learnings/migration.md"));
+        assert!(prompt.contains("sources/notes/migration.md"));
         assert!(prompt.contains("数据库维护"));
         assert!(!prompt.contains("resources/snapshot"));
     }
@@ -1087,7 +1200,7 @@ args = sys.argv[1:]
 assert args[:6] == ['--no-daemon', '-a', 'never', 'exec', '--sandbox', 'read-only']
 assert args[-1] == '-'
 task = sys.stdin.read()
-assert 'learnings/migration.md' in task
+assert 'sources/notes/migration.md' in task
 assert '数据库维护' in task
 pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# 仓库维护知识与建议\n迁移后验证行数。', encoding='utf-8')
 print('this is not the final report')"#,
@@ -1096,8 +1209,8 @@ print('this is not the final report')"#,
         let report = generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap();
         assert_eq!(report, "# 仓库维护知识与建议\n迁移后验证行数。");
         assert!(
-            !p.input.path.join(&p.input.report_path).exists(),
-            "生成过程不写入知识库"
+            p.input.path.join(&p.input.report_path).is_file(),
+            "生成过程保留初始化首页"
         );
         publish(&data, &p, &test_report(&report)).unwrap();
     }
@@ -1150,6 +1263,6 @@ print('this is not the final report')"#,
             std::fs::read(p.input.path.join(note_path(&p))).unwrap(),
             original
         );
-        assert!(!p.input.path.join(&p.input.report_path).exists());
+        assert!(p.input.path.join(&p.input.report_path).exists());
     }
 }
