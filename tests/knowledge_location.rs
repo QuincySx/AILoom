@@ -38,6 +38,13 @@ fn move_to(data: &Path, root: &Path, dest: &Path) -> Value {
     r.expected = p["expected"].as_str().map(str::to_owned);
     location::run(data, &r).unwrap()
 }
+fn notes(root: &Path) -> PathBuf {
+    let id = ailoom::knowledge::portable::read(root)
+        .unwrap()
+        .unwrap()
+        .project_id;
+    Path::new("projects").join(id).join("learnings")
+}
 fn note(data: &Path, root: &Path, dir: &Path, name: &str, body: &str) {
     let f = dir.join("draft.md");
     std::fs::write(&f, body).unwrap();
@@ -66,10 +73,10 @@ fn folder_move_preserves_content_and_cli_read_write_location() {
         result["backup"],
         first.canonicalize().unwrap().to_str().unwrap()
     );
-    assert!(first.join("learnings/lesson.md").exists());
+    assert!(first.join(notes(&root).join("lesson.md")).exists());
     note(&data, &root, t.path(), "after", "# 新位置\n迁移后的知识");
-    assert!(next.join("learnings/after.md").exists());
-    assert!(!first.join("learnings/after.md").exists());
+    assert!(next.join(notes(&root).join("after.md")).exists());
+    assert!(!first.join(notes(&root).join("after.md")).exists());
     assert_eq!(
         location::recall(&data, &root, "迁移", 5).unwrap()["results"]
             .as_array()
@@ -214,13 +221,13 @@ fn git_sync_round_trip_after_move_preserves_other_paths_and_reports_conflicts() 
     note(&data, &root, t.path(), "second", "# Second");
     location::run(&data, &req("sync", &root, None)).unwrap();
     location::run(&data2, &req("sync", &root3, None)).unwrap();
-    assert!(c.join("learnings/second.md").is_file());
-    std::fs::write(moved.join("learnings/first.md"), "changed A").unwrap();
-    std::fs::write(c.join("learnings/first.md"), "changed B").unwrap();
+    assert!(c.join(notes(&root).join("second.md")).is_file());
+    std::fs::write(moved.join(notes(&root).join("first.md")), "changed A").unwrap();
+    std::fs::write(c.join(notes(&root).join("first.md")), "changed B").unwrap();
     location::run(&data, &req("sync", &root, None)).unwrap();
     assert!(location::run(&data2, &req("sync", &root3, None)).is_err());
     assert_eq!(
-        std::fs::read_to_string(c.join("learnings/first.md")).unwrap(),
+        std::fs::read_to_string(c.join(notes(&root).join("first.md"))).unwrap(),
         "changed B"
     );
 }
@@ -264,7 +271,7 @@ fn cli_init_save_recall_and_maintenance_follow_location() {
         "--action",
         "archive",
         "--id",
-        "learnings/demo.md",
+        notes(&root).join("demo.md").to_str().unwrap(),
     ]);
     move_to(&data, &root, &next);
     assert_eq!(
@@ -279,7 +286,7 @@ fn cli_init_save_recall_and_maintenance_follow_location() {
         "--action",
         "restore",
         "--id",
-        "learnings/demo.md",
+        notes(&root).join("demo.md").to_str().unwrap(),
     ]);
     assert_eq!(
         location::recall(&data, &root, "迁移", 5).unwrap()["results"]
@@ -290,7 +297,7 @@ fn cli_init_save_recall_and_maintenance_follow_location() {
     );
     run(&["contribute", "--file", f.to_str().unwrap()]);
     assert_eq!(
-        std::fs::read_dir(next.join("learnings")).unwrap().count(),
+        std::fs::read_dir(next.join(notes(&root))).unwrap().count(),
         2
     );
 }
@@ -372,7 +379,7 @@ fn failed_sync_retains_local_notes_and_does_not_claim_synced() {
     location::run(&data, &r).unwrap();
     note(&data, &root, t.path(), "offline", "# Offline knowledge");
     assert!(location::run(&data, &req("sync", &root, None)).is_err());
-    assert!(dest.join("learnings/offline.md").is_file());
+    assert!(dest.join(notes(&root).join("offline.md")).is_file());
     assert_eq!(
         location::run(&data, &req("status", &root, None)).unwrap()["pending"],
         true
@@ -408,8 +415,14 @@ fn git_subfolders_are_isolated_and_business_branch_is_untouched() {
         &business,
         &["ls-tree", "-r", "--name-only", "ailoom-knowledge"],
     );
-    assert!(files.contains("projects/a/learnings/note.md"));
-    assert!(files.contains("projects/b/learnings/note.md"));
+    assert!(files.contains(&format!(
+        "projects/a/{}/note.md",
+        notes(&t.path().join("a")).display()
+    )));
+    assert!(files.contains(&format!(
+        "projects/b/{}/note.md",
+        notes(&t.path().join("b")).display()
+    )));
     assert!(!files.contains("code.txt"));
 }
 #[test]
@@ -431,7 +444,7 @@ fn migration_and_sync_are_one_flow_with_local_success_on_network_failure() {
     assert_eq!(v["moved"], true);
     assert_eq!(v["synced"], false);
     assert!(v["sync_error"].is_string());
-    assert!(old.join("learnings/note.md").exists());
+    assert!(old.join(notes(&root).join("note.md")).exists());
     assert_eq!(
         location::recall(&data, &root, "Migration", 5).unwrap()["results"]
             .as_array()

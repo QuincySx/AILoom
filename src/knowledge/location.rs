@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 pub mod ingest;
+mod relations;
+mod wiki;
 
 const MARKER: &str = "ailoom-knowledge.json";
 type Tree = BTreeMap<PathBuf, Vec<u8>>;
@@ -238,11 +240,17 @@ fn binding<'a>(cat: &'a Catalog, id: &str) -> Result<&'a Binding> {
 /// 整理只消费知识文档，不把恢复配置、资源快照或此前生成的整理结果当原始经验。
 pub(super) struct OrganizationInput {
     pub knowledge_id: String,
+    pub project_id: String,
+    pub project_name: String,
     pub root: PathBuf,
     pub path: PathBuf,
     pub documents: Vec<PathBuf>,
     pub report_path: PathBuf,
     pub previous_report: Option<String>,
+    pub previous_documents: Vec<wiki::Page>,
+    pub excluded_documents: Vec<PathBuf>,
+    pub related_projects: Vec<relations::RelatedProject>,
+    pub related_warnings: Vec<String>,
     pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     pub worktrees: Vec<ingest::Source>,
     fingerprint: String,
@@ -266,34 +274,61 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     let project_id = super::portable::read(&root)?
         .map(|d| d.project_id)
         .unwrap_or(id);
-    let report_path = PathBuf::from("docs/organized").join(format!("{project_id}.md"));
+    let related = relations::related(&cat, &project_id, &root);
+    let report_path = wiki::base(&project_id).join("index.md");
     let origins = ingest::current_documents(&tree, &project_id)?;
-    let documents: BTreeMap<PathBuf, Vec<u8>> = tree
-        .into_iter()
-        .filter(|(p, _)| {
-            p.extension().and_then(|s| s.to_str()) == Some("md")
+    let previous_documents = wiki::current(&tree, &project_id)?;
+    let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
+    let excluded_documents = tree
+        .iter()
+        .filter(|(p, bytes)| {
+            p.extension().is_some_and(|e| e == "md")
+                && !p.starts_with("wiki")
                 && !p.starts_with("projects")
+                && !p.starts_with("imports")
                 && !p.starts_with("resources")
                 && !p.starts_with("docs/organized")
-                && (!p.starts_with(ingest::PREFIX) || origins.contains_key(p))
-                && !archived.iter().any(|id| p == Path::new(id))
+                && !wiki::source_owned(p, bytes, &project_id, single_owner)
         })
+        .map(|(p, _)| p.clone())
         .collect();
-    let previous_report = match std::fs::read_to_string(b.path.join(&report_path)) {
-        Ok(text) => Some(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-    };
+    let documents: BTreeMap<PathBuf, Vec<u8>> = tree
+        .iter()
+        .filter(|(p, _)| {
+            p.extension().and_then(|s| s.to_str()) == Some("md")
+                && (origins.contains_key(*p)
+                    || wiki::source_owned(p, &tree[*p], &project_id, single_owner))
+                && !archived.iter().any(|id| *p == Path::new(id))
+        })
+        .map(|(p, v)| (p.clone(), v.clone()))
+        .collect();
+    let legacy_path = Path::new("docs/organized").join(format!("{project_id}.md"));
+    let previous_report = tree
+        .get(&report_path)
+        .or_else(|| tree.get(&legacy_path))
+        .map(|bytes| String::from_utf8(bytes.clone()))
+        .transpose()
+        .map_err(|_| fail("旧整理稿不是 UTF-8 文本"))?;
+    let previous_hashes: BTreeMap<_, _> = previous_documents
+        .iter()
+        .map(|p| (p.path.clone(), crate::ids::sha256_hex(&tree[&p.path])))
+        .collect();
     let fingerprint = crate::ids::sha256_hex(&serde_json::to_vec(
-        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report,"origins":origins}),
+        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report,"page_set":previous_documents,"pages":previous_hashes,"origins":origins}),
     )?);
     Ok(OrganizationInput {
         knowledge_id: b.id.clone(),
+        project_id,
+        project_name: wiki::project_name(&root),
         root,
         path: b.path.clone(),
         documents: documents.into_keys().collect(),
         report_path,
         previous_report,
+        previous_documents,
+        excluded_documents,
+        related_projects: related.projects,
+        related_warnings: related.warnings,
         origins,
         worktrees,
         fingerprint,
@@ -333,16 +368,70 @@ pub(super) fn publish_organization(
             "整理期间知识库位置或内容已变化，结果已保留在操作记录中，请重新整理",
         ));
     }
-    let dest = current.path.join(&input.report_path);
     let mut tree = scan(&current.path)?;
-    tree.insert(input.report_path.clone(), report.as_bytes().to_vec());
+    let mut files = wiki::compile(input, report, &tree)?;
+    for (p, v) in &files {
+        tree.insert(p.clone(), v.clone());
+    }
+    let cat = load(data)?;
+    let (id, _) = project(data, &input.root, &cat)?;
+    files.extend(wiki::catalog(&tree, &cat, binding(&cat, &id)?)?);
+    for (p, v) in &files {
+        tree.insert(p.clone(), v.clone());
+    }
     if tree.len() > 10000 || tree.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024 {
         return Err(fail(
             "整理结果超出知识库容量，本次草稿保留在操作记录中，原有结果保留",
         ));
     }
-    crate::sync_common::atomic_write(&dest, report.as_bytes())?;
+    // Write an immutable edition first; the single project index is the commit.
+    let entry = files.remove(&input.report_path).unwrap();
+    let catalog = files.remove(Path::new("wiki/index.md")).unwrap();
+    write_tree(&current.path, &files)?;
+    let dest = current.path.join(&input.report_path);
+    crate::sync_common::atomic_write(&current.path.join("wiki/index.md"), &catalog)?;
+    crate::sync_common::atomic_write(&dest, &entry)?;
     Ok(dest)
+}
+
+/// Upgrade an existing report structurally, without regenerating or approving its claims.
+pub fn migrate_organization(data: &Path, root: &Path) -> Result<Value> {
+    let input = organization_input(data, root)?;
+    if !input.previous_documents.is_empty() {
+        return Ok(json!({"migrated":false,"reason":"already_paged"}));
+    }
+    let Some(report) = &input.previous_report else {
+        let _guard = lock(data)?;
+        let cat = load(data)?;
+        let (id, _) = project(data, root, &cat)?;
+        let b = binding(&cat, &id)?;
+        let tree = checked_tree(b)?;
+        let files = wiki::catalog(&tree, &cat, b)?;
+        write_tree(&b.path, &files)?;
+        return Ok(
+            json!({"migrated":false,"reason":"no_report","catalog":b.path.join("wiki/index.md")}),
+        );
+    };
+    let path = publish_organization(data, &input, report)?;
+    Ok(json!({"migrated":true,"index":path,"review_status":"unreviewed"}))
+}
+
+pub fn organization_page(data: &Path, root: &Path, page: &Path) -> Result<Value> {
+    let _guard = lock(data)?;
+    let input = organization_input_unlocked(data, root)?;
+    if !input.previous_documents.iter().any(|p| p.path == page) {
+        return Err(fail("该页面不属于当前项目的当前 Wiki"));
+    }
+    let tree = scan(&input.path)?;
+    let body = std::str::from_utf8(
+        tree.get(page)
+            .ok_or_else(|| fail("Wiki 页面已变化，请刷新索引"))?,
+    )
+    .map_err(|_| fail("Wiki 页面不是 UTF-8 文本"))?;
+    let display = crate::resource::split_frontmatter(body)?
+        .map(|(_, text)| text)
+        .unwrap_or_else(|| body.to_string());
+    Ok(json!({"path":page,"body":display}))
 }
 #[derive(Default, Deserialize)]
 pub struct Request {
@@ -724,7 +813,7 @@ pub fn save(data: &Path, root: &Path, file: &Path, name: &str) -> Result<Value> 
     std::str::from_utf8(&content).map_err(|_| fail("知识文档必须是 UTF-8 文本"))?;
     let _guard = lock(data)?;
     let cat = load(data)?;
-    let (id, _) = project(data, root, &cat)?;
+    let (id, owner) = project(data, root, &cat)?;
     let b = binding(&cat, &id)?;
     checked_tree(b)?;
     let name = if name.ends_with(".md") {
@@ -732,7 +821,13 @@ pub fn save(data: &Path, root: &Path, file: &Path, name: &str) -> Result<Value> 
     } else {
         format!("{name}.md")
     };
-    let dest = b.path.join("learnings").join(name);
+    let project_id = ingest::project_key(&id, &owner)?;
+    let dest = b
+        .path
+        .join("projects")
+        .join(&project_id)
+        .join("learnings")
+        .join(name);
     // No silent overwrite of another note; repeated identical saves are idempotent.
     if dest.exists() && std::fs::read(&dest)? != content {
         return Err(fail("同名知识已存在，请使用新名称"));
@@ -756,7 +851,11 @@ pub fn recall_filtered(
     let b = binding(&cat, &id)?;
     let tree = checked_tree(b)?;
     let ctx = state_context(data, root, b)?;
-    let origins = ingest::current_documents(&tree, &ingest::project_key(&id, &owner)?)?;
+    let project_id = ingest::project_key(&id, &owner)?;
+    let origins = ingest::current_documents(&tree, &project_id)?;
+    let pages = wiki::current(&tree, &project_id)?;
+    let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
+    let legacy = Path::new("docs/organized").join(format!("{project_id}.md"));
     let archived = super::feedback::archived_ids(&ctx);
     let mut index = super::index::KnowledgeIndex {
         meta: super::index::IndexMeta {
@@ -775,7 +874,24 @@ pub fn recall_filtered(
         if p.extension().and_then(|s| s.to_str()) != Some("md") {
             continue;
         }
-        if p.starts_with(ingest::PREFIX) && !origins.contains_key(p) {
+        // Once a wiki exists, normal retrieval reads its knowledge pages. The
+        // immutable originals and full ledger remain available through evidence links.
+        if !pages.is_empty()
+            && (origins.contains_key(p)
+                || pages.iter().any(|page| {
+                    page.path == *p && ["sources", "changes"].contains(&page.kind.as_str())
+                }))
+        {
+            continue;
+        }
+        let current_page = p == &wiki::base(&project_id).join("index.md")
+            || pages.iter().any(|page| page.path == *p);
+        let legacy_page = pages.is_empty() && p == &legacy;
+        if !current_page
+            && !legacy_page
+            && !origins.contains_key(p)
+            && !wiki::source_owned(p, v, &project_id, single_owner)
+        {
             continue;
         }
         let Ok(body) = std::str::from_utf8(v) else {
@@ -791,15 +907,16 @@ pub fn recall_filtered(
             .unwrap_or(&id)
             .trim_start_matches("# ")
             .to_string();
-        let document_kind = if p.components().any(|c| c.as_os_str() == "docs") {
-            "doc"
-        } else if p.components().any(|c| c.as_os_str() == "rules") {
-            "rule"
-        } else if p.components().any(|c| c.as_os_str() == "skills") {
-            "skill"
-        } else {
-            "learning"
-        };
+        let document_kind =
+            if current_page || legacy_page || p.components().any(|c| c.as_os_str() == "docs") {
+                "doc"
+            } else if p.components().any(|c| c.as_os_str() == "rules") {
+                "rule"
+            } else if p.components().any(|c| c.as_os_str() == "skills") {
+                "skill"
+            } else {
+                "learning"
+            };
         if kind.is_some_and(|k| k != document_kind) {
             continue;
         }
@@ -840,7 +957,13 @@ pub fn recall_filtered(
             value
         })
         .collect();
-    Ok(json!({"results":results,"knowledge_id":b.id,"query":query}))
+    let related = relations::related(&cat, &project_id, &owner);
+    Ok(
+        json!({"results":results,"knowledge_id":b.id,"project_id":project_id,"query":query,
+        "source_index":b.path.join("imports/worktrees").join(&project_id).join("index.md"),
+        "wiki_index":b.path.join(wiki::base(&project_id)).join("index.md"),
+        "related_projects":related.projects,"related_warnings":related.warnings}),
+    )
 }
 
 fn state_context(data: &Path, root: &Path, b: &Binding) -> Result<crate::appctx::AppContext> {

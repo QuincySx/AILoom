@@ -137,7 +137,7 @@ fn concurrent_feedback_cli_returns_atomic_duplicate_and_conflict_results() {
     ));
     let lesson = root.join("lesson.md");
     std::fs::write(&lesson, "---\ntitle: cache lesson\n---\n# cache lesson\n").unwrap();
-    success(cli(
+    let saved = success(cli(
         root,
         &data,
         &ws,
@@ -151,6 +151,11 @@ fn concurrent_feedback_cli_returns_atomic_duplicate_and_conflict_results() {
             "lesson",
         ],
     ));
+    let note_id = Path::new(saved["path"].as_str().unwrap())
+        .strip_prefix(kb.canonicalize().unwrap())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     success(cli(
         root,
         &data,
@@ -169,13 +174,14 @@ fn concurrent_feedback_cli_returns_atomic_duplicate_and_conflict_results() {
                     let barrier = Arc::clone(&barrier);
                     let data = &data;
                     let ws = &ws;
+                    let note_id = &note_id;
                     scope.spawn(move || {
                         let mut args = vec![
                             "knowledge",
                             "--action",
                             "feedback",
                             "--id",
-                            "learnings/lesson.md",
+                            note_id.as_str(),
                             "--feedback-id",
                             if mixed { "mixed-event" } else { "same-event" },
                         ];
@@ -212,7 +218,7 @@ fn concurrent_feedback_cli_returns_atomic_duplicate_and_conflict_results() {
         assert_eq!(conflicts, if mixed { 4 } else { 0 });
     }
     let state: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    let counts = state["feedback"]["learnings/lesson.md"].as_array().unwrap();
+    let counts = state["feedback"][&note_id].as_array().unwrap();
     assert_eq!(counts.iter().map(|n| n.as_u64().unwrap()).sum::<u64>(), 2);
     assert_eq!(state["feedback_events"].as_object().unwrap().len(), 2);
 }

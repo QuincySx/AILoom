@@ -158,9 +158,13 @@ fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
     );
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["source_count"], 1, "恢复配置不计入经验数量");
-    let report = std::path::Path::new(result["report_path"].as_str().unwrap());
+    // Previously generated v1 reports remain readable until structurally migrated.
+    let report = tmp
+        .path()
+        .join("knowledge/docs/organized")
+        .join(format!("{}.md", result["project_id"].as_str().unwrap()));
     std::fs::create_dir_all(report.parent().unwrap()).unwrap();
-    std::fs::write(report, "# 已有维护建议\n保留这份结果").unwrap();
+    std::fs::write(&report, "# 已有维护建议\n保留这份结果").unwrap();
     let (status, result) = call(
         port,
         Some(token),

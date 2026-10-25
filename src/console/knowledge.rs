@@ -42,6 +42,16 @@ pub(super) fn post_knowledge(state: &Arc<ServerState>, req: &Request) -> Respons
             if r.action == "organization-status" {
                 return super::knowledge_organize::status(state, &r.root);
             }
+            if r.action == "organization-page" {
+                let Some(page) = req.body["page"].as_str() else {
+                    return Response::json(400, json!({"error":"请选择知识页面"}));
+                };
+                return collection_response(crate::knowledge::location::organization_page(
+                    &state.data_root,
+                    &r.root,
+                    Path::new(page),
+                ));
+            }
             if r.action == "ingestion-status" {
                 return collection_response(crate::knowledge::location::ingest::status(
                     &state.data_root,

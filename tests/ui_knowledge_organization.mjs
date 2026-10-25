@@ -10,7 +10,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
       root,injection,initialized:true,sourceCount:3,
       report:'# 已保存的维护建议\n\n旧报告保留原始记录与出处。\n'+injection,
       runners:[{id:'codex',name:'Codex',available:true,executable:'/fixture/bin/codex'},{id:'claude',name:'Claude Code',available:true,executable:'/fixture/bin/claude'},{id:'pi',name:'Pi',available:false,executable:null},{id:'cursor',name:'Cursor',available:true,executable:'/fixture/bin/agent'}],
-      calls:{status:0,start:[],poll:[],cancel:[],checkpoint:0},jobs:[],latest:null,
+      calls:{status:0,start:[],poll:[],cancel:[],checkpoint:0,pages:[]},jobs:[],latest:null,
       failStatus:0,failStart:0,failPoll:0,failCancel:0,holdStart:false,holdStatus:false,holdCancel:false,
     };
     fixture.finish=(id,status,report,saved=false)=>{
@@ -27,11 +27,12 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
       if(body.action==='ingestion-status')return {sources:[],document_count:0,revision_count:0,knowledge_path:'/fixture/Knowledge'};
       if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:'/fixture/Knowledge'}:null,default_path:'/fixture/Knowledge'};
       if(body.action==='checkpoint'){fixture.calls.checkpoint++;return {};}
+      if(body.action==='organization-page'){fixture.calls.pages.push(body.page);return {path:body.page,body:'# 独立模块知识\n'+injection};}
       if(body.action==='organization-status'){
         fixture.calls.status++;
         if(fixture.holdStatus)await new Promise(resolve=>fixture.releaseStatus=resolve);
         if(fixture.failStatus-- >0)throw Error('读取整理状态失败 '+injection);
-        return structuredClone({knowledge_id:'fixture-knowledge',source_count:fixture.sourceCount,report_key:'maintenance/recommendations',report_path:'/fixture/Knowledge/maintenance/recommendations.md',report:fixture.report,runners:fixture.runners,latest_job:fixture.latest});
+        return structuredClone({knowledge_id:'fixture-knowledge',source_count:fixture.sourceCount,report_key:'maintenance/recommendations',report_path:'/fixture/Knowledge/maintenance/recommendations.md',report:fixture.report,project_id:'app-project-id',project_name:'App '+injection,raw_path:'/fixture/Knowledge/imports/worktrees/app-project-id',pages:[{path:'wiki/app-project-id/editions/current/topics/topic-core.md',title:'核心模块 '+injection,kind:'topic'}],related_projects:[{repo_id:'sdk-project',name:'JS SDK '+injection,index_path:'/fixture/SDK/wiki/index.md',packages:[{package:'@example/sdk',required:'1.2.0'}]}],runners:fixture.runners,latest_job:fixture.latest});
       }
       if(body.action==='organize'){
         fixture.calls.start.push(body);
@@ -84,7 +85,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
     return await evaluate('window.knowledgeOrganization.latest.id');
   }
   async function noInjection() {
-    await assert("!window.knowledgeInjection && !document.querySelector('.knowledge-organization img,.tasks-page img')",'Report, progress or error text was interpreted as HTML');
+  await assert("!window.knowledgeInjection && !document.querySelector('.knowledge-organization img,.tasks-page img')",'Report, progress or error text was interpreted as HTML');
   }
   const layouts=[];
   async function capture(name,width,anchor=null) {
@@ -104,6 +105,14 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   }
 
   await waitFor("document.querySelector('[data-organize-count]')?.textContent.includes('已有 3 篇知识资料')");
+    await waitFor("!!document.querySelector('[data-wiki-page]')");
+  await assert("document.querySelector('[data-organize-project]').textContent.includes('App ') && document.querySelector('[data-organize-related] a').getAttribute('href')==='#/projects/sdk-project/knowledge'",'Project identity or dependency navigation is missing');
+  await evaluate("document.querySelector('[data-wiki-page]').click()");
+  await waitFor("document.querySelector('[data-organize-report] pre').textContent.includes('独立模块知识')");
+  await assert("window.knowledgeOrganization.calls.pages.length===1 && !window.knowledgeInjection && !document.querySelector('.knowledge-organization img')",'Independent page is not loaded safely');
+  await evaluate("document.querySelector('[data-wiki-index]').click()");
+  await assert("document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Project index is not restored');
+
   await assert("document.querySelector('[data-organize-runner]').value==='codex' && !document.querySelector('[data-organize-start]').disabled",'Codex is not the available default runner');
   await assert("document.querySelector('[data-organize-default]').textContent.includes('无需填写提示词或挑选文档') && !document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default organization requires instructions or shows the supplemental input');
   await assert("document.querySelectorAll('[data-organize-runner] option').length===4 && document.querySelector('[data-organize-runner] option[value=pi]').disabled && !document.querySelector('[data-organize-runner] option[value=claude]').disabled && !document.querySelector('[data-organize-runner] option[value=cursor]').disabled",'Runner detection does not expose installed alternatives only');

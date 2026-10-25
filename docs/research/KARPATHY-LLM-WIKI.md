@@ -1,3 +1,12 @@
+---
+repo: karpathy/442a6bf555914893e9891c11519de94f
+generated: 2026-10-23
+updated: 2026-10-25
+type: implementation-study
+source_ref: ac46de1ad27f92b28ac95459c782c07f6b8c964a
+resolved_sha: ac46de1ad27f92b28ac95459c782c07f6b8c964a
+---
+
 # Karpathy LLM Wiki：整理提示词的适配依据
 
 核实日期：2026-10-23。范围：为既有的单 Markdown 整理报告改进提示词，不扩展存储或执行权限。
@@ -10,6 +19,16 @@
 - 成果包括来源摘要、实体、概念、比较及综合。新资料应更新已有认识、关联和矛盾，而非只增加摘要。[The core idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#the-core-idea)
 - Ingest 整合来源；query 引用证据并可保存有价值的回答；lint 检查矛盾、过时结论、孤立页面、缺失关联和资料缺口。[Operations](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#operations)
 - `index.md` 按内容导航；`log.md` 追加记录演进。具体目录、格式和工具均可按领域选择。[Indexing and logging](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#indexing-and-logging) · [Note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#note)
+
+## 结构核对：多文件 wiki 与单报告的差异
+
+2026-10-25 增量核对同一固定 revision，问题限于资料隔离、页面粒度和维护机制。以下是原始模式；后文单报告适配记录 2026-10-23 的接口选择，不是原文的文件结构。
+
+- **资料隔离**：raw sources 是不可被模型改写的事实来源；wiki 是模型持续维护的派生 Markdown 页面集合；schema 另行规定组织和操作。原文规定职责，没有给权限隔离实现，也没有强制使用 `raw/`、`wiki/` 这些目录名。[Architecture，固定版本](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#architecture)
+- **文件粒度**：正文明确列举来源摘要、实体、概念、比较、总览和综合等页面，并要求更新已有页面及其关联。按主题形成可独立维护的知识单元符合该模式；“每个业务模块一个文件”则是领域设计选择，原文没有规定。[Core idea / Architecture，固定版本](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#the-core-idea)
+- **索引与更新**：`index.md` 按类别逐页给链接和一句摘要；查询先读索引再读相关页。ingest 更新来源摘要、相关实体/概念页和索引，向 `log.md` 追加事件；lint 查跨页冲突、过时结论、孤页和缺失关联。这是持续修改一组互链页面，单篇报告里的目录和演进摘要只承接其中部分职责。[Operations](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#operations) · [Indexing and logging](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#indexing-and-logging)
+
+不能直接照搬固定目录树、业务模块划分或全量重写策略：作者明确把目录、schema、页面格式和工具留给具体领域。原文也未提供删除、重命名、事务提交及并发更新协议；这些需要目标系统另行定义。索引适用于约百份来源、数百页的说法是作者经验，不能当成本项目的容量或质量保证。[Note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#note) · [Indexing and logging](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f/ac46de1ad27f92b28ac95459c782c07f6b8c964a#indexing-and-logging)
 
 ## AILoom 提示词适配建议
 

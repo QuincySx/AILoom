@@ -119,7 +119,8 @@ pub(super) fn persist_job(data_root: &Path, job: &Job) {
     let dir = jobs_dir(data_root);
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(bytes) = serde_json::to_vec_pretty(job) {
-        let _ = std::fs::write(dir.join(format!("{}.json", job.id)), bytes);
+        // Readers (including reconnecting knowledge tasks) must never see truncated JSON.
+        let _ = crate::sync_common::atomic_write(&dir.join(format!("{}.json", job.id)), &bytes);
     }
 }
 

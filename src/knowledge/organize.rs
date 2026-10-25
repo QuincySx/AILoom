@@ -16,7 +16,7 @@ const RUNNERS: &[(&str, &str, &str)] = &[
 ];
 const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
-// Karpathy LLM Wiki 的单文档适配依据见 docs/research/KARPATHY-LLM-WIKI.md。
+// 模型返回编纂传输稿，应用按稳定主题 ID 保存为独立 Wiki 页面。
 const ORGANIZATION_PROMPT: &str = include_str!("res/organize-wiki.md");
 const DEFAULT_FOCUS: &str =
     "全面整理本次全部来源中的业务知识、开发流程、模块约束、决策取舍和问题经验，保留当时背景、适用条件、演变与出处，不额外限定主题。";
@@ -103,7 +103,14 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
         "knowledge_id":input.knowledge_id,
         "source_count":input.documents.len(),
         "report_path":input.path.join(&input.report_path),
-        "report":input.previous_report,
+        "report":input.previous_report.as_ref().map(|text| crate::resource::split_frontmatter(text).ok().flatten().map(|(_,body)|body).unwrap_or_else(||text.clone())),
+        "project_id":input.project_id,
+        "project_name":input.project_name,
+        "raw_path":input.path.join("imports/worktrees").join(&input.project_id),
+        "pages":input.previous_documents,
+        "excluded_documents":input.excluded_documents,
+        "related_projects":input.related_projects,
+        "related_warnings":input.related_warnings,
         "runners":runners(),
         "report_key":input.report_path,
         "worktrees":input.worktrees,
@@ -176,11 +183,19 @@ fn prompt(prepared: &Prepared) -> String {
     let focus = prepared.focus.trim();
     let manifest = json!({
         "repository":input.root,
+        "project_id":input.project_id,
+        "project_name":input.project_name,
         "knowledge_directory":input.path,
         "source_documents":input.documents,
         "source_origins":input.origins,
         "collection":prepared.collection,
-        "previous_report":input.previous_report.as_ref().map(|_| &input.report_path),
+        "previous_report":input.previous_report.as_ref().map(|_| if input.previous_documents.is_empty() {
+            PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))
+        } else { input.report_path.clone() }),
+        "previous_documents":input.previous_documents,
+        "excluded_documents":input.excluded_documents,
+        "related_projects":input.related_projects,
+        "related_warnings":input.related_warnings,
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
         "generated_at":crate::ids::now_iso(),
         "schema":"ailoom-repository-wiki/v1",
@@ -436,6 +451,16 @@ mod tests {
         }
     }
 
+    fn note_path(p: &Prepared) -> PathBuf {
+        Path::new("projects")
+            .join(&p.input.project_id)
+            .join("learnings/migration.md")
+    }
+
+    fn test_report(body: &str) -> String {
+        format!("# 仓库开发知识\n\n## index\n\n[迁移](#topic-migration)\n\n## overview\n\n测试资料范围。\n\n## topics\n\n### topic-migration\n\n主题：数据库迁移。\n\n{body}\n\n## maintenance\n\n参见[迁移](#topic-migration)。\n\n## questions\n\n无。\n\n## sources\n\n测试来源。\n\n## changes\n\n首次编纂。\n\n## validation\n\n尚未经独立评估。\n")
+    }
+
     fn git(root: &Path, args: &[&str]) {
         let output = Command::new("git")
             .args([
@@ -579,7 +604,7 @@ mod tests {
             2,
             "removed worktree evidence remains available"
         );
-        publish(&data, &p, "# Collected development knowledge").unwrap();
+        publish(&data, &p, &test_report("Collected development knowledge")).unwrap();
     }
 
     #[test]
@@ -616,7 +641,8 @@ mod tests {
         let ctx = location::maintenance_context(&data, &root)
             .unwrap()
             .unwrap();
-        super::super::feedback::archive(&ctx, "learnings/migration.md").unwrap();
+        let p = prepared(&data, &root);
+        super::super::feedback::archive(&ctx, note_path(&p).to_str().unwrap()).unwrap();
         std::fs::write(root.join("unreadable.md"), [0xff, 0xfe]).unwrap();
         let mut p = prepared(&data, &root);
         let result = collect_sources(&data, &mut p, || false, |_| {}).unwrap();
@@ -637,7 +663,7 @@ mod tests {
     fn sources_exclude_recovery_and_generated_reports_and_publish_is_searchable() {
         let (_tmp, root, data) = fixture();
         let mut p = prepared(&data, &root);
-        let original = std::fs::read(p.input.path.join("learnings/migration.md")).unwrap();
+        let original = std::fs::read(p.input.path.join(note_path(&p))).unwrap();
         for name in [
             "projects/recovery/copy.md",
             "resources/snapshot/tool.md",
@@ -649,11 +675,16 @@ mod tests {
         }
         p = prepared(&data, &root);
         assert_eq!(p.source_count(), 1);
-        let report = "# 仓库维护知识与建议\n\n运行数据库迁移后核对行数。\n来源：[迁移](../../learnings/migration.md)";
-        let dest = publish(&data, &p, report).unwrap();
-        assert_eq!(std::fs::read_to_string(&dest).unwrap(), report);
+        let report = test_report(&format!(
+            "运行数据库迁移后核对行数。来源：[迁移](../../{})",
+            note_path(&p).display()
+        ));
+        let dest = publish(&data, &p, &report).unwrap();
+        assert!(std::fs::read_to_string(&dest)
+            .unwrap()
+            .contains("topic-migration.md"));
         assert_eq!(
-            std::fs::read(p.input.path.join("learnings/migration.md")).unwrap(),
+            std::fs::read(p.input.path.join(note_path(&p))).unwrap(),
             original
         );
         let next = prepared(&data, &root);
@@ -666,13 +697,22 @@ mod tests {
             next.input.report_path, p.input.report_path,
             "每个项目稳定更新同一份维护文档"
         );
-        assert_eq!(next.input.previous_report.as_deref(), Some(report));
+        assert_eq!(next.input.previous_documents.len(), 5);
+        assert!(next
+            .input
+            .previous_report
+            .as_deref()
+            .unwrap()
+            .contains("项目 ID"));
         assert!(
             location::recall(&data, &root, "数据库迁移", 20).unwrap()["results"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|hit| hit["source_path"] == dest.to_string_lossy().as_ref())
+                .any(|hit| hit["source_path"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("topic-migration.md"))
         );
     }
 
@@ -683,11 +723,11 @@ mod tests {
         let ctx = location::maintenance_context(&data, &root)
             .unwrap()
             .unwrap();
-        super::super::feedback::archive(&ctx, "learnings/migration.md").unwrap();
+        super::super::feedback::archive(&ctx, note_path(&p).to_str().unwrap()).unwrap();
         assert_eq!(status(&data, &root).unwrap()["source_count"], 0);
         assert!(publish(&data, &p, "已过时的整理").is_err());
-        assert!(p.input.path.join("learnings/migration.md").is_file());
-        super::super::feedback::restore(&ctx, "learnings/migration.md").unwrap();
+        assert!(p.input.path.join(note_path(&p)).is_file());
+        super::super::feedback::restore(&ctx, note_path(&p).to_str().unwrap()).unwrap();
         assert_eq!(status(&data, &root).unwrap()["source_count"], 1);
     }
 
@@ -710,11 +750,223 @@ mod tests {
         let second = prepared(&data, &other);
         assert_eq!(first.knowledge_id(), second.knowledge_id());
         assert_ne!(first.report_key(), second.report_key());
-        let a = publish(&data, &first, "# 第一个项目维护建议").unwrap();
-        let b = publish(&data, &second, "# 第二个项目维护建议").unwrap();
+        let a = publish(&data, &first, &test_report("第一个项目维护建议")).unwrap();
+        let b = publish(&data, &second, &test_report("第二个项目维护建议")).unwrap();
         assert_ne!(a, b);
-        assert_eq!(std::fs::read_to_string(a).unwrap(), "# 第一个项目维护建议");
-        assert_eq!(std::fs::read_to_string(b).unwrap(), "# 第二个项目维护建议");
+        assert!(std::fs::read_to_string(a)
+            .unwrap()
+            .contains(&first.input.project_id));
+        assert!(std::fs::read_to_string(b)
+            .unwrap()
+            .contains(&second.input.project_id));
+        assert_eq!(
+            second.source_count(),
+            0,
+            "another project's notes are not inputs"
+        );
+        assert!(
+            !location::recall(&data, &other, "第一个项目", 50).unwrap()["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["excerpt"].as_str().unwrap().contains("第一个项目"))
+        );
+    }
+
+    #[test]
+    fn project_notes_and_shared_documents_have_explicit_ownership() {
+        let (tmp, root, data) = fixture();
+        let first = prepared(&data, &root);
+        let other = tmp.path().join("sdk");
+        std::fs::create_dir(&other).unwrap();
+        location::run(
+            &data,
+            &location::Request {
+                action: "init".into(),
+                root: other.clone(),
+                path: Some(first.input.path.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let draft = tmp.path().join("sdk.md");
+        std::fs::write(&draft, "# SDK-only\nSDK boundary").unwrap();
+        location::save(&data, &other, &draft, "migration").unwrap();
+        for (name, body) in [
+            ("legacy.md", "# Ambiguous legacy"),
+            ("shared.md", "---\nshared: true\n---\n# Shared rule"),
+        ] {
+            std::fs::write(first.input.path.join(name), body).unwrap();
+        }
+        let a = prepared(&data, &root);
+        let b = prepared(&data, &other);
+        assert_eq!(a.source_count(), 2);
+        assert_eq!(b.source_count(), 2);
+        assert!(a
+            .input
+            .excluded_documents
+            .contains(&PathBuf::from("legacy.md")));
+        assert!(!b.input.documents.contains(&note_path(&a)));
+        let hits = location::recall(&data, &root, "SDK boundary", 20).unwrap();
+        assert!(!hits["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["excerpt"].as_str().unwrap().contains("SDK-only")));
+    }
+
+    #[test]
+    fn declared_dependencies_find_another_library_without_recalling_its_private_notes() {
+        let (tmp, root, data) = fixture();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"app","dependencies":{"@example/sdk":"1.2.0"}}"#,
+        )
+        .unwrap();
+        let sdk = tmp.path().join("sdk");
+        std::fs::create_dir_all(sdk.join("packages/core")).unwrap();
+        std::fs::write(
+            sdk.join("package.json"),
+            r#"{"name":"sdk","workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            sdk.join("packages/core/package.json"),
+            r#"{"name":"@example/sdk","version":"2.0.0"}"#,
+        )
+        .unwrap();
+        location::run(
+            &data,
+            &location::Request {
+                action: "init".into(),
+                root: sdk.clone(),
+                path: Some(tmp.path().join("sdk-knowledge")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let draft = tmp.path().join("sdk.md");
+        std::fs::write(&draft, "# sdk-private-boundary\nSDK-only rule").unwrap();
+        location::save(&data, &sdk, &draft, "migration").unwrap();
+        let app = prepared(&data, &root);
+        let target = prepared(&data, &sdk);
+        assert_eq!(app.input.related_projects.len(), 1);
+        let related = &app.input.related_projects[0];
+        assert_eq!(related.project_id, target.input.project_id);
+        assert_ne!(related.knowledge_id, app.input.knowledge_id);
+        assert_eq!(related.packages[0].required, "1.2.0");
+        assert_eq!(
+            related.packages[0].provider_version.as_deref(),
+            Some("2.0.0")
+        );
+        assert_eq!(
+            related.packages[0].provider_manifest,
+            Path::new("packages/core/package.json")
+        );
+        let recalled = location::recall(&data, &root, "SDK-only", 50).unwrap();
+        assert_eq!(
+            recalled["related_projects"][0]["project_id"],
+            target.input.project_id
+        );
+        assert!(!recalled["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["excerpt"].as_str().unwrap().contains("SDK-only")));
+        publish(&data, &app, &test_report("App integration contract")).unwrap();
+        let relation_file = app
+            .input
+            .path
+            .join("projects")
+            .join(&app.input.project_id)
+            .join("relations.json");
+        let portable = std::fs::read_to_string(relation_file).unwrap();
+        assert!(
+            !portable.contains(tmp.path().to_str().unwrap()),
+            "machine paths stay in local resolver responses"
+        );
+    }
+
+    #[test]
+    fn stale_wiki_editions_are_not_recalled_and_invalid_drafts_do_not_replace_current_pages() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        publish(&data, &p, &test_report("obsolete-widget-specific-12345")).unwrap();
+        let next = prepared(&data, &root);
+        publish(
+            &data,
+            &next,
+            &test_report("replacement-contract-specific-98765"),
+        )
+        .unwrap();
+        let hits = location::recall(&data, &root, "obsolete-widget-specific-12345", 100).unwrap();
+        assert!(!hits["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|h| h["excerpt"].as_str().unwrap().contains("obsolete-widget")));
+        let current = prepared(&data, &root);
+        let entry = std::fs::read(current.input.path.join(&current.input.report_path)).unwrap();
+        assert!(publish(&data, &current, "# incomplete result").is_err());
+        assert!(publish(
+            &data,
+            &current,
+            &test_report("[foreign](../../projects/another/learnings/private.md)")
+        )
+        .is_err());
+        assert_eq!(
+            std::fs::read(current.input.path.join(&current.input.report_path)).unwrap(),
+            entry
+        );
+    }
+
+    #[test]
+    fn a_partial_registration_does_not_unisolate_a_shared_library() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let foreign = p.input.path.join("projects/foreign-project");
+        std::fs::create_dir_all(&foreign).unwrap();
+        std::fs::write(foreign.join("project.json"), "{}").unwrap();
+        std::fs::write(p.input.path.join("legacy.md"), "# ambiguous-private-legacy").unwrap();
+        let current = prepared(&data, &root);
+        assert_eq!(current.source_count(), 1);
+        assert_eq!(
+            current.input.excluded_documents,
+            vec![PathBuf::from("legacy.md")]
+        );
+        assert!(
+            location::recall(&data, &root, "ambiguous-private-legacy", 10).unwrap()["results"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unrelated_broken_declaration_does_not_block_recall_and_catalog_failure_does_not_commit() {
+        let (tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let other = tmp.path().join("broken-sdk");
+        std::fs::create_dir(&other).unwrap();
+        location::run(
+            &data,
+            &location::Request {
+                action: "init".into(),
+                root: other.clone(),
+                path: Some(tmp.path().join("other-knowledge")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        std::fs::write(other.join(".ailoom/knowledge.json"), "invalid-json").unwrap();
+        let current = prepared(&data, &root);
+        assert_eq!(current.input.related_warnings.len(), 1);
+        assert!(location::recall(&data, &root, "迁移", 5).is_ok());
+        std::fs::create_dir_all(p.input.path.join("wiki/index.md")).unwrap();
+        assert!(publish(&data, &current, &test_report("must-not-commit")).is_err());
+        assert!(!p.input.path.join(&p.input.report_path).exists());
+        assert!(prepared(&data, &root).input.previous_documents.is_empty());
     }
 
     #[test]
@@ -722,18 +974,14 @@ mod tests {
         let (_tmp, root, data) = fixture();
         let p = prepared(&data, &root);
         let dest = p.input.path.join(&p.input.report_path);
-        std::fs::write(
-            p.input.path.join("learnings/migration.md"),
-            "# 新知识\n人工更新",
-        )
-        .unwrap();
+        std::fs::write(p.input.path.join(note_path(&p)), "# 新知识\n人工更新").unwrap();
         assert!(publish(&data, &p, "不应覆盖")
             .unwrap_err()
             .message
             .contains("内容已变化"));
         assert!(!dest.exists());
         let p = prepared(&data, &root);
-        publish(&data, &p, "上次结果").unwrap();
+        publish(&data, &p, &test_report("上次结果")).unwrap();
         let p = prepared(&data, &root);
         std::fs::write(&dest, "用户手工修订").unwrap();
         assert!(publish(&data, &p, "不应覆盖").is_err());
@@ -787,7 +1035,7 @@ mod tests {
             let task: serde_json::Value =
                 serde_json::from_str(text.rsplit("## 本次任务清单\n\n").next().unwrap()).unwrap();
             assert_eq!(task["focus"], DEFAULT_FOCUS);
-            assert_eq!(task["source_documents"], json!(["learnings/migration.md"]));
+            assert_eq!(task["source_documents"], json!([note_path(&p)]));
             assert!(text.starts_with(ORGANIZATION_PROMPT));
             assert!(text.contains("处理冲突与演进"));
             assert!(text.contains("不同证据状态不可混写成统一的确定结论"));
@@ -842,7 +1090,7 @@ print('this is not the final report')"#,
             !p.input.path.join(&p.input.report_path).exists(),
             "生成过程不写入知识库"
         );
-        publish(&data, &p, &report).unwrap();
+        publish(&data, &p, &test_report(&report)).unwrap();
     }
 
     #[cfg(unix)]
@@ -850,7 +1098,7 @@ print('this is not the final report')"#,
     fn cli_failure_empty_response_timeout_and_cancel_preserve_previous_knowledge() {
         let (_tmp, root, data) = fixture();
         let mut p = prepared(&data, &root);
-        let original = std::fs::read(p.input.path.join("learnings/migration.md")).unwrap();
+        let original = std::fs::read(p.input.path.join(note_path(&p))).unwrap();
         let (_script, executable) = fake_cli(
             "import sys\nsys.stdin.read()\nsys.stderr.write('not logged in')\nsys.exit(3)",
         );
@@ -890,7 +1138,7 @@ print('this is not the final report')"#,
         .message
         .contains("已取消"));
         assert_eq!(
-            std::fs::read(p.input.path.join("learnings/migration.md")).unwrap(),
+            std::fs::read(p.input.path.join(note_path(&p))).unwrap(),
             original
         );
         assert!(!p.input.path.join(&p.input.report_path).exists());

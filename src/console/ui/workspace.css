@@ -123,6 +123,9 @@
 .project-settings-directories { margin-top:var(--sp-5); }
 .project-settings-directories .actions { margin:0; }
 .knowledge-organization { max-width:800px; }
+.knowledge-pages { display:flex;flex-wrap:wrap;gap:var(--sp-2);margin:var(--sp-3) 0; }
+.knowledge-pages button { max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left; }
+.knowledge-organization [data-organize-related],.knowledge-organization [data-organize-project] { overflow-wrap:anywhere; }
 .knowledge-organization [data-organize-sources] li,.knowledge-collection li { overflow-wrap:anywhere; }
 .knowledge-organization h2 { margin-top:0; }
 .knowledge-organization-options { display:flex;align-items:flex-end;gap:var(--sp-3);flex-wrap:wrap;margin:var(--sp-4) 0; }
