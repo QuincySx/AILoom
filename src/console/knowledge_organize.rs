@@ -39,6 +39,14 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
         Ok(prepared) => prepared,
         Err(e) => return Response::error(400, &e),
     };
+    for source in prepared.worktrees() {
+        if let Err(e) = super::ensure_within_roots(state, &source.path) {
+            return Response::json(
+                403,
+                json!({"error":format!("工作目录范围已变化，请重新开始整理：{e}")}),
+            );
+        }
+    }
     let key = req.body["idempotency_key"].as_str().map(str::to_owned);
     let mut ledger = state.jobs.lock_ok();
     if let Some(existing) = ledger.values().find(|job| {
@@ -85,7 +93,42 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
     Response::json(202, json!({"job_id":id}))
 }
 
-fn run(state: &Arc<ServerState>, id: &str, prepared: organize::Prepared) {
+fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
+    jobs::set_status(
+        state,
+        id,
+        JobStatus::Running,
+        "自动收集各工作目录与已有知识",
+    );
+    let collection = organize::collect_sources(
+        &state.data_root,
+        &mut prepared,
+        || jobs::is_cancelled(state, id),
+        |note| jobs::set_status(state, id, JobStatus::Running, note),
+    );
+    match collection {
+        Ok(collection) => {
+            let mut ledger = state.jobs.lock_ok();
+            let job = ledger.get_mut(id).unwrap();
+            job.result["collection"] = collection;
+            job.result["source_count"] = json!(prepared.source_count());
+            jobs::persist_job(&state.data_root, job);
+        }
+        Err(e) => {
+            finish(
+                state,
+                id,
+                if jobs::is_cancelled(state, id) {
+                    JobStatus::Cancelled
+                } else {
+                    JobStatus::Failed
+                },
+                None,
+                Some(e.message),
+            );
+            return;
+        }
+    }
     jobs::set_status(state, id, JobStatus::Running, "启动本机 AI 工具");
     let result = organize::generate(
         &prepared,

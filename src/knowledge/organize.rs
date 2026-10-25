@@ -106,6 +106,7 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
         "report":input.previous_report,
         "runners":runners(),
         "report_key":input.report_path,
+        "worktrees":input.worktrees,
     }))
 }
 
@@ -113,6 +114,7 @@ pub struct Prepared {
     input: OrganizationInput,
     runner: Runner,
     focus: String,
+    collection: Option<Value>,
 }
 
 impl Prepared {
@@ -127,6 +129,9 @@ impl Prepared {
     }
     pub fn report_key(&self) -> &Path {
         &self.input.report_path
+    }
+    pub fn worktrees(&self) -> &[location::ingest::Source] {
+        &self.input.worktrees
     }
 }
 
@@ -145,16 +150,25 @@ pub fn prepare(data: &Path, root: &Path, runner: &str, focus: &str) -> Result<Pr
         )));
     }
     let input = location::organization_input(data, root)?;
-    if input.documents.is_empty() {
-        return Err(fail(
-            "知识库还没有可整理的 Markdown 知识文档；配置恢复副本和资源快照不参与整理",
-        ));
-    }
     Ok(Prepared {
         input,
         runner,
         focus: focus.into(),
+        collection: None,
     })
+}
+
+pub fn collect_sources(
+    data: &Path,
+    prepared: &mut Prepared,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+) -> Result<Value> {
+    let (input, collection) =
+        location::collect_organization_input(data, &prepared.input, &cancelled, &progress)?;
+    prepared.input = input;
+    prepared.collection = Some(collection.clone());
+    Ok(collection)
 }
 
 fn prompt(prepared: &Prepared) -> String {
@@ -165,6 +179,7 @@ fn prompt(prepared: &Prepared) -> String {
         "knowledge_directory":input.path,
         "source_documents":input.documents,
         "source_origins":input.origins,
+        "collection":prepared.collection,
         "previous_report":input.previous_report.as_ref().map(|_| &input.report_path),
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
         "generated_at":crate::ids::now_iso(),
@@ -292,6 +307,9 @@ fn generate_with_timeout(
     if cancelled() {
         return Err(fail("整理已取消，原有知识和整理结果保留"));
     }
+    if prepared.input.documents.is_empty() {
+        return Err(fail("本次没有找到可整理的资料，可查看本次资料读取情况中的未读取原因；配置恢复副本与工具资源不参与整理"));
+    }
     let work = tempfile::tempdir()?;
     let output_path = work.path().join("report.md");
     let stdout_path = work.path().join("stdout.txt");
@@ -414,7 +432,205 @@ mod tests {
                 available: true,
             },
             focus: "数据库维护".into(),
+            collection: None,
         }
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn automatic_collection_starts_empty_and_preserves_all_worktree_origins_and_revisions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("main");
+        let feature = tmp.path().join("feature");
+        let data = tmp.path().join("data");
+        let library = tmp.path().join("knowledge");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["commit", "--allow-empty", "-qm", "base"]);
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                feature.to_str().unwrap(),
+            ],
+        );
+        location::run(
+            &data,
+            &location::Request {
+                action: "init".into(),
+                root: root.clone(),
+                path: Some(library.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        for worktree in [&root, &feature] {
+            std::fs::create_dir_all(worktree.join("packages/service/docs")).unwrap();
+            std::fs::write(
+                worktree.join("packages/service/docs/lesson.MARKDOWN"),
+                "# Shared constraint\nserial processing preserves ordering",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            feature.join("why.rst"),
+            "External quota requires serial delivery",
+        )
+        .unwrap();
+        let mut p = prepared(&data, &root);
+        assert_eq!(p.source_count(), 0, "no manual import is needed");
+        let late = tmp.path().join("not-approved-after-queue");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "late",
+                late.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(late.join("not-approved.md"), "# Outside queued scope").unwrap();
+        let result = collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(result["worktree_count"], 2);
+        assert_eq!(result["documents_read"], 3);
+        assert_eq!(p.source_count(), 2, "identical bodies are reused");
+        assert_eq!(
+            p.worktrees().len(),
+            2,
+            "new worktrees do not expand queued authorization"
+        );
+        assert_eq!(p.input.origins.values().map(Vec::len).sum::<usize>(), 3);
+        let task: Value =
+            serde_json::from_str(prompt(&p).rsplit("## 本次任务清单\n\n").next().unwrap()).unwrap();
+        assert_eq!(task["collection"]["worktree_count"], 2);
+        assert!(task["source_origins"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|origins| origins
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|o| o["branch"] == "feature"
+                    && o["document"] == "why.rst"
+                    && o["worktree_dirty"] == true)));
+        let revisions = || {
+            location::ingest::status(&data, &root).unwrap()["revision_count"]
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(revisions(), 3);
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(
+            revisions(),
+            3,
+            "repeated organization does not duplicate source history"
+        );
+        std::fs::write(
+            feature.join("why.rst"),
+            "Quota lifted; ordering still requires serial delivery",
+        )
+        .unwrap();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(revisions(), 4);
+        assert_eq!(
+            p.source_count(),
+            2,
+            "only current revisions are normal input"
+        );
+        let copies = walkdir::WalkDir::new(library.join("imports"))
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|s| s == "md"))
+            .count();
+        assert_eq!(copies, 3, "old source revisions stay available");
+        std::fs::rename(&feature, tmp.path().join("retired")).unwrap();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(
+            p.source_count(),
+            2,
+            "removed worktree evidence remains available"
+        );
+        publish(&data, &p, "# Collected development knowledge").unwrap();
+    }
+
+    #[test]
+    fn automatic_collection_reports_unreadable_candidates_and_cancellation() {
+        let (_tmp, root, data) = fixture();
+        std::fs::write(root.join("unreadable.md"), [0xff, 0xfe]).unwrap();
+        std::fs::write(
+            root.join("design.mdx"),
+            "# Module contract\nPreserve message ordering",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("decision.adoc"),
+            "= Decision\nQuota restricts concurrency",
+        )
+        .unwrap();
+        let mut p = prepared(&data, &root);
+        assert!(collect_sources(&data, &mut p, || true, |_| {})
+            .unwrap_err()
+            .message
+            .contains("取消"));
+        assert!(!p.input.path.join("imports").exists());
+        let result = collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(p.source_count(), 3);
+        assert_eq!(result["skipped"][0]["path"], "unreadable.md");
+        assert!(prompt(&p).contains("不是 UTF-8 文本"));
+        assert!(prompt(&p).contains("识别资料是你的工作"));
+        assert!(prompt(&p).contains("无关或缺少独立证据的材料只在 sources 中注明处理原因"));
+    }
+
+    #[test]
+    fn empty_collection_keeps_diagnostics_without_starting_an_ai_process() {
+        let (_tmp, root, data) = fixture();
+        let ctx = location::maintenance_context(&data, &root)
+            .unwrap()
+            .unwrap();
+        super::super::feedback::archive(&ctx, "learnings/migration.md").unwrap();
+        std::fs::write(root.join("unreadable.md"), [0xff, 0xfe]).unwrap();
+        let mut p = prepared(&data, &root);
+        let result = collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(p.source_count(), 0);
+        assert_eq!(result["skipped"][0]["path"], "unreadable.md");
+        assert!(
+            p.collection.is_some(),
+            "worker can persist collection before the no-input error"
+        );
+        // The test runner has no executable; attempting to spawn it would panic.
+        assert!(generate(&p, || false, |_| {})
+            .unwrap_err()
+            .message
+            .contains("资料读取情况"));
     }
 
     #[test]

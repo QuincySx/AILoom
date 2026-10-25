@@ -98,7 +98,7 @@ pub(super) fn current_documents(
     Ok(result)
 }
 
-fn sources_unlocked(data: &Path, root: &Path, id: &str) -> Result<Vec<Source>> {
+pub(super) fn sources_unlocked(data: &Path, root: &Path, id: &str) -> Result<Vec<Source>> {
     let discovery = if crate::repo_registry::find_git_root(root).is_some() {
         crate::repo_registry::discover_repo(root)?
     } else {
@@ -241,19 +241,20 @@ fn git_text(root: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn snapshot(
-    data: &Path,
-    root: &Path,
-    id: &str,
-    b: &Binding,
-    tree: &Tree,
-    source_id: &str,
-    key: &str,
-) -> Result<Snapshot> {
-    let source = sources_unlocked(data, root, id)?
+fn source_unlocked(data: &Path, root: &Path, id: &str, source_id: &str) -> Result<Source> {
+    sources_unlocked(data, root, id)?
         .into_iter()
         .find(|s| s.id == source_id)
-        .ok_or_else(|| fail("请选择本项目已有的工作目录或子目录"))?;
+        .ok_or_else(|| fail("请选择本项目已有的工作目录或子目录"))
+}
+
+fn snapshot(
+    source: Source,
+    b: &Binding,
+    tree: &Tree,
+    key: &str,
+    cancelled: &impl Fn() -> bool,
+) -> Result<Snapshot> {
     if b.path == source.path {
         return Err(fail("不能把知识库本身作为采集来源"));
     }
@@ -283,18 +284,41 @@ fn snapshot(
     let mut documents = Vec::new();
     let mut skipped = Vec::new();
     let mut size = 0usize;
+    let local_library = b
+        .path
+        .strip_prefix(&b.project_root)
+        .ok()
+        .map(|rel| source.worktree.join(rel));
     for entry in walkdir::WalkDir::new(&source.path)
         .follow_links(false)
+        .sort_by_file_name()
         .into_iter()
         .filter_entry(|e| {
             (e.path() == source.path || !excluded(&e.file_name().to_string_lossy()))
                 && !e.path().starts_with(&b.path)
+                && !local_library
+                    .as_ref()
+                    .is_some_and(|p| e.path().starts_with(p))
+                && !(e.file_type().is_dir() && e.path().join(MARKER).is_file())
                 && (e.path() == source.path
                     || !e.file_type().is_dir()
                     || crate::repo_registry::find_git_root(e.path()).as_deref() != Some(e.path()))
         })
     {
-        let entry = entry.map_err(|_| fail("来源目录有无法读取的路径，请缩小采集范围"))?;
+        if cancelled() {
+            return Err(fail("整理已取消，已保存的原始资料保留"));
+        }
+        if skipped.len() >= 100 {
+            skipped.push(json!({"reason":"未读取项已达 100 条，后续候选资料未继续读取"}));
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                skipped.push(json!({"reason":"工作目录内有无法读取的路径，该路径未读取"}));
+                continue;
+            }
+        };
         if entry.file_type().is_symlink() || !entry.file_type().is_file() {
             continue;
         }
@@ -302,11 +326,20 @@ fn snapshot(
             .path()
             .extension()
             .and_then(|s| s.to_str())
-            .is_some_and(|s| matches!(s.to_ascii_lowercase().as_str(), "md" | "markdown"))
+            .is_some_and(|s| {
+                matches!(
+                    s.to_ascii_lowercase().as_str(),
+                    "md" | "markdown" | "mdx" | "rst" | "adoc"
+                )
+            })
         {
             continue;
         }
         let path = entry.path().strip_prefix(&source.worktree)?.to_path_buf();
+        if documents.len() >= 2000 || size >= 64 * 1024 * 1024 {
+            skipped.push(json!({"path":path,"reason":"已达到本轮每个工作目录 2000 篇 / 64 MB 的读取范围，后续候选资料未继续读取"}));
+            break;
+        }
         if entry
             .metadata()
             .map(|m| m.len() > 4 * 1024 * 1024)
@@ -314,6 +347,15 @@ fn snapshot(
         {
             skipped.push(json!({"path":path,"reason":"无法读取或超过 4 MB"}));
             continue;
+        }
+        if entry
+            .metadata()
+            .is_ok_and(|m| m.len() as usize > 64 * 1024 * 1024 - size)
+        {
+            skipped.push(
+                json!({"path":path,"reason":"已达到本轮 64 MB 的读取范围，后续候选资料未继续读取"}),
+            );
+            break;
         }
         let read = (|| -> std::io::Result<Vec<u8>> {
             let mut options = std::fs::OpenOptions::new();
@@ -335,6 +377,11 @@ fn snapshot(
                 continue;
             }
         };
+        if size + bytes.len() > 64 * 1024 * 1024 {
+            skipped.push(json!({"path":path,"reason":"超出本轮每个工作目录 64 MB 的读取范围，后续候选资料未继续读取"}));
+            break;
+        }
+        size += bytes.len();
         let text = match std::str::from_utf8(&bytes) {
             Ok(s) => s,
             Err(_) => {
@@ -342,10 +389,6 @@ fn snapshot(
                 continue;
             }
         };
-        size += bytes.len();
-        if size > 64 * 1024 * 1024 || documents.len() >= 2000 {
-            return Err(fail("一次最多采集 2000 篇或 64 MB，请选择较小的子目录"));
-        }
         let hash = crate::ids::sha256_hex(&bytes);
         let last = m
             .records
@@ -403,13 +446,11 @@ pub fn preview(data: &Path, root: &Path, source_id: &str) -> Result<Value> {
     let b = binding(&cat, &id)?;
     let tree = checked_tree(b)?;
     let s = snapshot(
-        data,
-        &root,
-        &id,
+        source_unlocked(data, &root, &id, source_id)?,
         b,
         &tree,
-        source_id,
         &project_key(&id, &root)?,
+        &|| false,
     )?;
     Ok(
         json!({"source":s.source,"origin":s.origin,"documents":s.documents.iter().map(|(d,_)|d).collect::<Vec<_>>(),"skipped":s.skipped,"expected":s.expected}),
@@ -432,7 +473,13 @@ pub fn apply(
     let b = binding(&cat, &id)?;
     let mut tree = checked_tree(b)?;
     let key = project_key(&id, &root)?;
-    let s = snapshot(data, &root, &id, b, &tree, source_id, &key)?;
+    let s = snapshot(
+        source_unlocked(data, &root, &id, source_id)?,
+        b,
+        &tree,
+        &key,
+        &|| false,
+    )?;
     if s.expected != expected {
         return Err(fail("来源文档、分支或采集记录已变化，请重新扫描"));
     }
@@ -443,49 +490,227 @@ pub fn apply(
     {
         return Err(fail("所选文档不在本次扫描清单中"));
     }
-    let mut m = manifest(&tree, &key)?;
+    save_snapshot(b, &mut tree, &key, &s, &selected, false)
+}
+
+fn save_snapshot(
+    b: &Binding,
+    tree: &mut Tree,
+    key: &str,
+    s: &Snapshot,
+    selected: &BTreeSet<&PathBuf>,
+    automatic: bool,
+) -> Result<Value> {
+    let mut m = manifest(tree, key)?;
+    let metadata_path = manifest_path(key);
+    // Compact metadata makes the per-record byte budget exact without repeatedly serializing history.
+    let mut size = tree.values().map(Vec::len).sum::<usize>()
+        - tree.get(&metadata_path).map_or(0, Vec::len)
+        + serde_json::to_vec(&m)?.len();
+    let mut files = tree.len() + usize::from(!tree.contains_key(&metadata_path));
+    let byte_limit = if automatic { 124 } else { 128 } * 1024 * 1024;
+    let file_limit = if automatic { 9999 } else { 10000 };
     let mut added = 0;
     let mut reused = 0;
     let mut writes = Tree::new();
+    let mut skipped = Vec::new();
+    let mut skipped_count = 0;
     for (d, bytes) in s
         .documents
         .iter()
         .filter(|(d, _)| selected.contains(&d.path))
     {
-        let path = document_path(&key, &d.hash);
+        let path = document_path(key, &d.hash);
         if let Some(previous) = tree.get(&path) {
             if previous != bytes {
                 return Err(fail("知识库中的原文与内容摘要不符，未覆盖"));
             }
-            reused += 1;
-        } else {
-            writes.insert(path.clone(), bytes.clone());
-            tree.insert(path, bytes.clone());
-            added += 1;
         }
         let mut origin = s.origin.clone();
         origin.document = d.path.clone();
         let last = m.records.iter().rev().find(|r| {
             r.origin.worktree_id == origin.worktree_id && r.origin.document == origin.document
         });
-        if !last.is_some_and(|r| r.hash == d.hash && r.origin == origin) {
-            m.records.push(Record {
-                hash: d.hash.clone(),
-                origin,
-                captured_at: crate::ids::now_iso(),
-            });
+        let changed = !last.is_some_and(|r| r.hash == d.hash && r.origin == origin);
+        let record = Record {
+            hash: d.hash.clone(),
+            origin,
+            captured_at: crate::ids::now_iso(),
+        };
+        let record_bytes = if changed {
+            serde_json::to_vec(&record)?.len() + usize::from(!m.records.is_empty())
+        } else {
+            0
+        };
+        let new_file = !tree.contains_key(&path);
+        let growth = record_bytes + if new_file { bytes.len() } else { 0 };
+        if growth > 0 && (size + growth > byte_limit || files + usize::from(new_file) > file_limit)
+        {
+            if !automatic {
+                return Err(fail("采集后知识库超过 128 MB / 10000 文件限制，未保存"));
+            }
+            skipped_count += 1;
+            if skipped.len() < 100 {
+                skipped.push(json!({"path":d.path,"reason":"知识库剩余容量不足，本轮未保存；已为整理结果预留空间"}));
+            }
+            continue;
+        }
+        size += growth;
+        files += usize::from(new_file);
+        if new_file {
+            writes.insert(path.clone(), bytes.clone());
+            tree.insert(path, bytes.clone());
+            added += 1;
+        } else {
+            reused += 1;
+        }
+        if changed {
+            m.records.push(record);
         }
     }
-    let metadata = serde_json::to_vec_pretty(&m)?;
-    tree.insert(manifest_path(&key), metadata.clone());
+    if skipped_count > skipped.len() {
+        skipped.push(json!({"reason":format!("另有 {} 篇候选资料因容量不足未保存", skipped_count-skipped.len())}));
+    }
+    let metadata = serde_json::to_vec(&m)?;
+    tree.insert(metadata_path.clone(), metadata.clone());
     if tree.len() > 10000 || tree.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024 {
         return Err(fail("采集后知识库超过 128 MB / 10000 文件限制，未保存"));
     }
-    let document_count = current_documents(&tree, &key)?.len();
+    let document_count = current_documents(tree, key)?.len();
     // Originals become visible only after the final manifest write. A failed batch can be retried.
     write_tree(&b.path, &writes)?;
-    crate::sync_common::atomic_write(&b.path.join(manifest_path(&key)), &metadata)?;
+    crate::sync_common::atomic_write(&b.path.join(metadata_path), &metadata)?;
     Ok(
-        json!({"saved":selected.len(),"new_documents":added,"reused_documents":reused,"document_count":document_count,"revision_count":m.records.len()}),
+        json!({"saved":added+reused,"new_documents":added,"reused_documents":reused,"document_count":document_count,"revision_count":m.records.len(),"skipped":skipped}),
     )
+}
+
+/// Called only by an explicitly started organization job, under the knowledge lock.
+/// Directories are discovered from this repository; recursive reads already include children.
+pub(super) fn collect_unlocked(
+    data: &Path,
+    root: &Path,
+    approved: &[Source],
+    cancelled: &impl Fn() -> bool,
+    progress: &impl Fn(&str),
+) -> Result<Value> {
+    let cat = load(data)?;
+    let (id, root) = project(data, root, &cat)?;
+    let b = binding(&cat, &id)?;
+    let mut tree = checked_tree(b)?;
+    let key = project_key(&id, &root)?;
+    let sources = sources_unlocked(data, &root, &id)?;
+    let mut saved = 0;
+    let mut skipped = Vec::new();
+    for source in approved {
+        if cancelled() {
+            return Err(fail("整理已取消，已保存的原始资料保留"));
+        }
+        if !sources
+            .iter()
+            .any(|s| s.id == source.id && s.path == source.path && s.worktree == source.worktree)
+        {
+            skipped.push(json!({"directory":source.label,"reason":"工作目录已不可用或不再属于本项目，本轮未读取"}));
+            continue;
+        }
+        progress(&format!("正在读取工作目录资料：{}", source.label));
+        let snapshot = snapshot(source.clone(), b, &tree, &key, cancelled);
+        let s = match snapshot {
+            Ok(s) => s,
+            Err(e) if !cancelled() => {
+                skipped.push(json!({"directory":source.label,"reason":e.message}));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        skipped.extend(
+            s.skipped
+                .iter()
+                .map(|v| json!({"directory":source.label,"path":v["path"],"reason":v["reason"]})),
+        );
+        if cancelled() {
+            return Err(fail("整理已取消，已保存的原始资料保留"));
+        }
+        let selected = s.documents.iter().map(|(d, _)| &d.path).collect();
+        if !s.documents.is_empty() {
+            let result = save_snapshot(b, &mut tree, &key, &s, &selected, true)?;
+            skipped.extend(
+                result["skipped"].as_array().into_iter().flatten().map(
+                    |v| json!({"directory":source.label,"path":v["path"],"reason":v["reason"]}),
+                ),
+            );
+            saved += s.documents.len();
+        }
+    }
+    Ok(json!({"worktree_count":approved.len(),"documents_read":saved,"skipped":skipped}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_storage_budget_keeps_useful_sources_and_reserves_a_report_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binding = Binding {
+            id: uuid::Uuid::new_v4().to_string(),
+            project_root: tmp.path().join("project"),
+            path: tmp.path().join("knowledge"),
+            remote: None,
+            branch: default_branch(),
+            subdir: String::new(),
+            baseline: BTreeMap::new(),
+        };
+        // Synthetic existing entries exercise the file budget without materializing 9997 files.
+        let mut tree: Tree = (0..9997)
+            .map(|i| (PathBuf::from(format!("resources/{i}")), Vec::new()))
+            .collect();
+        let origin = Origin {
+            worktree_id: "main".into(),
+            directory: "main".into(),
+            document: PathBuf::new(),
+            branch: Some("main".into()),
+            commit: None,
+            worktree_dirty: true,
+        };
+        let documents = ["first", "second"]
+            .map(|name| {
+                let bytes = format!("# {name}").into_bytes();
+                (
+                    Document {
+                        path: format!("{name}.md").into(),
+                        title: name.into(),
+                        bytes: bytes.len(),
+                        hash: crate::ids::sha256_hex(&bytes),
+                        state: "new",
+                    },
+                    bytes,
+                )
+            })
+            .into();
+        let snapshot = Snapshot {
+            source: Source {
+                id: "main".into(),
+                label: "main".into(),
+                path: binding.project_root.clone(),
+                worktree: binding.project_root.clone(),
+            },
+            origin,
+            documents,
+            skipped: vec![],
+            expected: String::new(),
+        };
+        let selected = snapshot.documents.iter().map(|(d, _)| &d.path).collect();
+        let result =
+            save_snapshot(&binding, &mut tree, "project", &snapshot, &selected, true).unwrap();
+        assert_eq!(result["saved"], 1);
+        assert_eq!(result["skipped"][0]["path"], "second.md");
+        assert_eq!(
+            tree.len(),
+            9999,
+            "the manifest is counted and a report slot remains"
+        );
+        assert_eq!(current_documents(&tree, "project").unwrap().len(), 1);
+        assert!(binding.path.join(manifest_path("project")).is_file());
+    }
 }

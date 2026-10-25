@@ -132,9 +132,8 @@ fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
             runner["executable"].is_string()
         );
     }
-    // 无知识时不启动真实 CLI，未接入的命令或超长任务说明也不能启动进程。
+    // 未接入的命令或超长任务说明不能启动真实 CLI。
     for body in [
-        json!({"root":root,"action":"organize","runner":"codex"}),
         json!({"root":root,"action":"organize","runner":"/bin/sh"}),
         json!({"root":root,"action":"organize","runner":"codex; echo injected"}),
         json!({"root":root,"action":"organize","focus":"长".repeat(2001)}),
@@ -255,6 +254,12 @@ fn knowledge_ingestion_api_requires_source_approval_and_binds_the_preview() {
         403,
         "another Worktree needs explicit directory approval"
     );
+    if let Some(runner) = ailoom::knowledge::organize::runners()
+        .into_iter()
+        .find(|r| r.available)
+    {
+        assert_eq!(post(json!({"root":root,"action":"organize","runner":runner.id})).0,403,"automatic organization must also validate each worktree approval before starting any CLI");
+    }
     assert_eq!(
         call(
             port,

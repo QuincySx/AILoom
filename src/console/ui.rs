@@ -131,13 +131,6 @@ pub fn lookup(path: &str) -> Option<(&'static str, &'static str)> {
             ),
         ),
         (
-            "/ui/features/knowledgeIngestion.js",
-            (
-                include_str!("ui/features/knowledgeIngestion.js"),
-                "text/javascript; charset=utf-8",
-            ),
-        ),
-        (
             "/ui/workspace.css",
             (include_str!("ui/workspace.css"), "text/css; charset=utf-8"),
         ),

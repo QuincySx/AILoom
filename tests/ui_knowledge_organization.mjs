@@ -103,9 +103,9 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
     await screenshot(output+'-'+name+'-'+width+'.png');layouts.push({name,...layout});
   }
 
-  await waitFor("document.querySelector('[data-organize-count]')?.textContent==='3 篇知识文档可整理'");
+  await waitFor("document.querySelector('[data-organize-count]')?.textContent.includes('已有 3 篇知识资料')");
   await assert("document.querySelector('[data-organize-runner]').value==='codex' && !document.querySelector('[data-organize-start]').disabled",'Codex is not the available default runner');
-  await assert("document.querySelector('[data-organize-default]').textContent.includes('无需填写提示词') && !document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default organization requires instructions or shows the supplemental input');
+  await assert("document.querySelector('[data-organize-default]').textContent.includes('无需填写提示词或挑选文档') && !document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default organization requires instructions or shows the supplemental input');
   await assert("document.querySelectorAll('[data-organize-runner] option').length===4 && document.querySelector('[data-organize-runner] option[value=pi]').disabled && !document.querySelector('[data-organize-runner] option[value=claude]').disabled && !document.querySelector('[data-organize-runner] option[value=cursor]').disabled",'Runner detection does not expose installed alternatives only');
   await assert("!document.querySelector('.knowledge-location').open && document.querySelector('.knowledge-location summary').textContent==='保存位置与恢复配置'",'Location and recovery settings are not collapsed below organization');
   await assert("document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && !document.querySelector('[data-organize-report]').hidden",'Previously saved report is missing');
@@ -191,12 +191,12 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await evaluate("document.querySelector('[data-organize-retry]').click()");
   await waitFor("!!document.querySelector('[data-organize-start]') && !document.querySelector('[data-organize-start]').disabled");
 
-  // Checkpoints cannot bypass the zero-document or missing-runner start gates.
+  // Empty knowledge still starts automatic collection; checkpoints cannot bypass a missing runner.
   await evaluate('window.knowledgeOrganization.sourceCount=0');await detect();
-  await assert("document.querySelector('[data-organize-start]').disabled && document.querySelector('.knowledge-organization').textContent.includes('配置恢复副本和资源快照不参与整理')",'Empty knowledge can start a task or counts recovery snapshots as notes');
+  await assert("!document.querySelector('[data-organize-start]').disabled && document.querySelector('.knowledge-organization').textContent.includes('还没有入库资料也可以直接开始')",'Empty knowledge blocks automatic collection');
   await evaluate("document.querySelector('.knowledge-location').open=true;document.querySelector('[data-checkpoint]').click()");
   await waitFor("window.knowledgeOrganization.calls.checkpoint===2 && document.querySelector('.knowledge-location [data-message]').textContent.includes('恢复配置已保存')");
-  await assert("document.querySelector('[data-organize-start]').disabled",'Saving a recovery checkpoint enabled organization with zero knowledge documents');
+  await assert("!document.querySelector('[data-organize-start]').disabled",'Saving a recovery checkpoint disabled automatic collection');
   await evaluate('window.knowledgeOrganization.sourceCount=3;window.knowledgeOrganization.runners.forEach(r=>r.available=false)');await detect();
   await assert("document.querySelector('[data-organize-start]').disabled && [...document.querySelectorAll('[data-organize-runner] option')].every(o=>o.disabled)",'Missing local CLIs do not disable organization');
   await evaluate("document.querySelector('[data-checkpoint]').click()");

@@ -244,6 +244,7 @@ pub(super) struct OrganizationInput {
     pub report_path: PathBuf,
     pub previous_report: Option<String>,
     pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
+    pub worktrees: Vec<ingest::Source>,
     fingerprint: String,
 }
 
@@ -257,6 +258,10 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     let (id, root) = project(data, root, &cat)?;
     let b = binding(&cat, &id)?;
     let tree = checked_tree(b)?;
+    let worktrees = ingest::sources_unlocked(data, &root, &id)?
+        .into_iter()
+        .filter(|s| s.path == s.worktree && s.path != b.path)
+        .collect();
     let archived = super::feedback::archived_ids(&state_context(data, &root, b)?);
     let project_id = super::portable::read(&root)?
         .map(|d| d.project_id)
@@ -290,8 +295,27 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         report_path,
         previous_report,
         origins,
+        worktrees,
         fingerprint,
     })
+}
+
+pub(super) fn collect_organization_input(
+    data: &Path,
+    initial: &OrganizationInput,
+    cancelled: &impl Fn() -> bool,
+    progress: &impl Fn(&str),
+) -> Result<(OrganizationInput, Value)> {
+    let _guard = lock(data)?;
+    let current = organization_input_unlocked(data, &initial.root)?;
+    if current.knowledge_id != initial.knowledge_id || current.path != initial.path {
+        return Err(fail("知识库位置已变化，请重新开始整理"));
+    }
+    let collection =
+        ingest::collect_unlocked(data, &initial.root, &initial.worktrees, cancelled, progress)?;
+    let mut input = organization_input_unlocked(data, &initial.root)?;
+    input.worktrees = initial.worktrees.clone();
+    Ok((input, collection))
 }
 
 pub(super) fn publish_organization(
@@ -310,6 +334,13 @@ pub(super) fn publish_organization(
         ));
     }
     let dest = current.path.join(&input.report_path);
+    let mut tree = scan(&current.path)?;
+    tree.insert(input.report_path.clone(), report.as_bytes().to_vec());
+    if tree.len() > 10000 || tree.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024 {
+        return Err(fail(
+            "整理结果超出知识库容量，本次草稿保留在操作记录中，原有结果保留",
+        ));
+    }
     crate::sync_common::atomic_write(&dest, report.as_bytes())?;
     Ok(dest)
 }

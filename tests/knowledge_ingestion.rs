@@ -371,3 +371,55 @@ fn cache_named_project_is_scanned_but_nested_bare_repositories_are_not() {
     assert_eq!(p["documents"].as_array().unwrap().len(), 1);
     assert_eq!(p["documents"][0]["path"], "lesson.md");
 }
+
+#[test]
+fn worktree_knowledge_copies_and_marked_libraries_never_become_new_originals() {
+    let t = tempfile::tempdir().unwrap();
+    let root = common::make_business_repo(t.path(), "main");
+    let wt = t.path().join("feature");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            wt.to_str().unwrap(),
+        ],
+    );
+    let data = t.path().join("data");
+    init(&data, &root, &root.join("knowledge"));
+    for folder in [
+        "knowledge/docs/organized",
+        "other-library/docs/organized",
+        "other-library/resources",
+        "other-library/imports",
+        "other-library/projects",
+    ] {
+        std::fs::create_dir_all(wt.join(folder)).unwrap();
+        std::fs::write(
+            wt.join(folder).join("not-original.md"),
+            "# Generated or archived material\nMust not become fresh evidence",
+        )
+        .unwrap();
+    }
+    std::fs::copy(
+        root.join("knowledge/ailoom-knowledge.json"),
+        wt.join("other-library/ailoom-knowledge.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        wt.join("actual-lesson.md"),
+        "# Real lesson\nPreserve ordering",
+    )
+    .unwrap();
+    let p = ingest::preview(&data, &root, &source(&data, &root, &wt)).unwrap();
+    let paths: Vec<_> = p["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, vec!["README.md", "actual-lesson.md"]);
+}

@@ -3,6 +3,12 @@ import { api, esc } from '../services/api.js';
 const labels = {queued:'等待开始',running:'正在整理',success:'整理完成',failed:'整理失败',cancelled:'已取消',interrupted:'整理已中断'};
 const running = job => job && ['queued','running'].includes(job.status);
 
+export function collectionDetails(collection) {
+  if(!collection)return '';
+  const skipped=collection.skipped||[];
+  return `<details class="knowledge-collection"><summary>本次资料读取情况${skipped.length?' · 存在未读取或未保存项':''}</summary><p>检查 ${esc(collection.worktree_count||0)} 个工作目录，读取 ${esc(collection.documents_read||0)} 篇候选资料。</p>${skipped.length?`<ul>${skipped.map(s=>`<li>${esc([s.directory,s.path].filter(Boolean).join(' / '))}：${esc(s.reason)}</li>`).join('')}</ul>`:''}</details>`;
+}
+
 export function KnowledgeOrganization(container, {rootPath}) {
   const root=document.createElement('section');root.className='knowledge-organization';container.append(root);
   let alive=true, state=null, job=null, timer=null, busy=false, checking=false, runner='codex', focus='';
@@ -12,7 +18,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
   const remember=()=>{runner=q('[data-organize-runner]')?.value||runner;focus=q('[data-organize-focus]')?.value||'';};
   function controls() {
     const pending=busy||running(job);
-    q('[data-organize-start]').disabled=checking||pending||!state?.source_count||!state.runners?.some(r=>r.id===runner&&r.available);
+    q('[data-organize-start]').disabled=checking||pending||!state?.runners?.some(r=>r.id===runner&&r.available);
     q('[data-organize-runner]').disabled=checking||pending;
     q('[data-organize-focus]').disabled=pending;
     q('[data-organize-detect]').disabled=checking||pending;
@@ -24,14 +30,17 @@ export function KnowledgeOrganization(container, {rootPath}) {
     const tools=state.runners||[];
     if(!tools.some(r=>r.id===runner&&r.available))runner=tools.find(r=>r.available)?.id||'codex';
     const report=state.report;
-    root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>已内置整理规则，无需填写提示词，直接开始即可。默认整理全部已入库资料中的业务知识、开发流程、模块约束、决策取舍和问题经验，保留当时背景、适用条件、演变与出处。</p>
-      <p data-organize-count>${esc(state.source_count||0)} 篇知识文档可整理</p>
+    const worktrees=state.worktrees||[];
+    root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>直接开始，无需填写提示词或挑选文档。AI 会从本仓库各工作目录的资料和已有知识中识别业务规则、开发流程、模块约束、决策取舍与问题经验，去重整理，保留背景、演变和出处。</p>
+      <p data-organize-count>已有 ${esc(state.source_count||0)} 篇知识资料 · 开始后自动收集 ${esc(worktrees.length)} 个工作目录及其子目录的资料</p>
+      <details data-organize-sources><summary>查看整理范围</summary><ul>${worktrees.map(s=>`<li>${esc(s.label)}<div class="path muted">${esc(s.path)}</div></li>`).join('')}</ul><p class="muted">保留原文和各分支出处，AI 按内容判断是否值得纳入开发知识。无法读取或超出范围的资料会在结果中说明。</p></details>
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>
       <details data-organize-options ${focus.trim()?'open':''}><summary>补充整理要求（可选）</summary><label>额外关注的内容<textarea data-organize-focus rows="2" maxlength="2000" placeholder="留空即按默认规则全面整理，例如也可补充：优先整理硬件连接的排障经验">${esc(focus)}</textarea></label></details>
       <p class="muted">调用所选工具的本机配置和登录状态，使用其模型服务。整理结果会保存到本项目知识库，后续检索可用。</p>
-      ${!state.source_count?'<p class="muted">先保存工作经验，再进行整理。配置恢复副本和资源快照不参与整理。</p>':''}
+      ${!state.source_count?'<p class="muted">还没有入库资料也可以直接开始，系统会自动读取工作目录内的文档。配置恢复副本和工具资源不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
+      <div data-organize-collection></div>
       <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库开发知识</summary><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
       <details data-organize-draft hidden><summary>本次未保存的整理草稿</summary><pre class="knowledge-organization-report"></pre></details>`;
     q('[data-organize-runner]').onchange=()=>{remember();controls();};
@@ -45,6 +54,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
     if(!job)return;
     const note=job.progress?.at(-1)||'';
     message((labels[job.status]||job.status)+(job.error?'：'+job.error:note?' · '+note:''));
+    q('[data-organize-collection]').innerHTML=collectionDetails(job.result?.collection);
     const draft=q('[data-organize-draft]');
     draft.hidden=!(job.result?.report&&!job.result.saved&&!running(job));
     if(!draft.hidden)draft.querySelector('pre').textContent=job.result.report;
@@ -71,6 +81,10 @@ export function KnowledgeOrganization(container, {rootPath}) {
     if(busy||running(job)||q('[data-organize-start]').disabled)return;
     remember();busy=true;controls();message('正在创建整理任务…');
     try {
+      const scope=await request({action:'organization-status'});
+      if(!alive)return;
+      for(const source of scope.worktrees||[])await api.approveDir(source.path);
+      if(!alive)return;
       const result=await request({action:'organize',runner,focus,idempotency_key:crypto.randomUUID()});
       if(!alive)return;
       job={id:result.job_id,status:'queued',progress:['等待本机 AI 工具开始整理']};
