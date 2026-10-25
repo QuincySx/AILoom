@@ -35,7 +35,7 @@
 ## 4. 打包（AIL-029 落地后）
 
 - [ ] 干净环境安装→version 一致→卸载不删用户配置
-- [ ] 升级安装：网页服务在运行时，安装后自动重启为新版本（`AILOOM_INSTALL_RESTART=0` 可关闭）；`tests/installer.rs` 覆盖
+- [ ] 升级安装：源码安装脚本会自动重启已运行服务（`AILOOM_INSTALL_RESTART=0` 可关闭，`tests/installer.rs` 覆盖）；npm/mise 包不运行安装生命周期脚本，安装后须用明确的新版本执行 `service restart`，核对 `build.version`、`update_required=false` 及端口保留
 - [ ] macOS 二进制签名与公证：需要 Apple Developer ID 证书与公证账号（尚未配置）；未签名的下载版会被 Gatekeeper 拦截，源码安装不受影响
 - [ ] 制品无开发机路径/秘密；hash 校验清单随包发布
 - [ ] npm 一次性配置：npmjs.com → `ailoom-cli` → Settings → Trusted Publisher 选 GitHub Actions，填 `QuincySx` / `AILoom` / `release.yml`；发布不需要令牌
