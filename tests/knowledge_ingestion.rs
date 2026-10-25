@@ -278,7 +278,7 @@ fn scan_skips_caches_nested_repositories_non_text_and_knowledge_itself() {
 }
 
 #[test]
-fn imported_documents_are_project_scoped_even_in_a_shared_library() {
+fn imported_documents_are_scoped_to_independent_repository_libraries() {
     let t = tempfile::tempdir().unwrap();
     let data = t.path().join("data");
     let library = t.path().join("shared");
@@ -286,7 +286,7 @@ fn imported_documents_are_project_scoped_even_in_a_shared_library() {
     let b = t.path().join("b");
     for root in [&a, &b] {
         std::fs::create_dir(root).unwrap();
-        init(&data, root, &library);
+        init(&data, root, &library.join(root.file_name().unwrap()));
     }
     std::fs::write(a.join("note.md"), "# A\nprivatequartzalpha").unwrap();
     std::fs::write(b.join("note.md"), "# B\nprivatequartzbeta").unwrap();

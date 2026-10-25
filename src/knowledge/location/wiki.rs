@@ -114,31 +114,44 @@ pub(super) fn source_owned(path: &Path, bytes: &[u8], project: &str, single_owne
 }
 
 pub(super) fn single_owner(cat: &Catalog, binding: &Binding, tree: &Tree, project: &str) -> bool {
-    if cat.projects.values().filter(|b| b.id == binding.id).count() > 1 {
+    if cat.projects.values().any(|b| {
+        b.id == binding.id
+            && b.project_root != binding.project_root
+            && super::super::portable::read(&b.project_root)
+                .ok()
+                .flatten()
+                .is_none_or(|d| d.project_id != project)
+    }) {
         return false;
     }
-    // A newly restored machine may know only one of the library's projects.
-    for p in tree.keys() {
+    tree_single_owner(tree, project)
+}
+
+pub(super) fn tree_single_owner(tree: &Tree, project: &str) -> bool {
+    // Persisted namespaces must also be checked when only one binding is restored.
+    for (p, bytes) in tree {
         let owner = p
             .strip_prefix("projects")
             .ok()
-            .filter(|p| p.ends_with("state.json") || p.ends_with("project.json"))
-            .or_else(|| {
-                p.strip_prefix("imports/worktrees")
-                    .ok()
-                    .filter(|p| p.ends_with("manifest.json"))
-            })
-            .or_else(|| {
-                p.strip_prefix("wiki")
-                    .ok()
-                    .filter(|p| p.ends_with("index.md"))
-            });
-        if let Some(owner) = owner
+            .or_else(|| p.strip_prefix("imports/worktrees").ok())
+            .or_else(|| p.strip_prefix("wiki").ok())
             .and_then(|p| p.components().next())
-            .and_then(|c| c.as_os_str().to_str())
-        {
-            if owner != project && owner != "index.md" {
-                return false;
+            .and_then(|c| c.as_os_str().to_str());
+        if owner.is_some_and(|id| id != project && id != "index.md") {
+            return false;
+        }
+        if owner.is_none() && p.extension().is_some_and(|e| e == "md") {
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                if let Ok(Some((fm, _))) = crate::resource::split_frontmatter(text) {
+                    if let Ok(meta) = serde_yaml::from_str::<Value>(&fm) {
+                        if meta["project_id"]
+                            .as_str()
+                            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok() && id != project)
+                        {
+                            return false;
+                        }
+                    }
+                }
             }
         }
     }
@@ -155,9 +168,13 @@ fn markdown_name(name: &str) -> String {
 /// It contains no machine paths and is not original evidence.
 pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<Tree> {
     let mut files = Tree::new();
-    let mut index = String::from("# 项目开发知识\n\n原始资料在 `imports/worktrees/<project-id>/`，项目经验在 `projects/<project-id>/learnings/`，整理结果在 `wiki/<project-id>/`。先按项目和主题阅读；原文、历史稿及未评估稿不等于当前约定。\n\n| 项目 | 整理知识 | 原始资料 | 项目关联 |\n|---|---|---|---|\n");
+    let mut index = String::from("# 仓库开发知识\n\n本目录独立归属于当前仓库。原始资料在 `imports/worktrees/<project-id>/`，项目经验在 `projects/<project-id>/learnings/`，整理结果在 `wiki/<project-id>/`。先按项目和主题阅读；原文、历史稿及未评估稿不等于当前约定。\n\n| 项目 | 整理知识 | 原始资料 | 项目关联 |\n|---|---|---|---|\n");
     let mut owners = BTreeSet::new();
-    for (repo, b) in cat.projects.iter().filter(|(_, b)| b.id == binding.id) {
+    for (repo, b) in cat
+        .projects
+        .iter()
+        .filter(|(_, b)| b.id == binding.id && b.project_root == binding.project_root)
+    {
         let id = match ingest::project_key(repo, &b.project_root) {
             Ok(id) => id,
             Err(_) => continue,
@@ -169,56 +186,7 @@ pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<T
         let metadata = Path::new("projects").join(&id).join("project.json");
         let entry = base(&id).join("index.md");
         let raw = Path::new(ingest::PREFIX).join(&id).join("index.md");
-        let related = relations::related(cat, &id, &b.project_root);
-        let relations_path = Path::new("projects").join(&id).join("relations.json");
-        files.insert(
-            relations_path,
-            serde_json::to_vec_pretty(&relations::portable(&related))?,
-        );
-        let mut project_readme=format!("# {} · 项目关联\n\n项目 ID：`{id}`\n\n知识库 ID：`{}`\n\n本项目仓库的 `.ailoom/knowledge.json` 声明同一组身份；本机位置由 AILoom 的项目登记解析，名称和目录不是身份。\n\n[全部项目](../../wiki/index.md) · [原文与出处](../../{}) · [机器可读关联](project.json) · [依赖依据](relations.json)\n\n## 依赖项目\n\n依赖关系只提供导航，不合并两边知识。下列关系来自当前项目 package.json 的声明与已登记项目包名匹配；不证明当前安装版本、代码兼容性或业务采用情况。使用目标知识前核对版本、分支、接口及评估状态；不能直接把目标项目约定套到本项目。\n\n",markdown_name(&name),binding.id,raw.display());
-        if related.projects.is_empty() {
-            project_readme.push_str(
-                "未发现可匹配的 npm 包依赖项目；这不表示没有其他语言、运行时或未登记依赖。\n",
-            );
-        }
-        for warning in &related.warnings {
-            project_readme.push_str(&format!("- {}\n", markdown_name(warning)));
-        }
-        for related in &related.projects {
-            let target = base(&related.project_id).join("index.md");
-            let target = if tree.contains_key(&target) {
-                target
-            } else {
-                Path::new("projects")
-                    .join(&related.project_id)
-                    .join("README.md")
-            };
-            let label = if related.knowledge_id == binding.id {
-                format!(
-                    "[{}](../../{})",
-                    markdown_name(&related.name),
-                    target.display()
-                )
-            } else {
-                format!(
-                    "{}（另一知识库 `{}`，通过 AILoom 的 related_projects 按项目 ID 解析位置）",
-                    markdown_name(&related.name),
-                    related.knowledge_id
-                )
-            };
-            project_readme.push_str(&format!("### {label}\n\n目标项目 ID：`{}`。对方尚未整理时入口仅说明身份与资料状态。\n\n| 依赖包 | 声明版本 | 本项目依据 | 对方包依据 | 对方工作副本版本 |\n|---|---|---|---|---|\n",related.project_id));
-            for package in &related.packages {
-                project_readme.push_str(&format!(
-                    "| `{}` | `{}` | `{}:{}` | `{}` | `{}` |\n",
-                    markdown_name(&package.package),
-                    markdown_name(&package.required),
-                    package.manifest.display(),
-                    package.field,
-                    package.provider_manifest.display(),
-                    markdown_name(package.provider_version.as_deref().unwrap_or("未记录"))
-                ));
-            }
-        }
+        let project_readme=format!("# {} · 仓库知识\n\n项目 ID：`{id}`\n\n知识库 ID：`{}`\n\n本库独立归属于此仓库；同一仓库的 Worktree 共用，其他仓库使用不同身份和目录。\n\n[本仓库知识入口](../../wiki/index.md) · [原文与出处](../../{}) · [机器可读关联](project.json)\n\n需要其他仓库的资料时，通过 CLI 按需查找其独立入口：\n\n```sh\nailoom --json knowledge --action locate --query '<仓库名、Git 地址或本地仓库路径>'\n```\n\n查询只返回匹配入口；读取时使用返回的 repository_root 作为 --root，各仓库知识分别维护。\n",markdown_name(&name),binding.id,raw.display());
         files.insert(
             Path::new("projects").join(&id).join("README.md"),
             project_readme.into_bytes(),
@@ -230,7 +198,7 @@ pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<T
                 "name":name,"declaration":".ailoom/knowledge.json",
                 "raw_sources":Path::new(ingest::PREFIX).join(&id),
                 "notes":Path::new("projects").join(&id).join("learnings"),"wiki":entry,
-            "relations":Path::new("projects").join(&id).join("relations.json"),"guide":Path::new("projects").join(&id).join("README.md"),
+            "guide":Path::new("projects").join(&id).join("README.md"),
             }))?,
         );
         let knowledge = if tree.contains_key(&entry) {
@@ -593,7 +561,7 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
         &input.documents,
         tree,
     )?;
-    let mut content=format!("---\n{fm}---\n\n# {} · 开发知识\n\n项目 ID：`{}` · 知识库 ID：`{}`\n\n[全部项目](../index.md) · [原文与出处](../../imports/worktrees/{}/index.md) · [项目关联与依赖](../../projects/{}/README.md)\n\n<a id=\"overview\"></a>\n\n{overview}\n\n<a id=\"index\"></a><a id=\"topics\"></a>\n\n{index}\n\n## 更多入口\n\n",markdown_name(&input.project_name),input.project_id,input.knowledge_id,input.project_id,input.project_id);
+    let mut content=format!("---\n{fm}---\n\n# {} · 开发知识\n\n项目 ID：`{}` · 知识库 ID：`{}`\n\n[本仓库知识入口](../index.md) · [原文与出处](../../imports/worktrees/{}/index.md) · [仓库关联](../../projects/{}/README.md)\n\n<a id=\"overview\"></a>\n\n{overview}\n\n<a id=\"index\"></a><a id=\"topics\"></a>\n\n{index}\n\n## 更多入口\n\n",markdown_name(&input.project_name),input.project_id,input.knowledge_id,input.project_id,input.project_id);
     for p in pages.iter().filter(|p| p.kind != "topic") {
         content.push_str(&format!(
             "- [{}]({})\n",

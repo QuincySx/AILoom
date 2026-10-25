@@ -297,8 +297,8 @@ pub enum Command {
     },
     /// 项目知识库与知识维护：status | init | save | recall | sync | move | …（详见 --action）
     Knowledge {
-        /// 动作：status | init | checkpoint | recover | clone | move | save | recall | sync；或 feedback | maintenance | promote | archive | restore
-        #[arg(long, value_parser = ["status", "init", "checkpoint", "recover", "clone", "move", "configure", "save", "recall", "sync", "feedback", "maintenance", "promote", "archive", "restore"])]
+        /// 动作：locate | status | init | separate | checkpoint | recover | clone | move | save | recall | sync；或 feedback | maintenance | promote | archive | restore
+        #[arg(long, value_parser = ["status", "locate", "separate", "init", "checkpoint", "recover", "clone", "move", "configure", "save", "recall", "sync", "feedback", "maintenance", "promote", "archive", "restore"])]
         action: String,
         /// 学习 ID
         #[arg(long)]

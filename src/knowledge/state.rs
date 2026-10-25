@@ -640,6 +640,15 @@ pub fn relocate(data: &Path, old: &Binding, next: &Binding) -> Result<()> {
     })
 }
 
+/// A legacy library split relocates only this project's packaged resources.
+pub fn relocate_project(data: &Path, old: &Binding, next: &Binding, project: &str) -> Result<()> {
+    let mut old = old.clone();
+    old.path = old.path.join("projects").join(project);
+    let mut next = next.clone();
+    next.path = next.path.join("projects").join(project);
+    relocate(data, &old, &next)
+}
+
 #[cfg(test)]
 mod catalog_tests {
     use super::*;

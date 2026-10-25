@@ -109,8 +109,6 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
         "raw_path":input.path.join("imports/worktrees").join(&input.project_id),
         "pages":input.previous_documents,
         "excluded_documents":input.excluded_documents,
-        "related_projects":input.related_projects,
-        "related_warnings":input.related_warnings,
         "runners":runners(),
         "report_key":input.report_path,
         "worktrees":input.worktrees,
@@ -194,8 +192,6 @@ fn prompt(prepared: &Prepared) -> String {
         } else { input.report_path.clone() }),
         "previous_documents":input.previous_documents,
         "excluded_documents":input.excluded_documents,
-        "related_projects":input.related_projects,
-        "related_warnings":input.related_warnings,
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
         "generated_at":crate::ids::now_iso(),
         "schema":"ailoom-repository-wiki/v1",
@@ -459,6 +455,39 @@ mod tests {
 
     fn test_report(body: &str) -> String {
         format!("# 仓库开发知识\n\n## index\n\n[迁移](#topic-migration)\n\n## overview\n\n测试资料范围。\n\n## topics\n\n### topic-migration\n\n主题：数据库迁移。\n\n{body}\n\n## maintenance\n\n参见[迁移](#topic-migration)。\n\n## questions\n\n无。\n\n## sources\n\n测试来源。\n\n## changes\n\n首次编纂。\n\n## validation\n\n尚未经独立评估。\n")
+    }
+
+    fn legacy_link(data: &Path, root: &Path, library: &Path) {
+        let temporary = root.parent().unwrap().join(format!(
+            "{}-old-library",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        location::run(
+            data,
+            &location::Request {
+                action: "init".into(),
+                root: root.into(),
+                path: Some(temporary),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let catalog = data.join("knowledge/bindings.json");
+        let mut cat: Value = serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
+        let marker: Value =
+            serde_json::from_slice(&std::fs::read(library.join("ailoom-knowledge.json")).unwrap())
+                .unwrap();
+        for binding in cat["projects"].as_object_mut().unwrap().values_mut() {
+            if Path::new(binding["project_root"].as_str().unwrap()) == root.canonicalize().unwrap()
+            {
+                binding["id"] = marker["id"].clone();
+                binding["path"] = json!(library);
+            }
+        }
+        std::fs::write(catalog, serde_json::to_vec_pretty(&cat).unwrap()).unwrap();
+        let mut d = crate::knowledge::portable::read(root).unwrap().unwrap();
+        d.knowledge_id = marker["id"].as_str().unwrap().into();
+        crate::knowledge::portable::write(root, &d).unwrap();
     }
 
     fn git(root: &Path, args: &[&str]) {
@@ -737,16 +766,7 @@ mod tests {
         let first = prepared(&data, &root);
         let other = tmp.path().join("other-project");
         std::fs::create_dir(&other).unwrap();
-        location::run(
-            &data,
-            &location::Request {
-                action: "init".into(),
-                root: other.clone(),
-                path: Some(first.input.path.clone()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        legacy_link(&data, &other, &first.input.path);
         let second = prepared(&data, &other);
         assert_eq!(first.knowledge_id(), second.knowledge_id());
         assert_ne!(first.report_key(), second.report_key());
@@ -779,16 +799,7 @@ mod tests {
         let first = prepared(&data, &root);
         let other = tmp.path().join("sdk");
         std::fs::create_dir(&other).unwrap();
-        location::run(
-            &data,
-            &location::Request {
-                action: "init".into(),
-                root: other.clone(),
-                path: Some(first.input.path.clone()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        legacy_link(&data, &other, &first.input.path);
         let draft = tmp.path().join("sdk.md");
         std::fs::write(&draft, "# SDK-only\nSDK boundary").unwrap();
         location::save(&data, &other, &draft, "migration").unwrap();
@@ -850,41 +861,33 @@ mod tests {
         location::save(&data, &sdk, &draft, "migration").unwrap();
         let app = prepared(&data, &root);
         let target = prepared(&data, &sdk);
-        assert_eq!(app.input.related_projects.len(), 1);
-        let related = &app.input.related_projects[0];
-        assert_eq!(related.project_id, target.input.project_id);
-        assert_ne!(related.knowledge_id, app.input.knowledge_id);
-        assert_eq!(related.packages[0].required, "1.2.0");
+        let found = location::locate(&data, "sdk", 5).unwrap();
+        assert_eq!(found["status"], "found");
         assert_eq!(
-            related.packages[0].provider_version.as_deref(),
-            Some("2.0.0")
-        );
-        assert_eq!(
-            related.packages[0].provider_manifest,
-            Path::new("packages/core/package.json")
-        );
-        let recalled = location::recall(&data, &root, "SDK-only", 50).unwrap();
-        assert_eq!(
-            recalled["related_projects"][0]["project_id"],
+            found["candidates"][0]["project_id"],
             target.input.project_id
         );
+        assert_ne!(
+            found["candidates"][0]["knowledge_id"],
+            app.input.knowledge_id
+        );
+        let recalled = location::recall(&data, &root, "SDK-only", 50).unwrap();
+        assert!(recalled.get("related_projects").is_none());
         assert!(!recalled["results"]
             .as_array()
             .unwrap()
             .iter()
             .any(|h| h["excerpt"].as_str().unwrap().contains("SDK-only")));
         publish(&data, &app, &test_report("App integration contract")).unwrap();
-        let relation_file = app
+        let guide = app
             .input
             .path
             .join("projects")
             .join(&app.input.project_id)
-            .join("relations.json");
-        let portable = std::fs::read_to_string(relation_file).unwrap();
-        assert!(
-            !portable.contains(tmp.path().to_str().unwrap()),
-            "machine paths stay in local resolver responses"
-        );
+            .join("README.md");
+        let text = std::fs::read_to_string(guide).unwrap();
+        assert!(text.contains("--action locate"));
+        assert!(!text.contains(tmp.path().to_str().unwrap()));
     }
 
     #[test]
@@ -961,7 +964,13 @@ mod tests {
         std::fs::write(root.join("package.json"), "{}").unwrap();
         std::fs::write(other.join(".ailoom/knowledge.json"), "invalid-json").unwrap();
         let current = prepared(&data, &root);
-        assert_eq!(current.input.related_warnings.len(), 1);
+        assert_eq!(
+            location::locate(&data, "broken-sdk", 5).unwrap()["warnings"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         assert!(location::recall(&data, &root, "迁移", 5).is_ok());
         std::fs::create_dir_all(p.input.path.join("wiki/index.md")).unwrap();
         assert!(publish(&data, &current, &test_report("must-not-commit")).is_err());

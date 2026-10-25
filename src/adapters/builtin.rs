@@ -50,7 +50,7 @@ pub fn render(targets: &ToolTargets, builtins_enabled: bool) -> Vec<Artifact> {
             kind: "doc".into(),
             path: "AGENTS.md".into(),
             body: ArtifactBody::Fragment {
-                content: "### 团队知识检索（AILoom）\n\n需要团队经验时运行：`ailoom recall --query \"<关键词>\"`（手动入口，可关闭：ailoom init --no-builtin）".into(),
+                content: "### 团队知识检索（AILoom）\n\n需要团队经验时运行：`ailoom recall --query \"<关键词>\"`。任务需要其他仓库知识时，先用 `ailoom knowledge --action locate --query \"<仓库名、Git 地址或路径>\"` 定位，再用返回的仓库作为 --root 查询；各仓库知识独立。可关闭：ailoom init --no-builtin".into(),
             },
         });
     }

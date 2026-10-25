@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 pub mod ingest;
-mod relations;
+mod lookup;
+mod separate;
 mod wiki;
 
 const MARKER: &str = "ailoom-knowledge.json";
@@ -249,8 +250,6 @@ pub(super) struct OrganizationInput {
     pub previous_report: Option<String>,
     pub previous_documents: Vec<wiki::Page>,
     pub excluded_documents: Vec<PathBuf>,
-    pub related_projects: Vec<relations::RelatedProject>,
-    pub related_warnings: Vec<String>,
     pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     pub worktrees: Vec<ingest::Source>,
     fingerprint: String,
@@ -274,7 +273,6 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     let project_id = super::portable::read(&root)?
         .map(|d| d.project_id)
         .unwrap_or(id);
-    let related = relations::related(&cat, &project_id, &root);
     let report_path = wiki::base(&project_id).join("index.md");
     let origins = ingest::current_documents(&tree, &project_id)?;
     let previous_documents = wiki::current(&tree, &project_id)?;
@@ -327,8 +325,6 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         previous_report,
         previous_documents,
         excluded_documents,
-        related_projects: related.projects,
-        related_warnings: related.warnings,
         origins,
         worktrees,
         fingerprint,
@@ -513,6 +509,9 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
     let _guard = lock(data)?;
     let mut cat = load(data)?;
     let (id, root) = project(data, &r.root, &cat)?;
+    if r.action == "separate" {
+        return separate::run(data, r, &mut cat, &id, &root);
+    }
     if r.action == "clone" {
         return super::portable::clone_repository(
             &root,
@@ -530,7 +529,8 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             }
             Some(b) => {
                 let tree = checked_tree(b)?;
-                json!({"initialized":true,"project_id":id,"project_root":root,"location":b,"files":tree.len()-1,"fingerprint":digest(&tree),"pending":hashes(&tree)!=b.baseline,"recovery":recovery})
+                json!({"initialized":true,"project_id":id,"project_root":root,"location":b,"files":tree.len()-1,"fingerprint":digest(&tree),"pending":hashes(&tree)!=b.baseline,"recovery":recovery,
+                    "needs_separation":!wiki::single_owner(&cat,b,&tree,&super::portable::read(&root)?.map(|d|d.project_id).unwrap_or_default()),"default_path":data.join("knowledge/projects").join(&id)})
             }
         });
     }
@@ -555,6 +555,18 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             baseline: BTreeMap::new(),
         };
         let tree = checked_tree(&b)?;
+        // Older libraries had no marker owner and could contain several projects.
+        // Register them for explicit separation without restoring another project's state.
+        let marker: Value = serde_json::from_slice(&tree[Path::new(MARKER)])?;
+        let legacy_shared = marker["project_id"].is_null()
+            && !wiki::single_owner(&Catalog::default(), &b, &tree, &declaration.project_id)
+            && tree
+                .keys()
+                .any(|p| p.starts_with(Path::new("projects").join(&declaration.project_id)));
+        if !legacy_shared {
+            separate::validate_owner(&tree, &declaration.project_id)?;
+            separate::exclusive(&cat, &id, &root, &b.path, Some(&b.id))?;
+        }
         if let Some(existing) = cat
             .projects
             .values()
@@ -565,7 +577,11 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 existing.path.display()
             )));
         }
-        let restored = super::state::restore(data, &id, &b, &declaration, false)?;
+        let restored = if legacy_shared {
+            json!({"deferred":true,"reason":"旧共享库请先 separate 拆分"})
+        } else {
+            super::state::restore(data, &id, &b, &declaration, false)?
+        };
         let token = crate::ids::sha256_hex(&serde_json::to_vec(
             &json!({"declaration":declaration,"path":b.path,"tree":digest(&tree),"old":cat.projects.get(&id),"local":super::state::local_fingerprint(data,&id)?}),
         )?);
@@ -578,10 +594,14 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             return Err(fail("恢复内容已变化，请重新预览"));
         }
         register(data, &id, &b)?;
-        super::state::restore(data, &id, &b, &declaration, true)?;
+        if !legacy_shared {
+            super::state::restore(data, &id, &b, &declaration, true)?;
+        }
         cat.projects.insert(id.clone(), b.clone());
         persist(data, &cat)?;
-        return Ok(json!({"recovered":true,"initialized":true,"project_id":id,"location":b}));
+        return Ok(
+            json!({"recovered":true,"initialized":true,"project_id":id,"location":b,"needs_separation":legacy_shared}),
+        );
     }
     if r.action == "init" {
         let dest = destination(
@@ -589,6 +609,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 .as_deref()
                 .unwrap_or(&data.join("knowledge/projects").join(&id)),
         )?;
+        separate::exclusive(&cat, &id, &root, &dest, None)?;
         if let Some(b) = cat.projects.get(&id) {
             if b.path == dest {
                 checked_tree(b)?;
@@ -620,6 +641,18 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| fail("无效知识库标识"))?
                 .into();
+            separate::exclusive(&cat, &id, &b.project_root, &dest, Some(&b.id))?;
+            if let Some(owner) = v["project_id"].as_str() {
+                if super::portable::read(&b.project_root)?
+                    .as_ref()
+                    .map(|d| d.project_id.as_str())
+                    != Some(owner)
+                {
+                    return Err(fail(
+                        "该目录属于另一仓库，请使用本仓库的独立知识目录或恢复配置",
+                    ));
+                }
+            }
             checked_tree(&b)?;
             if let Some(existing) = cat.projects.values().find(|old| old.id == b.id) {
                 if existing.path != dest {
@@ -647,6 +680,13 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             )?;
         }
         let declaration = super::portable::describe(&b)?;
+        separate::validate_owner(&checked_tree(&b)?, &declaration.project_id)?;
+        crate::sync_common::atomic_write(
+            &dest.join(MARKER),
+            &serde_json::to_vec_pretty(
+                &json!({"schema_version":1,"id":b.id,"project_id":declaration.project_id}),
+            )?,
+        )?;
         super::portable::write(&b.project_root, &declaration)?;
         register(data, &id, &b)?;
         cat.projects.insert(id.clone(), b.clone());
@@ -667,6 +707,13 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         let state = super::state::checkpoint(data, &id, &old, &declaration)?;
         super::portable::write(&old.project_root, &declaration)?;
         return Ok(json!({"saved":true,"declaration":declaration,"state":state}));
+    }
+    if matches!(r.action.as_str(), "move" | "configure" | "sync") {
+        let declaration = super::portable::read(&root)?.ok_or_else(|| fail("项目恢复配置缺失"))?;
+        if !wiki::single_owner(&cat, &old, &source, &declaration.project_id) {
+            return Err(fail("旧共享库请先使用 separate 拆分，再迁移或同步"));
+        }
+        separate::validate_owner(&source, &declaration.project_id)?;
     }
     if r.action == "sync" {
         return sync(data, &mut cat, &old, &source);
@@ -697,6 +744,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         return Err(fail("未知知识库操作"));
     }
     let dest = destination(r.path.as_deref().ok_or_else(|| fail("请选择目标目录"))?)?;
+    separate::exclusive(&cat, &id, &root, &dest, None)?;
     if old.path.starts_with(&dest) || dest.starts_with(&old.path) {
         return Err(fail("新旧位置相同或嵌套，不能迁移"));
     }
@@ -795,6 +843,12 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         }
     }
     Ok(result)
+}
+
+/// Find another repository's knowledge only when explicitly queried.
+pub fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
+    let _guard = lock(data)?;
+    lookup::locate(data, query, limit)
 }
 
 pub fn is_initialized(data: &Path, root: &Path) -> Result<bool> {
@@ -957,12 +1011,11 @@ pub fn recall_filtered(
             value
         })
         .collect();
-    let related = relations::related(&cat, &project_id, &owner);
     Ok(
         json!({"results":results,"knowledge_id":b.id,"project_id":project_id,"query":query,
         "source_index":b.path.join("imports/worktrees").join(&project_id).join("index.md"),
         "wiki_index":b.path.join(wiki::base(&project_id)).join("index.md"),
-        "related_projects":related.projects,"related_warnings":related.warnings}),
+        "scope":"current_repository"}),
     )
 }
 
@@ -1062,6 +1115,9 @@ fn sync(data: &Path, cat: &mut Catalog, b: &Binding, local: &Tree) -> Result<Val
     let mut local = local.clone();
     if let Some(marker) = incoming.get(Path::new(MARKER)) {
         let m: Value = serde_json::from_slice(marker)?;
+        let declaration =
+            super::portable::read(&b.project_root)?.ok_or_else(|| fail("项目恢复配置缺失"))?;
+        separate::validate_owner(&incoming, &declaration.project_id)?;
         if m["id"].as_str() != Some(&b.id) {
             if local.len() == 1 && b.baseline.is_empty() {
                 next.id = m["id"]

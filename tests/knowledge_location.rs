@@ -149,7 +149,7 @@ fn conflicts_stale_preview_and_nested_paths_do_not_switch() {
     );
 }
 #[test]
-fn shared_knowledge_moves_all_project_links_without_mixing_other_projects() {
+fn independent_repository_libraries_cannot_be_joined_and_move_separately() {
     let t = tempfile::tempdir().unwrap();
     let data = t.path().join("data");
     let roots: Vec<PathBuf> = (0..3)
@@ -161,15 +161,17 @@ fn shared_knowledge_moves_all_project_links_without_mixing_other_projects() {
         .collect();
     let old = t.path().join("old");
     init(&data, &roots[0], &old);
-    init(&data, &roots[1], &old);
+    assert!(location::run(&data, &req("init", &roots[1], Some(&old))).is_err());
+    let second = t.path().join("second");
+    init(&data, &roots[1], &second);
     let separate = t.path().join("separate");
     init(&data, &roots[2], &separate);
     let dest = t.path().join("moved");
     let result = move_to(&data, &roots[0], &dest);
-    assert_eq!(result["affected_projects"].as_array().unwrap().len(), 2);
+    assert_eq!(result["affected_projects"].as_array().unwrap().len(), 1);
     assert_eq!(
         location::run(&data, &req("status", &roots[1], None)).unwrap()["location"]["path"],
-        dest.canonicalize().unwrap().to_str().unwrap()
+        second.canonicalize().unwrap().to_str().unwrap()
     );
     assert_eq!(
         location::run(&data, &req("status", &roots[2], None)).unwrap()["location"]["path"],
@@ -215,6 +217,14 @@ fn git_sync_round_trip_after_move_preserves_other_paths_and_reports_conflicts() 
     r.root = root3.clone();
     r.path = Some(c.clone());
     location::run(&data2, &r).unwrap();
+    // Same repository identity on another device; a different repository must not adopt it.
+    let mut declaration = ailoom::knowledge::portable::read(&root3).unwrap().unwrap();
+    declaration.project_id = ailoom::knowledge::portable::read(&root)
+        .unwrap()
+        .unwrap()
+        .project_id;
+    ailoom::knowledge::portable::write(&root3, &declaration).unwrap();
+    std::fs::write(c.join("ailoom-knowledge.json"), serde_json::to_vec(&serde_json::json!({"schema_version":1,"id":declaration.knowledge_id,"project_id":declaration.project_id})).unwrap()).unwrap();
     location::run(&data2, &req("sync", &root3, None)).unwrap();
     let moved = t.path().join("outside/moved");
     move_to(&data, &root, &moved);

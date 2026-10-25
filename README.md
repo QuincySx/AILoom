@@ -64,3 +64,13 @@ python3 scripts/docs_check.py      # 断链、卡片状态一致性、看板生�
 ```
 
 测试数量与逐卡证据记录在各卡片与 docs/reviews/，README 不再维护快照数字。
+
+按需查找另一个仓库的独立知识库：
+
+```bash
+ailoom --json knowledge --action locate --query "hardware-js-sdk"
+ailoom --json knowledge --action locate --query "https://github.com/owner/repository"
+ailoom --json knowledge --action recall --root "/返回的仓库路径" --query "接口有哪些版本约束？"
+```
+
+查找只返回入口，重名会列候选；各仓库的原文、Wiki 和读写绑定独立。同仓库的 Worktree 共用本仓库知识。

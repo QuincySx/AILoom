@@ -80,6 +80,8 @@ fn run(cli: &cli::Cli) -> Result<()> {
         }) if matches!(
             action.as_str(),
             "status"
+                | "locate"
+                | "separate"
                 | "init"
                 | "move"
                 | "save"
@@ -92,13 +94,22 @@ fn run(cli: &cli::Cli) -> Result<()> {
         ) =>
         {
             let data = ailoom::paths::resolve_data_root(cli.data_root.as_deref())?;
-            let root = root.clone().unwrap_or(std::env::current_dir()?);
+            let root = match root {
+                Some(root) => root.clone(),
+                None if action == "locate" => std::path::PathBuf::new(),
+                None => std::env::current_dir()?,
+            };
             let required = |v: Option<String>, label: &str| {
                 v.ok_or_else(|| {
                     ailoom::error::Error::new(ailoom::error::code::USAGE, format!("缺少 --{label}"))
                 })
             };
             let value = match action.as_str() {
+                "locate" => ailoom::knowledge::location::locate(
+                    &data,
+                    &required(query.clone(), "query")?,
+                    *limit,
+                )?,
                 "save" => ailoom::knowledge::location::save(
                     &data,
                     &root,

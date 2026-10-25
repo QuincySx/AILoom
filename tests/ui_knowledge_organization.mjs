@@ -7,10 +7,10 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
     const root='/fixture/projects/knowledge-organization-with-a-long-directory-name';
     const injection='<img src=x onerror="window.knowledgeInjection=true">';
     const fixture=window.knowledgeOrganization={
-      root,injection,initialized:true,sourceCount:3,
+      root,injection,initialized:true,sourceCount:3,needsSeparation:false,path:'/fixture/Knowledge',
       report:'# 已保存的维护建议\n\n旧报告保留原始记录与出处。\n'+injection,
       runners:[{id:'codex',name:'Codex',available:true,executable:'/fixture/bin/codex'},{id:'claude',name:'Claude Code',available:true,executable:'/fixture/bin/claude'},{id:'pi',name:'Pi',available:false,executable:null},{id:'cursor',name:'Cursor',available:true,executable:'/fixture/bin/agent'}],
-      calls:{status:0,start:[],poll:[],cancel:[],checkpoint:0,pages:[]},jobs:[],latest:null,
+      calls:{status:0,start:[],poll:[],cancel:[],checkpoint:0,pages:[],separate:[]},jobs:[],latest:null,
       failStatus:0,failStart:0,failPoll:0,failCancel:0,holdStart:false,holdStatus:false,holdCancel:false,
     };
     fixture.finish=(id,status,report,saved=false)=>{
@@ -25,7 +25,8 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
       if(body.root!==root)throw Error('Unexpected fixture root');
       if(body.action==='inspect')return {git:null};
       if(body.action==='ingestion-status')return {sources:[],document_count:0,revision_count:0,knowledge_path:'/fixture/Knowledge'};
-      if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:'/fixture/Knowledge'}:null,default_path:'/fixture/Knowledge'};
+      if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:fixture.path}:null,needs_separation:fixture.needsSeparation,default_path:fixture.needsSeparation?'/fixture/IndependentKnowledge':'/fixture/Knowledge'};
+      if(body.action==='separate'){fixture.calls.separate.push(body);if(!body.execute)return {preview:true,expected:'split-preview',to:body.path,files:12,affected_projects:['knowledge-fixture'],unassigned_sources:['unknown.md']};if(body.expected!=='split-preview')throw Error('Wrong preview token');fixture.needsSeparation=false;fixture.path=body.path;return {separated:true};}
       if(body.action==='checkpoint'){fixture.calls.checkpoint++;return {};}
       if(body.action==='organization-page'){fixture.calls.pages.push(body.page);return {path:body.page,body:'# 独立模块知识\n'+injection};}
       if(body.action==='organization-status'){
@@ -106,7 +107,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
 
   await waitFor("document.querySelector('[data-organize-count]')?.textContent.includes('已有 3 篇知识资料')");
     await waitFor("!!document.querySelector('[data-wiki-page]')");
-  await assert("document.querySelector('[data-organize-project]').textContent.includes('App ') && document.querySelector('[data-organize-related] a').getAttribute('href')==='#/projects/sdk-project/knowledge'",'Project identity or dependency navigation is missing');
+  await assert("document.querySelector('[data-organize-project]').textContent.includes('App ') && !document.querySelector('[data-organize-related]')",'Project identity or dependency navigation is missing');
   await evaluate("document.querySelector('[data-wiki-page]').click()");
   await waitFor("document.querySelector('[data-organize-report] pre').textContent.includes('独立模块知识')");
   await assert("window.knowledgeOrganization.calls.pages.length===1 && !window.knowledgeInjection && !document.querySelector('.knowledge-organization img')",'Independent page is not loaded safely');
@@ -234,6 +235,17 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理完成') && !document.querySelector('[data-organize-start]').disabled");
   await assert("!document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default completion opens or fills the optional input');
   await capture('default-complete',390);
+  // An older shared library offers an explicit, repository-only split with a reviewable preview.
+  await visitHistory();await evaluate('window.knowledgeOrganization.needsSeparation=true');await visitKnowledge();
+  await evaluate("document.querySelector('.knowledge-location').open=true");
+  await assert("document.querySelector('[data-submit]').textContent==='预览拆分' && document.querySelector('[name=path]').value==='/fixture/IndependentKnowledge'",'Legacy library does not offer an independent destination');
+  await evaluate("document.querySelector('[data-form]').requestSubmit()");
+  await waitFor("document.querySelector('[data-submit]').textContent==='拆分并切换'");
+  await assert("document.querySelector('[data-preview]').textContent.includes('1 篇旧文档尚无明确归属') && window.knowledgeOrganization.calls.separate[0].execute===false",'Split preview omits ownership gaps or performs writes');
+  for(const width of [1440,390,320])await capture('separation-preview',width,'.knowledge-location');
+  await evaluate("document.querySelector('[data-form]').requestSubmit()");
+  await waitFor("document.querySelector('.knowledge-location [data-message]').textContent.includes('已建立当前仓库的独立知识库')");
+  await assert("window.knowledgeOrganization.calls.separate.length===2 && window.knowledgeOrganization.calls.separate[1].expected==='split-preview' && window.knowledgeOrganization.calls.separate[1].execute===true",'Split confirmation lost the exact preview token');
   await writeFile(output+'-layout.json',JSON.stringify(layouts,null,2)+'\n');
   const calls=await evaluate('window.knowledgeOrganization.calls');
   console.log(JSON.stringify({checks:'default rules without input, runner/focus, duplicate guards, detection, polling errors/remount, saved report refresh, unsaved failed draft, cancellation retry, initial/status/start errors, empty notes/missing CLI, escaped text, history reports',startRequests:calls.start.length,cancelRequests:calls.cancel.length,statusRequests:calls.status,layouts:layouts.length}));
