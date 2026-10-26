@@ -101,19 +101,21 @@ pub(super) fn post_knowledge(state: &Arc<ServerState>, req: &Request) -> Respons
             if r.action == "organize" {
                 return super::knowledge_organize::start(state, &r.root, req);
             }
-            if let Some(p) = &r.path {
-                let dest = match crate::knowledge::location::destination(p) {
-                    Ok(p) => p,
-                    Err(e) => return collection_response(Err(e)),
-                };
-                let mut ancestor = dest.as_path();
-                while !ancestor.exists() {
-                    ancestor = ancestor.parent().unwrap();
+            for field in [&mut r.path, &mut r.repository_path] {
+                if let Some(p) = field.as_ref() {
+                    let dest = match crate::knowledge::location::destination(p) {
+                        Ok(p) => p,
+                        Err(e) => return collection_response(Err(e)),
+                    };
+                    let mut ancestor = dest.as_path();
+                    while !ancestor.exists() {
+                        ancestor = ancestor.parent().unwrap();
+                    }
+                    if let Err(e) = ensure_within_roots(state, ancestor) {
+                        return Response::json(403, json!({"error":e}));
+                    }
+                    *field = Some(dest);
                 }
-                if let Err(e) = ensure_within_roots(state, ancestor) {
-                    return Response::json(403, json!({"error":e}));
-                }
-                r.path = Some(dest);
             }
             collection_response(crate::knowledge::location::run(&state.data_root, &r))
         }

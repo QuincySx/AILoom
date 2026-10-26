@@ -12,6 +12,7 @@ pub(crate) mod layout;
 mod lookup;
 mod publication;
 mod rebuild;
+mod repository;
 mod separate;
 mod wiki;
 
@@ -42,12 +43,18 @@ struct Catalog {
     /// 契约 §0：机器可读文件带 schema_version；旧文件缺省按 1 读取。
     #[serde(default = "schema_v1")]
     schema_version: u32,
+    #[serde(default)]
+    repository_path: Option<PathBuf>,
+    #[serde(default)]
+    repositories: BTreeMap<String, PathBuf>,
     projects: BTreeMap<String, Binding>,
 }
 impl Default for Catalog {
     fn default() -> Self {
         Catalog {
             schema_version: 1,
+            repository_path: None,
+            repositories: BTreeMap::new(),
             projects: BTreeMap::new(),
         }
     }
@@ -456,11 +463,12 @@ pub fn organization_page(data: &Path, root: &Path, page: &Path) -> Result<Value>
         .unwrap_or_else(|| body.to_string());
     Ok(json!({"path":page,"body":display}))
 }
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct Request {
     pub action: String,
     pub root: PathBuf,
     pub path: Option<PathBuf>,
+    pub repository_path: Option<PathBuf>,
     pub expected: Option<String>,
     #[serde(default)]
     pub execute: bool,
@@ -536,11 +544,47 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
     let _guard = lock(data)?;
     let mut cat = load(data)?;
     let (id, root) = project(data, &r.root, &cat)?;
+    let owner = cat
+        .projects
+        .get(&id)
+        .map(|b| b.project_root.clone())
+        .unwrap_or_else(|| root.clone());
+    let (prepared, repository) = repository::prepare(data, &cat, &owner, r)?;
+    let mut result = run_project(data, &prepared, &mut cat, id, root.clone())?;
+    if r.action == "status" {
+        repository::status(data, &cat, &owner, &mut result);
+    }
+    if let Some(repository) = repository.filter(|_| result["preview"] != true) {
+        if let Some(id) = result["location"]["id"].as_str() {
+            cat.repositories.insert(id.into(), repository.clone());
+        }
+        cat.repository_path = Some(repository.clone());
+        persist(data, &cat)?;
+        if let Err(e) = repository::navigation(&cat, &repository) {
+            result["navigation_warning"] = json!(e.to_string());
+        }
+        result["repository_path"] = json!(repository);
+    } else if result["moved"] == true {
+        if let Some(id) = result["location"]["id"].as_str() {
+            cat.repositories.remove(id);
+            persist(data, &cat)?;
+        }
+    }
+    Ok(result)
+}
+
+fn run_project(
+    data: &Path,
+    r: &Request,
+    cat: &mut Catalog,
+    id: String,
+    root: PathBuf,
+) -> Result<Value> {
     if r.action == "reset-wiki" {
-        return rebuild::run(data, r, &cat, &id, &root);
+        return rebuild::run(data, r, cat, &id, &root);
     }
     if r.action == "separate" {
-        return separate::run(data, r, &mut cat, &id, &root);
+        return separate::run(data, r, cat, &id, &root);
     }
     if r.action == "clone" {
         return super::portable::clone_repository(
@@ -560,7 +604,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             Some(b) => {
                 let tree = checked_tree(b)?;
                 json!({"initialized":true,"project_id":id,"project_root":root,"location":b,"files":tree.len()-1,"fingerprint":digest(&tree),"pending":hashes(&tree)!=b.baseline,"recovery":recovery,
-                    "needs_separation":!wiki::single_owner(&cat,b,&tree,&super::portable::read(&root)?.map(|d|d.project_id).unwrap_or_default()),"default_path":data.join("knowledge/projects").join(&id)})
+                    "needs_separation":!wiki::single_owner(cat,b,&tree,&super::portable::read(&root)?.map(|d|d.project_id).unwrap_or_default()),"default_path":data.join("knowledge/projects").join(&id)})
             }
         });
     }
@@ -595,7 +639,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 .any(|p| p.starts_with(Path::new("projects").join(&declaration.project_id)));
         if !legacy_shared {
             separate::validate_owner(&tree, &declaration.project_id)?;
-            separate::exclusive(&cat, &id, &root, &b.path, Some(&b.id))?;
+            separate::exclusive(cat, &id, &root, &b.path, Some(&b.id))?;
         }
         if let Some(existing) = cat
             .projects
@@ -628,7 +672,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             super::state::restore(data, &id, &b, &declaration, true)?;
         }
         cat.projects.insert(id.clone(), b.clone());
-        persist(data, &cat)?;
+        persist(data, cat)?;
         return Ok(
             json!({"recovered":true,"initialized":true,"project_id":id,"location":b,"needs_separation":legacy_shared}),
         );
@@ -639,7 +683,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 .as_deref()
                 .unwrap_or(&data.join("knowledge/projects").join(&id)),
         )?;
-        separate::exclusive(&cat, &id, &root, &dest, None)?;
+        separate::exclusive(cat, &id, &root, &dest, None)?;
         if let Some(b) = cat.projects.get(&id) {
             if b.path == dest {
                 checked_tree(b)?;
@@ -652,7 +696,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 super::portable::write(&b.project_root, &declaration)?;
                 if b.remote.is_none() {
                     let tree = checked_tree(b)?;
-                    write_tree(&b.path, &wiki::catalog(&tree, &cat, b)?)?;
+                    write_tree(&b.path, &wiki::catalog(&tree, cat, b)?)?;
                 }
                 return Ok(json!({"initialized":true,"project_id":id,"location":b,"state":state}));
             }
@@ -675,7 +719,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| fail("无效知识库标识"))?
                 .into();
-            separate::exclusive(&cat, &id, &b.project_root, &dest, Some(&b.id))?;
+            separate::exclusive(cat, &id, &b.project_root, &dest, Some(&b.id))?;
             if let Some(owner) = v["project_id"].as_str() {
                 if super::portable::read(&b.project_root)?
                     .as_ref()
@@ -724,7 +768,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         super::portable::write(&b.project_root, &declaration)?;
         register(data, &id, &b)?;
         cat.projects.insert(id.clone(), b.clone());
-        persist(data, &cat)?;
+        persist(data, cat)?;
         // Legacy explicit remote-sync initialization adopts a remote marker on first sync.
         // Keep its empty bootstrap eligible; new directory-based initialization snapshots now.
         let state = if b.remote.is_none() {
@@ -734,11 +778,11 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         };
         if b.remote.is_none() {
             let tree = checked_tree(&b)?;
-            write_tree(&b.path, &wiki::catalog(&tree, &cat, &b)?)?;
+            write_tree(&b.path, &wiki::catalog(&tree, cat, &b)?)?;
         }
         return Ok(json!({"initialized":true,"project_id":id,"location":b,"state":state}));
     }
-    let old = binding(&cat, &id)?.clone();
+    let old = binding(cat, &id)?.clone();
     let source = checked_tree(&old)?;
     if r.action == "checkpoint" {
         let declaration = super::portable::describe(&old)?;
@@ -748,13 +792,13 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
     }
     if matches!(r.action.as_str(), "move" | "configure" | "sync") {
         let declaration = super::portable::read(&root)?.ok_or_else(|| fail("项目恢复配置缺失"))?;
-        if !wiki::single_owner(&cat, &old, &source, &declaration.project_id) {
+        if !wiki::single_owner(cat, &old, &source, &declaration.project_id) {
             return Err(fail("旧共享库请先使用 separate 拆分，再迁移或同步"));
         }
         separate::validate_owner(&source, &declaration.project_id)?;
     }
     if r.action == "sync" {
-        return sync(data, &mut cat, &old, &source);
+        return sync(data, cat, &old, &source);
     }
     if r.action == "configure" {
         let mut next = old.clone();
@@ -775,14 +819,14 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
             *b = next.clone();
             b.project_root = root;
         }
-        persist(data, &cat)?;
+        persist(data, cat)?;
         return Ok(json!({"configured":true,"location":next}));
     }
     if r.action != "move" {
         return Err(fail("未知知识库操作"));
     }
     let dest = destination(r.path.as_deref().ok_or_else(|| fail("请选择目标目录"))?)?;
-    separate::exclusive(&cat, &id, &root, &dest, None)?;
+    separate::exclusive(cat, &id, &root, &dest, None)?;
     if old.path.starts_with(&dest) || dest.starts_with(&old.path) {
         return Err(fail("新旧位置相同或嵌套，不能迁移"));
     }
@@ -817,7 +861,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
     next.path = dest.clone();
     sync_settings(&mut next, r)?;
     let token = crate::ids::sha256_hex(&serde_json::to_vec(
-        &json!({"source":digest(&source),"target":digest(&target),"old":old,"next":next,"sync_after":r.sync_after}),
+        &json!({"source":digest(&source),"target":digest(&target),"old":old,"next":next,"sync_after":r.sync_after,"repository_path":r.repository_path}),
     )?);
     let affected: Vec<_> = cat
         .projects
@@ -857,7 +901,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         let declaration = super::portable::describe(b)?;
         super::portable::write(&b.project_root, &declaration)?;
     }
-    persist(data, &cat)?;
+    persist(data, cat)?;
     // 位置已切换：记录收尾失败不回滚迁移，但必须如实告知记录仍停在 copying。
     let record_written = crate::sync_common::atomic_write(
         &record,
@@ -870,7 +914,7 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         result["record_warning"] = json!(format!("迁移已完成，但迁移记录未更新为 switched：{e}"));
     }
     if r.sync_after && next.remote.is_some() {
-        match sync(data, &mut cat, &next, &source) {
+        match sync(data, cat, &next, &source) {
             Ok(v) => {
                 result["synced"] = json!(true);
                 result["location"] = v["location"].clone();

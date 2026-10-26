@@ -252,11 +252,12 @@ fn source_unlocked(data: &Path, root: &Path, id: &str, source_id: &str) -> Resul
 fn snapshot(
     source: Source,
     b: &Binding,
+    repositories: &[PathBuf],
     tree: &Tree,
     key: &str,
     cancelled: &impl Fn() -> bool,
 ) -> Result<Snapshot> {
-    if b.path == source.path {
+    if b.path == source.path || repositories.iter().any(|p| source.path.starts_with(p)) {
         return Err(fail("不能把知识库本身作为采集来源"));
     }
     current_documents(tree, key)?;
@@ -297,6 +298,7 @@ fn snapshot(
         .filter_entry(|e| {
             (e.path() == source.path || !excluded(&e.file_name().to_string_lossy()))
                 && !e.path().starts_with(&b.path)
+                && !repositories.iter().any(|p| e.path().starts_with(p))
                 && !local_library
                     .as_ref()
                     .is_some_and(|p| e.path().starts_with(p))
@@ -449,6 +451,7 @@ pub fn preview(data: &Path, root: &Path, source_id: &str) -> Result<Value> {
     let s = snapshot(
         source_unlocked(data, &root, &id, source_id)?,
         b,
+        &cat.repositories.values().cloned().collect::<Vec<_>>(),
         &tree,
         &project_key(&id, &root)?,
         &|| false,
@@ -477,6 +480,7 @@ pub fn apply(
     let s = snapshot(
         source_unlocked(data, &root, &id, source_id)?,
         b,
+        &cat.repositories.values().cloned().collect::<Vec<_>>(),
         &tree,
         &key,
         &|| false,
@@ -615,7 +619,14 @@ pub(super) fn collect_unlocked(
             continue;
         }
         progress(&format!("正在读取工作目录资料：{}", source.label));
-        let snapshot = snapshot(source.clone(), b, &tree, &key, cancelled);
+        let snapshot = snapshot(
+            source.clone(),
+            b,
+            &cat.repositories.values().cloned().collect::<Vec<_>>(),
+            &tree,
+            &key,
+            cancelled,
+        );
         let s = match snapshot {
             Ok(s) => s,
             Err(e) if !cancelled() => {

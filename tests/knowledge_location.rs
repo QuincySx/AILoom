@@ -114,6 +114,41 @@ fn worktrees_and_subdirectories_share_binding() {
         a["location"]["path"],
         next.canonicalize().unwrap().to_str().unwrap()
     );
+    let repository = t.path().join("shared-repository");
+    let mut r = req("move", &wt, None);
+    r.repository_path = Some(repository.clone());
+    let preview = location::run(&data, &r).unwrap();
+    assert_eq!(
+        preview["to"],
+        location::destination(&repository.join("repo"))
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    r.execute = true;
+    r.expected = preview["expected"].as_str().map(str::to_owned);
+    location::run(&data, &r).unwrap();
+    let status = location::run(&data, &req("status", &wt, None)).unwrap();
+    assert_eq!(status["directory_name"], "repo");
+    assert_eq!(
+        status["location"],
+        location::run(&data, &req("status", &root, None)).unwrap()["location"]
+    );
+}
+
+#[test]
+fn default_shared_repository_does_not_override_portable_recovery() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("app");
+    std::fs::create_dir(&root).unwrap();
+    let library = root.join("knowledge");
+    init(&t.path().join("old-data"), &root, &library);
+    let preview = location::run(&t.path().join("new-data"), &req("init", &root, None)).unwrap();
+    assert_eq!(preview["preview"], true);
+    assert_eq!(
+        preview["to"],
+        library.canonicalize().unwrap().to_str().unwrap()
+    );
 }
 #[test]
 fn conflicts_stale_preview_and_nested_paths_do_not_switch() {
@@ -173,6 +208,169 @@ fn independent_repository_libraries_cannot_be_joined_and_move_separately() {
     assert_eq!(
         location::run(&data, &req("status", &roots[2], None)).unwrap()["location"]["path"],
         separate.canonicalize().unwrap().to_str().unwrap()
+    );
+}
+
+#[test]
+fn one_git_knowledge_repository_has_isolated_readable_project_directories() {
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("data");
+    let app = t.path().join("app-monorepo");
+    let sdk = t.path().join("hardware-js-sdk");
+    let repository = t.path().join("agent-knowledge");
+    for p in [&app, &sdk, &repository] {
+        std::fs::create_dir(p).unwrap();
+    }
+    git(&repository, &["init", "-b", "main"]);
+    git(
+        &repository,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@example.invalid:owner/knowledge.git",
+        ],
+    );
+    let repository = repository.canonicalize().unwrap();
+    std::fs::create_dir_all(repository.join("other-project/.ailoom")).unwrap();
+    std::fs::write(repository.join("other-project/.ailoom/library.json"), "{}").unwrap();
+    std::fs::write(
+        repository.join("other-project/README.md"),
+        "# Another machine's project",
+    )
+    .unwrap();
+    std::fs::write(
+        repository.join("README.md"),
+        "# My knowledge\n\nKeep my instructions.\n",
+    )
+    .unwrap();
+    let mut r = req("init", &app, None);
+    r.repository_path = Some(repository.clone());
+    let a = location::run(&data, &r).unwrap();
+    assert_eq!(
+        a["location"]["path"],
+        repository.join("app-monorepo").to_str().unwrap()
+    );
+    // Future projects reuse the selected repository, without another configuration system.
+    let status = location::run(&data, &req("status", &sdk, None)).unwrap();
+    assert_eq!(status["repository_path"], repository.to_str().unwrap());
+    let b = location::run(&data, &req("init", &sdk, None)).unwrap();
+    assert_eq!(
+        b["location"]["path"],
+        repository.join("hardware-js-sdk").to_str().unwrap()
+    );
+    assert_ne!(a["location"]["id"], b["location"]["id"]);
+    for (root, folder) in [(&app, "app-monorepo"), (&sdk, "hardware-js-sdk")] {
+        let declaration = ailoom::knowledge::portable::read(root).unwrap().unwrap();
+        let ailoom::knowledge::portable::Source::Git { subdir, .. } = declaration.source else {
+            panic!("shared Git recovery source missing")
+        };
+        assert_eq!(subdir, folder);
+        assert!(!repository.join(folder).join(".git").exists());
+    }
+    note(
+        &data,
+        &app,
+        t.path(),
+        "decision",
+        "# App decision\nappuniqueknowledge",
+    );
+    note(
+        &data,
+        &sdk,
+        t.path(),
+        "decision",
+        "# SDK decision\nsdkuniqueknowledge",
+    );
+    assert!(
+        location::recall(&data, &app, "sdkuniqueknowledge", 10).unwrap()["results"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        location::recall(&data, &sdk, "appuniqueknowledge", 10).unwrap()["results"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        ailoom::knowledge::organize::status(&data, &app).unwrap()["source_count"],
+        1
+    );
+    assert_eq!(
+        ailoom::knowledge::organize::status(&data, &sdk).unwrap()["source_count"],
+        1
+    );
+    let found = location::locate(&data, "hardware-js-sdk", 10).unwrap();
+    assert_eq!(
+        found["candidates"][0]["knowledge_path"],
+        b["location"]["path"]
+    );
+    let home = std::fs::read_to_string(repository.join("README.md")).unwrap();
+    assert!(home.contains("Keep my instructions."));
+    assert!(
+        home.contains("other-project/README.md"),
+        "navigation must preserve unregistered projects in the shared checkout"
+    );
+    assert!(home.contains("app-monorepo/README.md") && home.contains("hardware-js-sdk/README.md"));
+}
+
+#[test]
+fn moving_into_shared_repository_preserves_identity_and_other_projects() {
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("data");
+    let app = t.path().join("app");
+    let sdk = t.path().join("sdk");
+    for p in [&app, &sdk] {
+        std::fs::create_dir(p).unwrap();
+    }
+    let old = t.path().join("old-app-knowledge");
+    let original = init(&data, &app, &old);
+    note(
+        &data,
+        &app,
+        t.path(),
+        "decision",
+        "# App decision\nKeep this evidence.",
+    );
+    let repository = t.path().join("knowledge");
+    let mut r = req("init", &sdk, None);
+    r.repository_path = Some(repository.clone());
+    let other = location::run(&data, &r).unwrap();
+    let sdk_marker = std::fs::read(repository.join("sdk/.ailoom/library.json")).unwrap();
+    r = req("move", &app, None);
+    r.repository_path = Some(repository.clone());
+    let preview = location::run(&data, &r).unwrap();
+    assert!(!repository.join("app").exists());
+    r.execute = true;
+    r.expected = preview["expected"].as_str().map(str::to_owned);
+    let moved = location::run(&data, &r).unwrap();
+    assert_eq!(moved["location"]["id"], original["location"]["id"]);
+    assert!(old.join("sources/notes/decision.md").exists());
+    assert_eq!(
+        std::fs::read(old.join("sources/notes/decision.md")).unwrap(),
+        std::fs::read(repository.join("app/sources/notes/decision.md")).unwrap()
+    );
+    assert_eq!(
+        std::fs::read(repository.join("sdk/.ailoom/library.json")).unwrap(),
+        sdk_marker
+    );
+    assert_eq!(
+        location::run(&data, &req("status", &sdk, None)).unwrap()["location"],
+        other["location"]
+    );
+    r = req("init", &t.path().join("elsewhere/app"), None);
+    std::fs::create_dir_all(&r.root).unwrap();
+    r.repository_path = Some(repository.clone());
+    assert!(
+        location::run(&data, &r).is_err(),
+        "same-name projects must not reuse another project's directory"
+    );
+    r.path = Some(repository.clone());
+    assert!(
+        location::run(&data, &r).is_err(),
+        "project data cannot occupy the shared root"
     );
 }
 #[cfg(unix)]

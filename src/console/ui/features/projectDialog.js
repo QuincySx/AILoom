@@ -14,7 +14,7 @@ export function ProjectDialog(container, {onCreated} = {}) {
   </fieldset>
   <div class="form-grid"><label>名称<input name="name" required maxlength="120"></label><label>分类（可选）<input name="category" maxlength="80"></label></div>
   <details class="project-create-storage" data-storage-details><summary>知识库存储 <span class="muted">使用默认位置</span></summary><fieldset data-knowledge disabled>
-    <div data-recovery-fields></div><label>保存目录<div class="input-action"><input name="path" required placeholder="先选择项目文件夹"><button type="button" data-pick-knowledge>选择文件夹…</button></div></label>
+    <div data-recovery-fields></div><label data-storage-mode-field hidden>存放方式<select data-storage-mode><option value="repository">知识库仓库，按项目分文件夹</option><option value="directory">直接指定项目知识目录</option></select></label><label><span data-storage-label>知识库仓库</span><div class="input-action"><input name="path" required placeholder="先选择项目文件夹"><button type="button" data-pick-knowledge>选择文件夹…</button></div></label>
     <p class="muted" data-directory-info></p>
     <p class="muted" data-knowledge-note>此项目的 Worktree 和子目录共用。</p>
   </fieldset></details>
@@ -66,16 +66,28 @@ export function ProjectDialog(container, {onCreated} = {}) {
       if(!f('category').value)f('category').value=registered?.project?.category||'';
       if(!f('name').value||f('name').value===autoName)f('name').value=name;
       autoName=name;
-      f('path').value=result.location?.path||(result.recovery ? result.recovery.suggested_path||'' : result.default_path);
+      const repositoryMode=!result.initialized&&!result.recovery&&!!result.repository_path;
+      q('[data-storage-mode-field]').hidden=!repositoryMode;
+      q('[data-storage-mode]').value=repositoryMode?'repository':'directory';
+      f('path').value=result.location?.path||(result.recovery ? result.recovery.suggested_path||'' : result.repository_path||result.default_path);
+      q('[data-storage-label]').textContent=repositoryMode?'知识库仓库':'本项目知识目录';
       recoveryPreview=null;q('[data-preview]').textContent='';
       q('[data-recovery-fields]').innerHTML=result.initialized?'':recoveryFields(result.recovery);
       const mode=q('[data-recovery-mode]');if(mode)mode.onchange=()=>{recoveryPreview=null;q('[data-preview]').textContent='';q('[data-pick-knowledge]').textContent=mode.value==='clone'?'选择父文件夹…':'选择文件夹…';controls();};
       q('[data-project-state]').textContent=result.initialized?'该目录所属项目已有知识库。':`项目：${result.project_root}`;
-      q('[data-knowledge-note]').textContent=result.initialized?'沿用现有配置；修改位置可在项目设置中迁移。':'此项目的 Worktree 和子目录共用。';
+      q('[data-knowledge-note]').textContent=result.initialized?'沿用现有配置；修改位置可在项目设置中迁移。':repositoryMode?`使用其中的 ${result.directory_name}/ 文件夹；其他项目使用各自文件夹，共用一份知识库仓库。`:'此项目的 Worktree 和子目录共用。';
       controls();await inspectDirectory();
     } catch(e) {if(alive&&version===generation){q('[data-project-state]').textContent='';message(e.message);controls();}}
   }
   f('root').onchange=inspect;
+  q('[data-storage-mode]').onchange=()=>{
+    if(!inspected)return;
+    const repositoryMode=q('[data-storage-mode]').value==='repository';
+    f('path').value=repositoryMode?inspected.repository_path:inspected.default_path;
+    q('[data-storage-label]').textContent=repositoryMode?'知识库仓库':'本项目知识目录';
+    q('[data-knowledge-note]').textContent=repositoryMode?`使用其中的 ${inspected.directory_name}/ 文件夹；可共用同一仓库，也可另选仓库。`:'直接使用所选目录保存本项目知识，可自行作为独立 Git 仓库维护。';
+    f('path').oninput();inspectDirectory();
+  };
   async function pick(target) {
     if(busy)return;busy=true;controls();
     try {const result=await api.pickDirectory();if(!alive||!result.path)return;f(target).value=target==='path'&&q('[data-recovery-mode]')?.value==='clone'?cloneDestination(inspected.recovery,result.path):result.path;recoveryPreview=null;if(target==='root')await inspect();else await inspectDirectory();}
@@ -100,7 +112,8 @@ export function ProjectDialog(container, {onCreated} = {}) {
           path=cloned.path;f('path').value=path;q('[data-recovery-mode]').value='existing';recoveryPreview=null;
         }
         const recovering=!!inspected.recovery&&!inspected.initialized;
-        const result=await api.knowledge({action:recovering?'recover':'init',root:inspectedPath,path,execute:!!recoveryPreview,expected:recoveryPreview?.expected});
+        const repositoryMode=!inspected.initialized&&!recovering&&!!inspected.repository_path&&q('[data-storage-mode]').value==='repository';
+        const result=await api.knowledge({action:recovering?'recover':'init',root:inspectedPath,...(repositoryMode?{repository_path:path}:{path}),execute:!!recoveryPreview,expected:recoveryPreview?.expected});
         if(result.preview){recoveryPreview=result;q('[data-preview]').textContent=`将关联知识库并恢复项目配置（${result.files} 个文件）。${result.state?.pending_worktrees?.length ? '尚未出现的 Worktree 配置将保留。' : ''}`;return;}
         createdId=result.project_id;
       }

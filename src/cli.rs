@@ -315,9 +315,12 @@ pub enum Command {
         /// 显式工作区根
         #[arg(long)]
         root: Option<std::path::PathBuf>,
-        /// 初始化位置或迁移目标（可为独立仓库子目录）
+        /// 本项目知识目录；指定 --repository 时必须位于该仓库下
         #[arg(long)]
         path: Option<std::path::PathBuf>,
+        /// 共用的知识库仓库；自动选择以项目命名的子目录，并用于后续新项目
+        #[arg(long)]
+        repository: Option<std::path::PathBuf>,
         /// 确认预览的指纹；move 默认仅预览
         #[arg(long)]
         expected: Option<String>,

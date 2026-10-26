@@ -43,6 +43,72 @@ fn capture(data: &Path, root: &Path, id: &str, paths: &[&str]) -> Value {
     )
     .unwrap()
 }
+
+#[test]
+fn shared_repository_inside_worktree_is_not_ingested_as_project_evidence() {
+    common::isolate_in_process_roots();
+    let t = tempfile::tempdir().unwrap();
+    let app = t.path().join("app");
+    let sdk = t.path().join("sdk");
+    for p in [&app, &sdk] {
+        std::fs::create_dir(p).unwrap();
+    }
+    let repository = app.join("knowledge");
+    let data = t.path().join("data");
+    for root in [&app, &sdk] {
+        location::run(
+            &data,
+            &Request {
+                action: "init".into(),
+                root: root.clone(),
+                repository_path: Some(repository.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    std::fs::write(app.join("lesson.md"), "# App original\nappsource").unwrap();
+    std::fs::write(
+        repository.join("sdk/wiki/sdk.md"),
+        "# SDK knowledge\nsdkprivate",
+    )
+    .unwrap();
+    // Choosing a different knowledge repository for another project must not
+    // change the earlier project's repository or its intake exclusions.
+    let third = t.path().join("third");
+    std::fs::create_dir(&third).unwrap();
+    location::run(
+        &data,
+        &Request {
+            action: "init".into(),
+            root: third,
+            repository_path: Some(t.path().join("other-knowledge")),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let status = location::run(
+        &data,
+        &Request {
+            action: "status".into(),
+            root: app.clone(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        status["repository_path"],
+        repository.canonicalize().unwrap().to_str().unwrap()
+    );
+    let preview = ingest::preview(&data, &app, &source(&data, &app, &app)).unwrap();
+    let paths: Vec<_> = preview["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["lesson.md"]);
+}
 fn git(root: &Path, args: &[&str]) {
     let output = std::process::Command::new("git")
         .args([

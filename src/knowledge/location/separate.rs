@@ -16,7 +16,7 @@ pub(super) fn exclusive(
                 || knowledge_id == Some(b.id.as_str()))
     }) {
         return Err(fail(
-            "其他仓库已使用这份知识库；请为本仓库选择独立目录。仅同一仓库的 Worktree 共用知识库",
+            "该项目目录已被其他仓库使用；可选择同一知识库仓库下的另一个项目文件夹",
         ));
     }
     Ok(())
@@ -43,7 +43,7 @@ pub(super) fn validate_owner(tree: &Tree, project: &str) -> Result<()> {
         || !wiki::tree_single_owner(tree, project)
     {
         return Err(fail(
-            "知识库包含其他仓库的身份或资料，请选择本仓库的独立知识库；旧共享库请先 separate 拆分",
+            "项目目录包含其他仓库的身份或资料；请按项目分文件夹，旧格式可用 separate 提取当前项目",
         ));
     }
     Ok(())
@@ -227,6 +227,8 @@ pub(super) fn run(
     );
     let projected = Catalog {
         schema_version: 1,
+        repository_path: cat.repository_path.clone(),
+        repositories: cat.repositories.clone(),
         projects: BTreeMap::from([(repo.into(), next.clone())]),
     };
     files.extend(wiki::catalog(&files, &projected, &next)?);

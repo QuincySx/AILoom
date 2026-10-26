@@ -57,6 +57,31 @@ fn enc(s: &str) -> String {
 }
 
 #[test]
+fn knowledge_repository_choice_requires_directory_authorization() {
+    common::isolate_in_process_roots();
+    let t = tempfile::tempdir().unwrap();
+    let project = t.path().join("project");
+    let repository = t.path().join("knowledge");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&repository).unwrap();
+    let server = ConsoleServer::start(&ConsoleOptions {
+        port: 0,
+        data_root: t.path().join("data"),
+        open_browser: false,
+    })
+    .unwrap();
+    let post = |path, body| call(server.port, Some(&server.token), "POST", path, Some(body));
+    assert_eq!(post("/api/fs/approve", json!({"path":project})).0, 200);
+    let body = json!({"action":"init","root":project,"repository_path":repository});
+    assert_eq!(post("/api/knowledge", body.clone()).0, 403);
+    assert!(!repository.join("project").exists());
+    assert_eq!(post("/api/fs/approve", json!({"path":repository})).0, 200);
+    let (code, value) = post("/api/knowledge", body);
+    assert_eq!(code, 200, "{value}");
+    assert!(repository.join("project/README.md").is_file());
+}
+
+#[test]
 fn knowledge_organization_api_authorizes_root_and_only_accepts_known_runners() {
     common::isolate_in_process_roots();
     let tmp = tempfile::tempdir().unwrap();

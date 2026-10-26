@@ -1,12 +1,12 @@
 # 项目与知识库恢复
 
-项目和知识库各有一个 UUID v4。它们在创建时生成并持久化，不根据 Git 地址、用户名或绝对路径计算。
+每个项目和它的知识集合各有一个 UUID v4；多个项目共用一份知识库 Git 仓库，按项目分文件夹。它们在创建时生成并持久化，不根据 Git 地址、用户名或绝对路径计算。
 
 - 项目身份：业务目录 `.ailoom/knowledge.json` 的 `project_id`。
-- 知识库身份：知识库根 `ailoom-knowledge.json` 的 `id`；项目声明用 `knowledge_id` 引用它。
+- 知识库身份：项目知识目录中的 `.ailoom/library.json`（旧格式为 `ailoom-knowledge.json`） 的 `id`；项目声明用 `knowledge_id` 引用它。
 - 本机仓库 ID、Worktree ID：仍使用现有注册表，用于本机定位，不作为跨机器身份。
 - 读命令输出时注意区分：`ailoom knowledge --action status|init` 结果顶层的 `project_id` 是**本机注册表 ID**（如 `repo-…`）；可迁移的项目 UUID 在 `.ailoom/knowledge.json` 与恢复状态（`state.project_id`）中。
-- 所有 Worktree 和受管子目录沿用主项目的知识库绑定。一个知识库也可以保存多个项目，各自的配置放在 `projects/<project UUID>/`。
+- 所有 Worktree 和受管子目录沿用主项目的知识库绑定。同一知识库仓库中的各项目分别使用 `<项目名称>/` 文件夹，正文、原文和配置都位于自己的目录中。
 
 移动、改名、换 SSH/HTTPS 地址、clone 到另一台机器均不重新生成 UUID。复制配置和知识库表示继续使用同一个身份。要创建独立项目，应重新初始化身份，不能根据路径变化自动猜测。
 
@@ -26,13 +26,11 @@
 
 ## 从各工作目录采集开发文档
 
-在项目 → 知识库的“采集开发文档”中选择资料来源，点击“扫描文档”，勾选要保存的 Markdown，再点击“保存选中”。来源覆盖本仓库的主 Worktree、其他仍存在的 Worktree 和已登记的子目录。可以分批采集，它们汇入同一份项目知识库；切换目录时会清除上一份扫描预览。
+在项目 → 知识库中直接开始整理，后台自动读取本仓库主 Worktree、其他仍存在的 Worktree 和受管子目录中的候选文档，无需先扫描、勾选或逐篇导入。它们汇入同一个项目文件夹；其他代码仓库的资料不参与本次整理。
 
-采集保留原文，不修改来源文件。相同内容复用一份快照，各自记录来源目录、文档相对路径、分支、提交和采集时是否有未提交内容。再次采集文档更新时保留历史原文，整理与检索读取各来源的当前版本；不同分支仍各自保留，不自动判定哪个结论正确。采集后来源文件删除，不会自动删除知识库中的副本。
+采集保留原文，不修改来源文件。相同内容复用一份快照，各自记录来源目录、文档路径、分支、提交和采集时是否有未提交内容。资料更新保留历史，不同分支分别记录；已删除的来源不会自动删除已保存的快照。
 
-原文和来源记录位于 `imports/worktrees/<项目 UUID>/`，随知识库一起迁移。不同项目共用一个知识库时，采集资料按项目隔离。来源目录的本机路径只用于选择，不作为可迁移链接；记录中的目录标识来自本机路径，移动或换机器后重新采集可能产生新的来源记录，原文仍按内容复用。
-
-扫描只读取 UTF-8 的 `.md` / `.markdown`，跳过符号链接、嵌套独立仓库、知识库自身及常见构建、缓存和工具配置目录。单篇最多 4 MB，一次最多 2000 篇或 64 MB；无法读取的文档在预览中列出。扫描后来源内容或采集记录发生变化，需要重新扫描。
+原文位于 `<项目名称>/sources/`，来源台账位于该目录及 `<项目名称>/.ailoom/`。采集跳过认证、依赖、构建、缓存目录和符号链接；候选资料仍须由 AI 结合对应代码判断价值、归属与适用性。
 
 准备删除 Worktree 时，先确认文档已保存，再进行下方的知识整理。若知识库本身位于待删除的 Worktree 内，应先通过“保存位置与恢复配置”迁移到保留的目录。采集不会删除任何 Worktree。
 
@@ -44,9 +42,9 @@
 
 提示词参考 Karpathy 的 LLM Wiki 思路，知识单元有稳定主题 ID、内部导航、跨来源关联、证据及适用状态，并保留维护建议、待核实事项、完整来源目录、本轮演进摘要与自检。再次整理沿用已有主题入口，回到原始资料核实；旧报告不作为独立证据。配置恢复副本、资源快照和之前生成的整理报告不计作原始经验。采集文档的老快照仍保留在磁盘，正常整理只提供各来源的最新版本；历史理由缺少当前原文支持时需要补充旧证据。
 
-目前仍保存为一份带内部链接的 Markdown。提示词见 [整理模板](../../src/knowledge/res/organize-wiki.md)，设计与后续机制见 [开发知识生命周期](../specs/development-knowledge-lifecycle.md)，参考依据见 [LLM Wiki 调研](../research/KARPATHY-LLM-WIKI.md)。
+整理结果按模块、概念和独立问题保存在 `<项目名称>/wiki/`，项目首页 `<项目名称>/README.md` 提供导航，`sources/` 保留原文。人工和 AI 编辑同一份 Markdown；不同项目目录互不混写。提示词见 [整理模板](../../src/knowledge/res/organize-wiki.md)，设计见 [开发知识生命周期](../specs/development-knowledge-lifecycle.md)。
 
-结果保存在知识库 `docs/organized/<项目 UUID>.md`，后续 `ailoom recall` 可以检索；同仓 Worktree 共用一份结果。再次整理更新这份报告，原始经验文档保留，每次任务的输出可在“操作记录”查看。多个项目共用知识库时，各项目报告分别保存。
+AI 需要查 SDK 等其他项目的知识时，用 `ailoom --json knowledge --action locate --query <名称、Git地址或路径>` 定位，再对返回的项目执行 `knowledge --action recall --root <repository_root> --query <问题>`。定位只返回入口，普通整理与检索不会混入其他项目内容。
 
 任务在后台执行，离开页面后继续；返回知识库页面会恢复进度，也可取消。CLI 失败、超过 30 分钟或整理期间知识内容发生变化时，保留原有知识和上次报告。已生成但未能保存的草稿可以在操作记录中查看。服务重启后的任务标记为中断，不自动重新运行。
 
@@ -56,10 +54,10 @@ Codex 通过官方的 [`codex exec` 非交互入口](https://learn.chatgpt.com/d
 
 ## 保存位置与迁移
 
-- **默认位置**：新项目的知识库默认由 AILoom 托管，放在本机数据目录 `<data_root>/knowledge/projects/<项目 ID>`。添加项目时也可以改为项目内目录、外部普通目录或外部 Git 仓库（及其子目录）。
+- **知识库仓库**：添加项目时选择一个共用仓库（如 `/work/agent-knowledge`），项目知识自动放入其中的 `<项目名称>/`。后续新项目沿用这个仓库；首次未选择时使用 `<data_root>/knowledge/repository/`。已有项目关联不自动改变。
 - **迁移**：可以把已有知识库整体搬到新位置。流程是「预览 → 复制 → 逐文件核对 → 切换登记」，执行时必须带上预览返回的 `expected`。
   - 原位置保留为备份，不删除。
-  - 同一知识库下的所有项目一起切换。
+  - 只切换当前项目的知识目录，同仓 Worktree 一起沿用；其他项目目录不变。
   - 迁移记录保存在 `<data_root>/knowledge/migrations/`。
 - **会被拒绝的迁移**：
   - 目标目录非空，或与原位置相同、互相嵌套；
@@ -76,7 +74,7 @@ ailoom knowledge --action move --root <项目> --path <新位置> --expected <�
 
 ## 恢复内容
 
-知识库 `projects/<project UUID>/state.json` 保存项目的宿主选择、能力选择、子目录作用域和项目说明。已选资源的原文与 Skill 附属文件保存在内容哈希命名的资源快照中。只打包选用的资源，不收集未托管的本地文件，也不复制整个用户资源库。
+项目目录中的 `.ailoom/project/state.json`（旧格式为 `projects/<project UUID>/state.json`） 保存项目的宿主选择、能力选择、子目录作用域和项目说明。已选资源的原文与 Skill 附属文件保存在内容哈希命名的资源快照中。只打包选用的资源，不收集未托管的本地文件，也不复制整个用户资源库。
 
 保存选用配置、项目说明，以及应用改动前，会更新恢复副本。项目设置 → 知识库的“保存恢复配置”可以手动更新；已有项目也通过这个入口生成声明。直接在外部修改资源原文后，应用改动或手动保存恢复配置即可更新快照。
 
@@ -87,8 +85,12 @@ ailoom knowledge --action move --root <项目> --path <新位置> --expected <�
 ## CLI
 
 ```sh
-# 初始化：只选保存目录
-ailoom knowledge --action init --root /work/app --path /work/knowledge/apps/app
+# 同一个知识库仓库，按项目自动分文件夹
+ailoom knowledge --action init --root /work/app --repository /work/agent-knowledge
+ailoom knowledge --action init --root /work/sdk --repository /work/agent-knowledge
+
+# 迁入同一仓库：先预览，再带 expected 执行；旧目录保留
+ailoom knowledge --action move --root /work/app --repository /work/agent-knowledge
 
 # 已有项目保存可迁移声明、选用配置和托管资源
 ailoom knowledge --action checkpoint --root /work/app
