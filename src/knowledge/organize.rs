@@ -1238,13 +1238,17 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_cli(body: &str) -> (tempfile::TempDir, PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
-        // 测试可执行文件只在本仓 target 内创建，不修改 PATH 或用户安装的 CLI。
+        // 只把场景正文写为数据，用稳定夹具执行，避免并行测试即时写入并
+        // 执行临时脚本时的 ETXTBSY；不修改 PATH 或用户安装的 CLI。
         let tmp =
             tempfile::tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("target")).unwrap();
         let path = tmp.path().join("fake-cli");
-        std::fs::write(&path, format!("#!/usr/bin/env python3\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(path.with_extension("py"), body).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/knowledge_cli.py"),
+            &path,
+        )
+        .unwrap();
         (tmp, path)
     }
 
