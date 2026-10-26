@@ -189,6 +189,7 @@ fn manifest(prepared: &Prepared) -> Value {
         "knowledge_directory":input.path,
         "source_documents":input.documents,
         "source_origins":input.origins,
+        "worktrees":input.worktrees,
         "collection":prepared.collection,
         "previous_report":input.previous_report.as_ref().map(|_| if input.path.join(&input.report_path).is_file() { input.report_path.clone() } else if input.path.join(location::legacy_wiki_index(&input.project_id)).is_file() {location::legacy_wiki_index(&input.project_id)} else {PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))}),
         "previous_documents":input.previous_documents,
@@ -272,6 +273,11 @@ fn command(prepared: &Prepared, output: &Path) -> Command {
         }
         _ => unreachable!("runner 仅来自固定列表"),
     }
+    if prepared.runner.id == "claude" {
+        for source in prepared.worktrees() {
+            command.arg("--add-dir").arg(&source.path);
+        }
+    }
     command.current_dir(&prepared.input.root);
     #[cfg(unix)]
     {
@@ -344,9 +350,6 @@ fn generate_with_timeout(
     if cancelled() {
         return Err(fail("整理已取消，原有知识和整理结果保留"));
     }
-    if prepared.input.documents.is_empty() {
-        return Err(fail("本次没有找到可整理的资料，可查看本次资料读取情况中的未读取原因；配置恢复副本与工具资源不参与整理"));
-    }
     let work = tempfile::tempdir()?;
     let output_path = work.path().join("report.md");
     let stdout_path = work.path().join("stdout.txt");
@@ -362,7 +365,7 @@ fn generate_with_timeout(
     let mut stdin = child.stdin.take().unwrap();
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
     let started = Instant::now();
-    progress("正在读取资料并编纂仓库开发知识");
+    progress("正在自主查找本地 Markdown、阅读资料并核对代码");
     let status = loop {
         if cancelled() {
             terminate(&mut child);
@@ -691,6 +694,28 @@ mod tests {
             "new worktrees do not expand queued authorization"
         );
         assert_eq!(p.input.origins.values().map(Vec::len).sum::<usize>(), 3);
+        let work = tempfile::tempdir().unwrap();
+        let text = task::prepare(&p, work.path()).unwrap();
+        let entry: Value =
+            serde_json::from_str(text.rsplit("## 本次任务入口\n\n").next().unwrap()).unwrap();
+        let lookup: Value =
+            serde_json::from_slice(&std::fs::read(entry["task_index"].as_str().unwrap()).unwrap())
+                .unwrap();
+        let directories: Vec<Value> = lookup["worktrees"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|file| {
+                serde_json::from_slice::<Vec<Value>>(
+                    &std::fs::read(file.as_str().unwrap()).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(directories.len(), 2);
+        assert!(!directories
+            .iter()
+            .any(|source| source["path"] == json!(late)));
         let task: Value =
             serde_json::from_str(prompt(&p).rsplit("## 本次任务清单\n\n").next().unwrap()).unwrap();
         assert_eq!(task["collection"]["worktree_count"], 2);
@@ -786,8 +811,9 @@ mod tests {
         assert!(prompt(&p).contains("无关或缺少独立证据的材料只在 sources 中注明处理原因"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn empty_collection_keeps_diagnostics_without_starting_an_ai_process() {
+    fn empty_collection_still_allows_local_markdown_discovery_and_keeps_diagnostics() {
         let (_tmp, root, data) = fixture();
         let ctx = location::maintenance_context(&data, &root)
             .unwrap()
@@ -801,13 +827,35 @@ mod tests {
         assert_eq!(result["skipped"][0]["path"], "unreadable.md");
         assert!(
             p.collection.is_some(),
-            "worker can persist collection before the no-input error"
+            "worker can persist collection before discovery"
         );
-        // The test runner has no executable; attempting to spawn it would panic.
-        assert!(generate(&p, || false, |_| {})
-            .unwrap_err()
-            .message
-            .contains("资料读取情况"));
+        // New local documents can be discovered even without an eligible saved snapshot.
+        std::fs::create_dir_all(root.join("docs/module")).unwrap();
+        std::fs::write(
+            root.join("docs/module/decision.MD"),
+            "# Local decision\nquota",
+        )
+        .unwrap();
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, json
+text = sys.stdin.read()
+entry = json.loads(text.rsplit('## 本次任务入口\n\n', 1)[1])
+assert entry['discovery_mode'] == 'local-markdown'
+assert entry['source_count'] == 0
+root = pathlib.Path(entry['repository'])
+files = [p for p in root.rglob('*') if p.is_file() and p.suffix.lower() == '.md']
+assert any('Local decision' in p.read_text(errors='replace') for p in files)
+task = json.loads(pathlib.Path(entry['task_index']).read_text())
+skipped = [row for name in task['collection']['skipped']['files'] for row in json.loads(pathlib.Path(name).read_text())]
+assert skipped[0]['path'] == 'unreadable.md'
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# Discovered local document', encoding='utf-8')"#,
+        );
+        p.runner.executable = Some(executable);
+        assert_eq!(
+            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap(),
+            "# Discovered local document"
+        );
     }
 
     #[test]
@@ -1298,7 +1346,11 @@ args = sys.argv[1:]
 assert args[:6] == ['--no-daemon', '-a', 'never', 'exec', '--sandbox', 'read-only']
 assert args[-1] == '-'
 task = sys.stdin.read()
-assert 'sources/notes/migration.md' in task
+entry = __import__('json').loads(task.rsplit('## 本次任务入口\n\n', 1)[1])
+assert entry['discovery_mode'] == 'local-markdown'
+assert 'sources/notes/migration.md' not in task
+files = [p for name in entry['source_directories'] for p in pathlib.Path(name).rglob('*.md')]
+assert any('迁移后核对行数' in p.read_text() for p in files)
 assert '数据库维护' in task
 pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# 仓库维护知识与建议\n迁移后验证行数。', encoding='utf-8')
 print('this is not the final report')"#,
@@ -1356,6 +1408,8 @@ print('this is not the final report')"#,
 text = sys.stdin.read()
 assert len(text.encode('utf-8')) <= 65536
 entry = json.loads(text.rsplit('## 本次任务入口\n\n', 1)[1])
+assert entry['discovery_mode'] == 'local-markdown'
+assert '00000000002886.md' not in text
 task = json.loads(pathlib.Path(entry['task_index']).read_text())
 def rows(field):
     result = []

@@ -94,12 +94,7 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
 }
 
 fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
-    jobs::set_status(
-        state,
-        id,
-        JobStatus::Running,
-        "自动收集各工作目录与已有知识",
-    );
+    jobs::set_status(state, id, JobStatus::Running, "保留原始资料与工作目录出处");
     let collection = organize::collect_sources(
         &state.data_root,
         &mut prepared,
