@@ -260,6 +260,41 @@ fn binding<'a>(cat: &'a Catalog, id: &str) -> Result<&'a Binding> {
         .ok_or_else(|| fail("尚未初始化项目知识库"))
 }
 
+fn declaration(data: &Path, b: &Binding, r: &Request) -> Result<super::portable::Declaration> {
+    let mut declaration = super::portable::describe(b)?;
+    if let Some(url) = &r.repository_url {
+        if !declaration.repository_urls.contains(url) {
+            if declaration.repository_urls.len() >= 64 {
+                return Err(fail("代码仓库地址记录已满，请先整理项目声明中的历史地址"));
+            }
+            declaration.repository_urls.push(url.clone());
+            declaration.repository_urls.sort();
+        }
+    }
+    let connections = crate::repository_identity::connections(data).unwrap_or_default();
+    for url in declaration.repository_urls.clone() {
+        let mapped: BTreeMap<_, _> = connections
+            .iter()
+            .filter_map(|c| {
+                let url = if c.url == url {
+                    c.repository_url.clone()
+                } else {
+                    crate::repository_identity::mapped_url(&url, c.host_mapping.as_ref()?).ok()?
+                };
+                super::identity::valid_url(&url).then(|| (super::identity::key(&url), url))
+            })
+            .collect();
+        if mapped.len() == 1 && declaration.repository_urls.len() < 64 {
+            let url = mapped.into_values().next().unwrap();
+            if !declaration.repository_urls.contains(&url) {
+                declaration.repository_urls.push(url);
+            }
+        }
+    }
+    declaration.repository_urls.sort();
+    Ok(declaration)
+}
+
 /// 整理只消费知识文档，不把恢复配置、资源快照或此前生成的整理结果当原始经验。
 pub(super) struct OrganizationInput {
     pub knowledge_id: String,
@@ -469,6 +504,7 @@ pub struct Request {
     pub root: PathBuf,
     pub path: Option<PathBuf>,
     pub repository_path: Option<PathBuf>,
+    pub repository_url: Option<String>,
     pub expected: Option<String>,
     #[serde(default)]
     pub execute: bool,
@@ -538,6 +574,13 @@ pub(super) fn inspect_directory(path: &Path) -> Result<Value> {
     Ok(json!({"path":path,"git":{"root":repo,"branch":branch,"remote":remote}}))
 }
 pub fn run(data: &Path, r: &Request) -> Result<Value> {
+    if let Some(url) = &r.repository_url {
+        if !matches!(r.action.as_str(), "init" | "checkpoint") || !super::identity::valid_url(url) {
+            return Err(fail(
+                "--repository-url 用于 init 或 checkpoint，填写无凭据的代码仓库 Git 地址",
+            ));
+        }
+    }
     if r.action == "inspect" {
         return inspect_directory(r.path.as_deref().ok_or_else(|| fail("请选择保存目录"))?);
     }
@@ -687,7 +730,7 @@ fn run_project(
         if let Some(b) = cat.projects.get(&id) {
             if b.path == dest {
                 checked_tree(b)?;
-                let declaration = super::portable::describe(b)?;
+                let declaration = declaration(data, b, r)?;
                 let state = if b.remote.is_none() {
                     super::state::checkpoint(data, &id, b, &declaration)?
                 } else {
@@ -757,7 +800,7 @@ fn run_project(
                 &serde_json::to_vec_pretty(&json!({"schema_version":1,"id":b.id}))?,
             )?;
         }
-        let declaration = super::portable::describe(&b)?;
+        let declaration = declaration(data, &b, r)?;
         separate::validate_owner(&checked_tree(&b)?, &declaration.project_id)?;
         crate::sync_common::atomic_write(
             &layout::marker_at(&dest),
@@ -785,9 +828,12 @@ fn run_project(
     let old = binding(cat, &id)?.clone();
     let source = checked_tree(&old)?;
     if r.action == "checkpoint" {
-        let declaration = super::portable::describe(&old)?;
+        let declaration = declaration(data, &old, r)?;
+        layout::validate_project(&source, &declaration.project_id)?;
         let state = super::state::checkpoint(data, &id, &old, &declaration)?;
         super::portable::write(&old.project_root, &declaration)?;
+        let (metadata, bytes) = wiki::identity_file(cat, &old)?;
+        crate::sync_common::atomic_write(&old.path.join(metadata), &bytes)?;
         return Ok(json!({"saved":true,"declaration":declaration,"state":state}));
     }
     if matches!(r.action.as_str(), "move" | "configure" | "sync") {
@@ -929,8 +975,17 @@ fn run_project(
 
 /// Find another repository's knowledge only when explicitly queried.
 pub fn locate(data: &Path, query: &str, limit: usize) -> Result<Value> {
+    locate_in_repository(data, query, limit, None)
+}
+
+pub fn locate_in_repository(
+    data: &Path,
+    query: &str,
+    limit: usize,
+    repository: Option<&Path>,
+) -> Result<Value> {
     let _guard = lock(data)?;
-    lookup::locate(data, query, limit)
+    lookup::locate(data, query, limit, repository)
 }
 
 pub fn is_initialized(data: &Path, root: &Path) -> Result<bool> {
@@ -985,13 +1040,57 @@ pub fn recall_filtered(
     let cat = load(data)?;
     let (id, owner) = project(data, root, &cat)?;
     let b = binding(&cat, &id)?;
+    let project_id = ingest::project_key(&id, &owner)?;
+    recall_binding(data, root, &cat, b, &project_id, query, limit, kind)
+}
+
+/// Read a selected project directory even when its code checkout is unavailable.
+pub fn recall_at(data: &Path, path: &Path, query: &str, limit: usize) -> Result<Value> {
+    let _guard = lock(data)?;
+    let path = path.canonicalize()?;
+    let identity =
+        super::identity::read(&path)?.ok_or_else(|| fail("请选择带有项目身份记录的知识目录"))?;
+    let b = Binding {
+        id: identity.knowledge_id,
+        project_root: path.clone(),
+        path: path.clone(),
+        remote: None,
+        branch: default_branch(),
+        subdir: String::new(),
+        baseline: BTreeMap::new(),
+    };
+    let mut result = recall_binding(
+        data,
+        &path,
+        &load(data)?,
+        &b,
+        &identity.project_id,
+        query,
+        limit,
+        None,
+    )?;
+    result["scope"] = json!("selected_project_knowledge");
+    result["code_available"] = json!(false);
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recall_binding(
+    data: &Path,
+    root: &Path,
+    cat: &Catalog,
+    b: &Binding,
+    project_id: &str,
+    query: &str,
+    limit: usize,
+    kind: Option<&str>,
+) -> Result<Value> {
     let tree = checked_tree(b)?;
     let ctx = state_context(data, root, b)?;
-    let project_id = ingest::project_key(&id, &owner)?;
-    layout::validate_project(&tree, &project_id)?;
-    let origins = ingest::current_documents(&tree, &project_id)?;
-    let pages = wiki::current(&tree, &project_id)?;
-    let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
+    layout::validate_project(&tree, project_id)?;
+    let origins = ingest::current_documents(&tree, project_id)?;
+    let pages = wiki::current(&tree, project_id)?;
+    let single_owner = wiki::single_owner(cat, b, &tree, project_id);
     let legacy = Path::new("docs/organized").join(format!("{project_id}.md"));
     let archived = super::feedback::archived_ids(&ctx);
     let mut index = super::index::KnowledgeIndex {
@@ -999,7 +1098,7 @@ pub fn recall_filtered(
             schema_version: 1,
             revision: None,
             content_digest: digest(&tree),
-            active_projects: vec![id],
+            active_projects: vec![project_id.into()],
             active_roles: vec![],
             identity: b.id.clone(),
             built_at: crate::ids::now_iso(),
@@ -1022,13 +1121,13 @@ pub fn recall_filtered(
             continue;
         }
         let current_page = p == Path::new("README.md")
-            || p == &wiki::base(&project_id).join("index.md")
+            || p == &wiki::base(project_id).join("index.md")
             || pages.iter().any(|page| page.path == *p);
         let legacy_page = pages.is_empty() && p == &legacy;
         if !current_page
             && !legacy_page
             && !origins.contains_key(p)
-            && !wiki::source_owned(p, v, &project_id, single_owner)
+            && !wiki::source_owned(p, v, project_id, single_owner)
         {
             continue;
         }
@@ -1097,7 +1196,7 @@ pub fn recall_filtered(
         .collect();
     Ok(
         json!({"results":results,"knowledge_id":b.id,"project_id":project_id,"query":query,
-        "source_index":layout::source_index_at(&b.path,&project_id),
+        "source_index":layout::source_index_at(&b.path,project_id),
         "wiki_index":b.path.join("README.md"),
         "scope":"current_repository"}),
     )

@@ -7,5 +7,6 @@ pub mod search;
 pub mod location;
 pub mod organize;
 
+mod identity;
 pub mod portable;
 pub mod state;

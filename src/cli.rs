@@ -318,9 +318,12 @@ pub enum Command {
         /// 本项目知识目录；指定 --repository 时必须位于该仓库下
         #[arg(long)]
         path: Option<std::path::PathBuf>,
-        /// 共用的知识库仓库；自动选择以项目命名的子目录，并用于后续新项目
+        /// 知识库仓库；init 自动选择项目子目录，locate 仅查该仓库
         #[arg(long)]
         repository: Option<std::path::PathBuf>,
+        /// 代码仓库的明确 Git 地址（init / checkpoint）；与知识库同步地址分开保存
+        #[arg(long)]
+        repository_url: Option<String>,
         /// 确认预览的指纹；move 默认仅预览
         #[arg(long)]
         expected: Option<String>,

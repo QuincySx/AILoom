@@ -7,12 +7,13 @@
 - 本机仓库 ID、Worktree ID：仍使用现有注册表，用于本机定位，不作为跨机器身份。
 - 读命令输出时注意区分：`ailoom knowledge --action status|init` 结果顶层的 `project_id` 是**本机注册表 ID**（如 `repo-…`）；可迁移的项目 UUID 在 `.ailoom/knowledge.json` 与恢复状态（`state.project_id`）中。
 - 所有 Worktree 和受管子目录沿用主项目的知识库绑定。同一知识库仓库中的各项目分别使用 `<项目名称>/` 文件夹，正文、原文和配置都位于自己的目录中。
+- `.ailoom/knowledge.json` 和项目知识目录 `.ailoom/project/project.json` 记录无凭据的代码仓库 Git 地址，供 UUID、Git 链接与名称查询；目录名和本机绝对路径不作为项目身份。项目知识中的记录随知识仓库一起迁移，与 `.ailoom/library.json` 的归属核对。
 
 移动、改名、换 SSH/HTTPS 地址、clone 到另一台机器均不重新生成 UUID。复制配置和知识库表示继续使用同一个身份。要创建独立项目，应重新初始化身份，不能根据路径变化自动猜测。
 
 ## 哪些内容随项目走
 
-`.ailoom/knowledge.json` 只记录 UUID 和寻找知识库的方法：
+`.ailoom/knowledge.json` 记录 UUID、代码仓库 Git 地址和寻找知识库的方法：
 
 | 保存位置 | 项目声明 | 换机器时 |
 | --- | --- | --- |
@@ -44,7 +45,11 @@
 
 整理结果按模块、概念和独立问题保存在 `<项目名称>/wiki/`，项目首页 `<项目名称>/README.md` 提供导航，`sources/` 保留原文。人工和 AI 编辑同一份 Markdown；不同项目目录互不混写。提示词见 [整理模板](../../src/knowledge/res/organize-wiki.md)，设计见 [开发知识生命周期](../specs/development-knowledge-lifecycle.md)。
 
-AI 需要查 SDK 等其他项目的知识时，用 `ailoom --json knowledge --action locate --query <名称、Git地址或路径>` 定位，再对返回的项目执行 `knowledge --action recall --root <repository_root> --query <问题>`。定位只返回入口，普通整理与检索不会混入其他项目内容。
+AI 需要查 SDK 等其他项目的知识时，用 `ailoom --json knowledge --action locate --query <UUID、名称、Git地址或路径>` 定位，再使用返回的 recall_command。定位只返回入口，普通整理与检索不会混入其他项目内容。不同组织下的同名仓库、多个知识副本或共享同一 Git 地址的不同项目返回多个候选，不自动合并。
+
+新机器只复制或克隆知识仓库，也可以用 `locate --repository <本地知识仓库> --query <UUID或Git地址>` 查找其中尚未在本机登记的项目，再用 `recall --path <返回的项目知识目录> --query <问题>` 检索。没有对应代码副本时返回 code_available: false；可查知识不代表已经核对当前代码。只查本地元数据，不联网搜索远端，也不因查找而登记代码项目。
+
+代码 Git 地址使用 SSH 别名且缺少正式地址时，可执行 `ailoom knowledge --action checkpoint --root <代码目录> --repository-url https://github.com/组织/仓库.git` 明确补充。初始化和保存恢复配置会记住已知地址，换连接或路径后 UUID 不变。历史地址是查询别名；仓库转让或别名失效时可人工修订两侧声明中的 repository_urls，不能把地址命中当作远端所有权验证。
 
 任务在后台执行，离开页面后继续；返回知识库页面会恢复进度，也可取消。CLI 失败、超过 30 分钟或整理期间知识内容发生变化时，保留原有知识和上次报告。已生成但未能保存的草稿可以在操作记录中查看。服务重启后的任务标记为中断，不自动重新运行。
 

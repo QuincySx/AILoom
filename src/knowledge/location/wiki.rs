@@ -239,20 +239,47 @@ fn markdown_name(name: &str) -> String {
 
 /// Human navigation is derived from the authoritative local binding + portable identity.
 /// It contains no machine paths and is not original evidence.
-pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<Tree> {
-    let mut files = Tree::new();
+fn catalog_project(cat: &Catalog, binding: &Binding) -> Result<String> {
     let repo = cat
         .projects
         .iter()
         .find(|(_, b)| b.project_root == binding.project_root)
         .map(|(id, _)| id.as_str())
         .unwrap_or("");
-    let project = ingest::project_key(repo, &binding.project_root)?;
+    ingest::project_key(repo, &binding.project_root)
+}
+
+pub(super) fn identity_file(cat: &Catalog, binding: &Binding) -> Result<(PathBuf, Vec<u8>)> {
+    let project = catalog_project(cat, binding)?;
+    let name = project_name(&binding.project_root);
+    let raw = layout::source_index_at(&binding.path, &project)
+        .strip_prefix(&binding.path)?
+        .to_path_buf();
+    let metadata = layout::project_dir(&binding.path, &project).join("project.json");
+    let declaration = super::super::portable::read(&binding.project_root)?;
+    let urls = super::super::identity::repository_urls(
+        &binding.project_root,
+        declaration
+            .as_ref()
+            .map(|d| d.repository_urls.as_slice())
+            .unwrap_or_default(),
+    );
+    Ok((
+        metadata,
+        serde_json::to_vec_pretty(
+            &json!({"schema_version":1,"project_id":project,"knowledge_id":binding.id,"name":name,"repository_urls":urls,"declaration":".ailoom/knowledge.json","wiki":"README.md","raw_sources":raw}),
+        )?,
+    ))
+}
+
+pub(super) fn catalog(tree: &Tree, cat: &Catalog, binding: &Binding) -> Result<Tree> {
+    let mut files = Tree::new();
+    let (metadata, bytes) = identity_file(cat, binding)?;
+    let project = catalog_project(cat, binding)?;
     let name = markdown_name(&project_name(&binding.project_root));
     let raw = layout::source_index(tree, &project);
-    let metadata = layout::project_dir(&binding.path, &project).join("project.json");
     let guide = layout::project_dir(&binding.path, &project).join("README.md");
-    files.insert(metadata,serde_json::to_vec_pretty(&json!({"schema_version":1,"project_id":project,"knowledge_id":binding.id,"name":name,"declaration":".ailoom/knowledge.json","wiki":"README.md","raw_sources":raw}))?);
+    files.insert(metadata, bytes);
     let instructions="直接编辑首页或 wiki/ 下的 Markdown 即可维护知识；新增文档会自动参与检索，无需填写清单。再次整理时 AI 会读取现有正文，整理期间的人工作改动会阻止覆盖。原文快照保留出处，编纂结论须核对适用条件与评估状态。\n\n需要其他仓库知识时：`ailoom --json knowledge --action locate --query '<仓库名、Git 地址或路径>'`。各仓库独立维护。";
     files.insert(
         guide,

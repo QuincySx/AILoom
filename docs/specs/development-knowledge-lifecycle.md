@@ -31,9 +31,11 @@ agent-knowledge/                 # 一份 Git 仓库
 
 `knowledge --action reset-wiki --root <仓库>` 先预览，携带 expected 执行后将旧格式迁入上述目录并清空旧生成 Wiki，保留原文、恢复资源、使用反馈和归档状态。旧库根 README 若是原始资料则移入 sources/notes。操作暂留旧目录供恢复，既有知识库身份及项目关联不变。用户可通过正常整理重新生成；人工新增知识使用普通 Markdown，无需填写内部 ID 或维护清单。
 
-需要其他仓库知识时，AI 先运行 `ailoom --json knowledge --action locate --query <Git地址、本地路径或大概名称>`，只获取匹配仓库的身份、项目知识目录、索引可用状态和后续查询参数，不读取或合并正文。名称可忽略大小写、空格及连字符；Git 地址核对仓库配置的远端并沿用本机已明确保存的 SSH 映射，不猜测主机别名。根 package.json 明确声明的 repository URL 可作辅助依据，结果用 declared_repository_url 标明，不等同于核实实际远端。多个候选返回 ambiguous，必须进一步用 Git 地址或本地路径消歧，不能按目录顺序挑一个；未找到仅表示本机未登记，不能解释为远端不存在知识。查找不要求调用者位于目标仓库。
+项目 UUID 和知识集合 UUID 是归属依据，代码仓库 Git 地址是查询键，目录名仅用于浏览。代码项目 `.ailoom/knowledge.json` 和项目知识目录 `.ailoom/project/project.json` 保存代码仓库的无凭据地址；后者随知识仓库迁移，并与 `.ailoom/library.json` 的两个身份核对。初始化或保存恢复配置时记住明确地址及历史别名；地址不是远端所有权验证。SSH 别名无法直接确认正式地址时，可用 `init` 或 `checkpoint --repository-url <代码仓库Git地址>` 明确补充，不改写 Git 的连接配置或知识库同步地址。不同 clone、fork 或同名项目不会仅因 Git 地址相同而合并。
 
-之后使用返回的 repository_root 作为 `knowledge --action recall --root` 的作用域，按问题读取 SDK 自己的知识，保留 App 与 SDK 的适用条件及出处。普通整理和召回不自动附带其他仓库的目录、依赖知识或全局知识清单；查找是显式、按需的操作。
+需要其他仓库知识时，AI 先运行 `ailoom --json knowledge --action locate --query <项目UUID、知识集合UUID、Git地址、本地路径或大概名称>`，只获取身份、项目知识目录、索引可用状态和后续查询参数，不读取或合并正文。名称可忽略大小写、空格及连字符；Git 地址沿用本机已明确保存的 SSH 映射，不猜测主机别名。根 package.json 明确声明的 repository URL 可作辅助依据，结果用 declared_repository_url 标明；持久化地址匹配用 saved_repository_url 标明，均不等同于核实远端。多个候选返回 ambiguous，须进一步用 UUID、Git 地址或路径消歧，不能按目录顺序挑一个。查询范围为本机登记与已选择的知识仓库；可用 `--repository <知识仓库本地目录>` 将范围限定到这一知识仓库，不要求登记或克隆对应代码。最多检查 8 层、10000 个目录，跳过隐藏目录，并在识别到项目目录后停止向其原文和 Wiki 正文目录遍历；未找到不能解释为远端不存在知识，查询不联网。
+
+之后使用返回的 recall_command 按问题读取 SDK 自己的知识。有代码副本时使用 `knowledge --action recall --root <repository_root>`；仅有知识仓库时使用 `knowledge --action recall --path <knowledge_path>`，仍核对项目身份、逐项目隔离，并标记 code_available 为 false，不能据此宣称已核对当前代码。普通整理和召回不自动附带其他仓库的目录、依赖知识或全局知识清单；查找是显式、按需的操作。
 
 ## 维护什么
 

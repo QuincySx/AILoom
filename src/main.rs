@@ -73,6 +73,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
             branch,
             subdir,
             repository,
+            repository_url,
             file,
             name,
             query,
@@ -107,10 +108,11 @@ fn run(cli: &cli::Cli) -> Result<()> {
                 })
             };
             let value = match action.as_str() {
-                "locate" => ailoom::knowledge::location::locate(
+                "locate" => ailoom::knowledge::location::locate_in_repository(
                     &data,
                     &required(query.clone(), "query")?,
                     *limit,
+                    repository.as_deref(),
                 )?,
                 "save" => ailoom::knowledge::location::save(
                     &data,
@@ -119,6 +121,12 @@ fn run(cli: &cli::Cli) -> Result<()> {
                         ailoom::error::Error::new(ailoom::error::code::USAGE, "缺少 --file")
                     })?,
                     &required(name.clone(), "name")?,
+                )?,
+                "recall" if path.is_some() => ailoom::knowledge::location::recall_at(
+                    &data,
+                    path.as_deref().unwrap(),
+                    &required(query.clone(), "query")?,
+                    *limit,
                 )?,
                 "recall" => ailoom::knowledge::location::recall(
                     &data,
@@ -133,6 +141,7 @@ fn run(cli: &cli::Cli) -> Result<()> {
                         root,
                         path: path.clone(),
                         repository_path: repository.clone(),
+                        repository_url: repository_url.clone(),
                         expected: expected.clone(),
                         execute: *execute,
                         sync_after: *sync_after,

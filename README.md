@@ -71,9 +71,12 @@ python3 scripts/docs_check.py      # 断链、卡片状态一致性、看板生�
 ailoom --json knowledge --action locate --query "hardware-js-sdk"
 ailoom --json knowledge --action locate --query "https://github.com/owner/repository"
 ailoom --json knowledge --action recall --root "/返回的仓库路径" --query "接口有哪些版本约束？"
+# 只有知识仓库时，按持久化的项目 UUID 或 Git 地址定位，再使用返回的 recall_command
+ailoom --json knowledge --action locate --repository "/work/agent-knowledge" --query "https://github.com/owner/repository"
+ailoom --json knowledge --action recall --path "/返回的项目知识目录" --query "接口有哪些版本约束？"
 ```
 
-查找只返回入口，重名会列候选；各仓库的原文、Wiki 和读写绑定独立。同仓库的 Worktree 共用本仓库知识。
+查找支持稳定项目 UUID、知识集合 UUID、Git 地址和名称，只返回入口，重名会列候选；身份记录随知识仓库迁移，各仓库的原文、Wiki 和读写绑定独立。同仓库的 Worktree 共用本仓库知识。
 
 项目知识库是可直接维护和通过 Git 分享的 Markdown 目录：
 

@@ -14,6 +14,8 @@ pub struct Declaration {
     pub schema_version: u32,
     pub project_id: String,
     pub knowledge_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repository_urls: Vec<String>,
     pub source: Source,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,6 +79,13 @@ pub fn read(root: &Path) -> Result<Option<Declaration>> {
     }
     for id in [&d.project_id, &d.knowledge_id] {
         uuid::Uuid::parse_str(id).map_err(|_| fail("恢复配置中的 UUID 无效"))?;
+    }
+    if d.repository_urls.len() > 64
+        || d.repository_urls
+            .iter()
+            .any(|url| !super::identity::valid_url(url))
+    {
+        return Err(fail("代码仓库地址无效或包含凭据"));
     }
     match &d.source {
         Source::Project { path } => relative(path)?,
@@ -157,6 +166,12 @@ pub fn describe(b: &Binding) -> Result<Declaration> {
     };
     Ok(Declaration {
         schema_version: 1,
+        repository_urls: super::identity::repository_urls(
+            &b.project_root,
+            old.as_ref()
+                .map(|d| d.repository_urls.as_slice())
+                .unwrap_or_default(),
+        ),
         project_id: old.map(|d| d.project_id).unwrap_or_else(crate::ids::new_id),
         knowledge_id: b.id.clone(),
         source,

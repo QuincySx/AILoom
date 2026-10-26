@@ -114,11 +114,11 @@ fn cli_locates_url_path_and_partial_name_from_outside_the_repository() {
     // Credentials in metadata never become lookup evidence or returned URLs.
     std::fs::write(
         sdk.join("package.json"),
-        r#"{"repository":"https://user:password@github.com/Example/Hardware-SDK.git"}"#,
+        r#"{"repository":"https://user:password@github.com/Example/Credential-Only.git"}"#,
     )
     .unwrap();
     assert_eq!(
-        location::locate(&data, "https://github.com/example/hardware-sdk", 5).unwrap()["status"],
+        location::locate(&data, "https://github.com/example/credential-only", 5).unwrap()["status"],
         "not_found"
     );
     let other = t.path().join("hardware-js-sdk-experiment");
@@ -138,6 +138,289 @@ fn cli_locates_url_path_and_partial_name_from_outside_the_repository() {
     );
     assert!(location::locate(&data, "", 5).is_err());
     assert!(location::locate(&data, "---", 5).is_err());
+}
+
+#[test]
+fn shared_checkout_discovers_portable_identities_without_code_or_local_registration() {
+    common::isolate_in_process_roots();
+    let t = tempfile::tempdir().unwrap();
+    let data = t.path().join("old-machine");
+    let repository = t.path().join("old-knowledge");
+    let app = t.path().join("code-a/app");
+    let fork = t.path().join("code-b/app");
+    for (root, directory, url, text) in [
+        (
+            &app,
+            "apps/app",
+            "https://github.com/Team/App.git",
+            "alpha-contract Alpha API contract",
+        ),
+        (
+            &fork,
+            "wiki/app",
+            "https://github.com/Other/App.git",
+            "beta-contract Beta private implementation",
+        ),
+    ] {
+        std::fs::create_dir_all(root).unwrap();
+        git(root, &["init", "-q"]);
+        git(
+            root,
+            &["remote", "add", "origin", "git@private-alias:team/app.git"],
+        );
+        cli(
+            &data,
+            t.path(),
+            &[
+                "knowledge",
+                "--action",
+                "init",
+                "--root",
+                root.to_str().unwrap(),
+                "--repository",
+                repository.to_str().unwrap(),
+                "--path",
+                repository.join(directory).to_str().unwrap(),
+                "--repository-url",
+                url,
+            ],
+        );
+        std::fs::write(
+            repository.join(directory).join("wiki/contracts.md"),
+            format!("# {text}\n"),
+        )
+        .unwrap();
+    }
+    let declaration = portable::read(&app).unwrap().unwrap();
+    let fork_declaration = portable::read(&fork).unwrap().unwrap();
+    assert_ne!(declaration.project_id, fork_declaration.project_id);
+    let own_path =
+        location::locate(&data, repository.join("apps/app").to_str().unwrap(), 5).unwrap();
+    assert_eq!(own_path["status"], "found");
+    assert_eq!(
+        own_path["candidates"][0]["project_id"],
+        declaration.project_id
+    );
+    let binding_file = data.join("knowledge/bindings.json");
+    let mut catalog: Value =
+        serde_json::from_slice(&std::fs::read(&binding_file).unwrap()).unwrap();
+    catalog["projects"]
+        .as_object_mut()
+        .unwrap()
+        .retain(|_, b| b["id"] != fork_declaration.knowledge_id);
+    std::fs::write(&binding_file, serde_json::to_vec(&catalog).unwrap()).unwrap();
+    let unregistered = location::locate(&data, &fork_declaration.project_id, 5).unwrap();
+    assert_eq!(
+        unregistered["status"], "found",
+        "registered App must find SDK-style siblings from portable metadata"
+    );
+    assert!(unregistered["candidates"][0]["repo_id"].is_null());
+    let checkout = t.path().join("new-machine/knowledge");
+    for entry in walkdir::WalkDir::new(&repository) {
+        let entry = entry.unwrap();
+        let target = checkout.join(entry.path().strip_prefix(&repository).unwrap());
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(target).unwrap();
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+    // The folder is a readable label; changing it does not change either UUID.
+    std::fs::rename(checkout.join("apps/app"), checkout.join("apps/renamed-app")).unwrap();
+    let selected =
+        location::locate_in_repository(&data, &declaration.project_id, 5, Some(&checkout)).unwrap();
+    assert_eq!(
+        selected["total"], 1,
+        "explicit checkout excludes other local knowledge copies"
+    );
+    assert!(selected["candidates"][0]["repo_id"].is_null());
+    let fresh_data = t.path().join("new-machine/data");
+    for query in [
+        &declaration.project_id,
+        &declaration.knowledge_id,
+        "git@github.com:team/app.git",
+    ] {
+        let found = cli(
+            &fresh_data,
+            t.path(),
+            &[
+                "knowledge",
+                "--action",
+                "locate",
+                "--repository",
+                checkout.to_str().unwrap(),
+                "--query",
+                query,
+            ],
+        );
+        assert_eq!(found["status"], "found", "{found}");
+        let candidate = &found["candidates"][0];
+        assert_eq!(candidate["project_id"], declaration.project_id);
+        assert_eq!(candidate["knowledge_id"], declaration.knowledge_id);
+        assert_eq!(
+            candidate["knowledge_path"],
+            checkout
+                .join("apps/renamed-app")
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(candidate["code_available"], false);
+        assert!(candidate["repository_root"].is_null());
+        assert!(candidate.get("body").is_none());
+        assert!(candidate.get("documents").is_none());
+        assert_eq!(candidate["recall_command"][5], "--path");
+    }
+    let by_name = cli(
+        &fresh_data,
+        t.path(),
+        &[
+            "knowledge",
+            "--action",
+            "locate",
+            "--repository",
+            checkout.to_str().unwrap(),
+            "--query",
+            "app",
+        ],
+    );
+    assert_eq!(by_name["status"], "ambiguous");
+    assert_eq!(by_name["total"], 2);
+    let ambiguous_alias = cli(
+        &fresh_data,
+        t.path(),
+        &[
+            "knowledge",
+            "--action",
+            "locate",
+            "--repository",
+            checkout.to_str().unwrap(),
+            "--query",
+            "git@private-alias:team/app.git",
+        ],
+    );
+    assert_eq!(ambiguous_alias["status"], "ambiguous");
+    let own = cli(
+        &fresh_data,
+        t.path(),
+        &[
+            "knowledge",
+            "--action",
+            "recall",
+            "--path",
+            checkout.join("apps/renamed-app").to_str().unwrap(),
+            "--query",
+            "contract",
+        ],
+    );
+    assert_eq!(own["project_id"], declaration.project_id);
+    assert_eq!(own["code_available"], false);
+    assert!(own["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hit| hit["title"].as_str().unwrap().contains("alpha-contract")));
+    assert!(!own.to_string().contains("beta-contract"));
+    assert!(
+        !fresh_data.join("repos").exists(),
+        "discovery and recall must not register a code repository"
+    );
+    assert!(!fresh_data.join("knowledge/bindings.json").exists());
+}
+
+#[test]
+fn portable_lookup_rejects_a_mismatched_identity_and_linked_metadata() {
+    common::isolate_in_process_roots();
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("app");
+    let repository = t.path().join("knowledge");
+    let path = repository.join("app");
+    std::fs::create_dir(&root).unwrap();
+    init(&t.path().join("old"), &root, &path);
+    let metadata = path.join(".ailoom/project/project.json");
+    let bytes = std::fs::read(&metadata).unwrap();
+    let mut identity: Value = serde_json::from_slice(&bytes).unwrap();
+    identity["project_id"] = json!(uuid::Uuid::new_v4().to_string());
+    std::fs::write(&metadata, serde_json::to_vec(&identity).unwrap()).unwrap();
+    let data = t.path().join("fresh");
+    let found = location::locate_in_repository(&data, "app", 5, Some(&repository)).unwrap();
+    assert_eq!(found["status"], "not_found");
+    assert!(!found["warnings"].as_array().unwrap().is_empty());
+    assert!(location::recall_at(&data, &path, "anything", 5).is_err());
+    #[cfg(unix)]
+    {
+        let outside = t.path().join("outside.json");
+        std::fs::write(&outside, bytes).unwrap();
+        std::fs::remove_file(&metadata).unwrap();
+        std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+        let found = location::locate_in_repository(&data, "app", 5, Some(&repository)).unwrap();
+        assert_eq!(found["status"], "not_found");
+        assert!(location::recall_at(&data, &path, "anything", 5).is_err());
+    }
+}
+
+#[test]
+fn saved_git_identity_survives_remote_change_and_missing_code_checkout() {
+    common::isolate_in_process_roots();
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("app");
+    let data = t.path().join("data");
+    let library = t.path().join("knowledge/app");
+    std::fs::create_dir(&root).unwrap();
+    git(&root, &["init", "-q"]);
+    git(
+        &root,
+        &["remote", "add", "origin", "git@unmapped-host:Team/App.git"],
+    );
+    init(&data, &root, &library);
+    assert_eq!(
+        location::locate(&data, "https://github.com/team/app", 5).unwrap()["status"],
+        "not_found"
+    );
+    cli(
+        &data,
+        t.path(),
+        &[
+            "knowledge",
+            "--action",
+            "checkpoint",
+            "--root",
+            root.to_str().unwrap(),
+            "--repository-url",
+            "https://github.com/Team/App.git",
+        ],
+    );
+    let id = portable::read(&root).unwrap().unwrap().project_id;
+    git(
+        &root,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@new-host:Team/Renamed.git",
+        ],
+    );
+    cli(
+        &data,
+        t.path(),
+        &[
+            "knowledge",
+            "--action",
+            "checkpoint",
+            "--root",
+            root.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(portable::read(&root).unwrap().unwrap().project_id, id);
+    // The local binding is still present, but the original code path has gone away.
+    std::fs::rename(&root, t.path().join("relocated-code")).unwrap();
+    let found = location::locate(&data, "git@github.com:team/app.git", 5).unwrap();
+    assert_eq!(found["status"], "found");
+    assert_eq!(found["candidates"][0]["project_id"], id);
+    assert_eq!(found["candidates"][0]["code_available"], false);
+    assert_eq!(found["candidates"][0]["recall_command"][5], "--path");
+    assert_eq!(location::locate(&data, &id, 5).unwrap()["status"], "found");
 }
 
 #[test]
