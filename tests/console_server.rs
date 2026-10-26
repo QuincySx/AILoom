@@ -2015,6 +2015,85 @@ fn directory_paths_with_spaces_work_and_escapes_are_rejected() {
     server.join();
 }
 
+/// 更新预览必须同时包含独立 Skill 的项目与全局启用引用。
+#[test]
+fn updatable_library_entries_include_project_and_global_references() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = ConsoleServer::start(&opts(tmp.path(), 0)).unwrap();
+    let data = &server.state.data_root;
+    ailoom::personal_library::ensure_library(data).unwrap();
+    let skill = data.join("library/resources/skills/update-preview");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: update-preview\nnamespace: personal\nshared: true\n---\nPreview fixture\n",
+    )
+    .unwrap();
+    let meta = ailoom::skill_source::git_meta(
+        "fixture",
+        "https://example.invalid/skills",
+        "skills/update-preview",
+        Some("main"),
+        Some("old-commit"),
+        "fixture-digest",
+    );
+    ailoom::skill_source::write_meta(&skill, &meta).unwrap();
+    let id = "personal/skill/personal/update-preview";
+    let mut profile = ailoom::profile::PersonalProfile::load_or_default(data).unwrap();
+    let mut selected = ailoom::profile::ScopeSelection::default();
+    selected
+        .resources
+        .insert(id.into(), ailoom::profile::TriState::Enable);
+    profile
+        .repos
+        .entry("repo-1111111111111111".into())
+        .or_default()
+        .default = Some(selected);
+    profile.global.skills.insert(id.into());
+    profile.save(data).unwrap();
+    let auth = [(SESSION_HEADER, server.token.as_str())];
+    let (code, raw) = method(server.port, "GET", "/api/library/list", &auth, None);
+    assert_eq!(code, 200, "{raw}");
+    let body = json_body(&raw);
+    let entry = body["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == id)
+        .unwrap();
+    assert_eq!(entry["references"].as_array().unwrap().len(), 2);
+    assert!(entry["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["repo_id"] == "repo-1111111111111111" && r["scope"] == "仓库默认"));
+    assert!(entry["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["repo_id"].is_null() && r["scope"] == "全局"));
+    std::fs::write(
+        ailoom::profile::PersonalProfile::profile_path(data),
+        "invalid = [",
+    )
+    .unwrap();
+    let (code, raw) = method(server.port, "GET", "/api/library/list", &auth, None);
+    assert_eq!(code, 200, "{raw}");
+    let body = json_body(&raw);
+    let entry = body["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == id)
+        .unwrap();
+    assert!(
+        entry["references_error"].is_string(),
+        "unknown references must not look like zero usage: {raw}"
+    );
+    server.shutdown();
+    server.join();
+}
+
 /// AIL-062：坏条目在网页上可定位、可打开修复、可删除；列表与计划用的解析器口径一致。
 #[test]
 fn broken_library_entries_can_be_repaired_or_deleted_from_the_web() {

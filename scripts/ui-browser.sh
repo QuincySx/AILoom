@@ -116,4 +116,5 @@ run v27
 run worktree-cleanup
 run knowledge-organization
 run knowledge-ingestion
+run resource-updates
 exit $failed

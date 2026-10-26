@@ -374,6 +374,15 @@
 .source-version { display:grid;grid-template-columns:100px minmax(0,1fr);gap:var(--sp-2);font-size:var(--fs-hint); }
 .source-version dt { color:var(--muted-foreground); }
 .source-version dd { margin:0;overflow-wrap:anywhere; }
+.dialog-content[open]:has(.library-update-preview) { display:flex;flex-direction:column;overflow:hidden; }
+.dialog-content[open]:has(.library-update-preview)>.dialog-body { min-height:0;overflow:auto; }
+.dialog-content[open]:has(.library-update-preview)>:is(.dialog-header,.dialog-actions) { flex-shrink:0; }
+.library-update-preview { overflow-wrap:anywhere; }
+.library-update-preview p { margin:var(--sp-2) 0; }
+.library-update-preview section { margin-top:var(--sp-5); }
+.library-update-list { list-style:none;margin:0;padding:0; }
+.library-update-list>li { padding:var(--sp-3) 0;border-bottom:1px solid var(--border); }
+.library-update-list>li:last-child { border-bottom:0; }
 .workspace-explorer svg { fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round; }
 .workspace-apply-success svg { color:var(--success); }
 .workspace-empty-kinds { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-4); }
@@ -495,3 +504,7 @@
   .repository-resource .ui-item-actions,.global-list .ui-item-actions { padding-right:var(--sp-2); }
   .repository-resource .ui-item-description { -webkit-line-clamp:2; }
 }
+
+.library-check-progress { margin:var(--sp-3) 0;padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--radius);overflow-wrap:anywhere; }
+.library-check-progress progress { display:block;width:100%; }
+.library-check-progress p { margin:var(--sp-2) 0; }

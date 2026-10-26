@@ -84,6 +84,7 @@ if(mode==='v27')await (await import('./ui_design_v27.mjs')).verifyDesign({evalua
 if(mode==='worktree-cleanup')await (await import('./ui_worktree_cleanup.mjs')).verifyWorktreeCleanup({evaluate,waitFor,send,screenshot,output});
 if(mode==='knowledge-organization')await (await import('./ui_knowledge_organization.mjs')).verifyKnowledgeOrganization({evaluate,waitFor,send,screenshot,output});
 if(mode==='knowledge-ingestion')await (await import('./ui_knowledge_ingestion.mjs')).verifyKnowledgeIngestion({evaluate,waitFor,send,screenshot,output});
+if(mode==='resource-updates')await (await import('./ui_resource_updates.mjs')).verifyResourceUpdates({evaluate,waitFor,send,screenshot,output});
 if(mode==='journey') {
   // 正常使用的连续流程；仅接受专用隔离 fixtures，不改真实项目或全局目录。
   const [project,skills,teamProject,replacement]=process.argv.slice(5);

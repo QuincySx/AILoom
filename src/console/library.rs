@@ -45,10 +45,19 @@ pub(super) fn library_entries(state: &Arc<ServerState>) -> Response {
     // AIL-062：宽容列表——坏条目作为 issues 返回（带文件级定位），不锁死整个列表
     let lib = crate::personal_library::library_root(&state.data_root);
     let (entries, issues) = crate::personal_library::list_tolerant(&state.data_root);
+    let profile = crate::profile::PersonalProfile::load_or_default(&state.data_root);
     let entries: Vec<_> = entries
         .into_iter()
         .map(|entry| {
             let mut value = serde_json::to_value(&entry).unwrap_or_default();
+            if entry.can_check_update {
+                match &profile {
+                    Ok(profile) => {
+                        value["references"] = crate::collections::references_in(profile, &entry.id);
+                    }
+                    Err(error) => value["references_error"] = json!(error.to_string()),
+                }
+            }
             if let Some(source) = &entry.source {
                 let url = source
                     .connection

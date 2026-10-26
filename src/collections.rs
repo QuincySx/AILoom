@@ -691,6 +691,13 @@ pub fn apply_previews(data: &Path, tokens: &[String]) -> Result<Value> {
 /// 明确启用的引用；同时包含仓库默认、子项目以及 Worktree 覆盖，供更新/移除预览使用。
 pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
     let profile = crate::profile::PersonalProfile::load_or_default(data)?;
+    Ok(references_in(&profile, id_or_prefix))
+}
+
+pub(crate) fn references_in(
+    profile: &crate::profile::PersonalProfile,
+    id_or_prefix: &str,
+) -> Value {
     let mut refs = Vec::new();
     for (repo_id, repo) in &profile.repos {
         let mut scan = |selection: &crate::profile::ScopeSelection, scope: String| {
@@ -731,7 +738,7 @@ pub fn references(data: &Path, id_or_prefix: &str) -> Result<Value> {
             refs.push(json!({"repo_id": null, "scope": "全局", "resource_id": id}));
         }
     }
-    Ok(json!(refs))
+    json!(refs)
 }
 
 /// 检查会获取远端，但只持久化检查结果与候选快照，不改变库版本或项目。

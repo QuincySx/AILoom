@@ -307,7 +307,7 @@ test('知识库迁移失败后清除旧预览，下一次提交重新预览', as
 });
 
 
-async function collectionPanel(api, confirmations=[]) {
+async function collectionPanel(api, confirmations=[], approve=true) {
   class PanelElement extends Element {
     constructor(tag) { super(tag); this.dataset = {}; this.elements = new Map(); }
     querySelector(selector) {
@@ -326,7 +326,14 @@ async function collectionPanel(api, confirmations=[]) {
   }
   const context = vm.createContext({URL,document:{createElement:tag => new PanelElement(tag)}});
   const module = new vm.SourceTextModule(await readFile('src/console/ui/features/collectionsPanel.js','utf8'), {context});
-  const dialog = () => ({show(){},destroy(){}});
+  const dialog = (_container,props) => {
+    if(props?.title==='更新资源库') {
+      confirmations.push(props.content.innerHTML);
+      queueMicrotask(()=>props.onClose(approve&&props.actions.some(a=>a.returnValue===true)));
+    }
+    return {show(){},close(){props?.onClose?.(false);},destroy(){}};
+  };
+  api.state??=async()=>({repos:[]});
   const dependencies = {
     '../services/api.js': {api,esc:String},
     '../components/item.js':await sharedComponents(context),
@@ -371,7 +378,10 @@ test('左栏仓库过滤叠加搜索限制检查与更新，合集按完整版�
   assert.equal(root.querySelector('[data-check]').textContent,'检查筛选项');
   await root.querySelector('[data-check]').onclick();assert.deepEqual(checks,['a','design']);
   await root.querySelector('[data-update]').onclick();assert.deepEqual(writes,['a-new','design']);
-  assert.ok(confirmations[0].includes('合集按整个版本更新：设计与开发合集'));
+  assert.ok(confirmations[0].includes('1 个合集和1 个独立 Skill'));
+  assert.ok(confirmations[0].includes('每个合集整体更新'));
+  assert.ok(confirmations[0].includes('data-update-skill="personal/design"'));
+  assert.ok(!confirmations[0].includes('data-update-skill="personal/development"'));
   root.querySelector('[data-search]').value='does-not-exist';root.querySelector('[data-search]').oninput();
   assert.equal(root.querySelector('[data-check]').disabled,true);
   assert.equal(root.querySelector('[data-update]').disabled,true);
@@ -431,7 +441,7 @@ test('检查失败后的后端状态会替换旧候选，刷新后仍不可更�
   await panel.refresh();
   assert.ok(root.querySelector('[data-capability-catalog]').innerHTML.includes('检查失败'));
   assert.ok(!root.querySelector('[data-capability-catalog]').innerHTML.includes('data-skill-update'));
-  assert.ok(root.querySelector('[data-msg]').textContent.includes('上游离线'));
+  assert.ok(root.querySelector('[data-check-progress]').innerHTML.includes('上游离线'));
 });
 
 test('合集批量更新失败后继续独立 Skill，并刷新两者状态', async () => {

@@ -71,14 +71,15 @@ export function catalogGroups(sources, entries) {
 export function CollectionsPanel(container, options = {}) {
   const root = document.createElement('section');
   container.appendChild(root);
-  let alive = true, busy = false, sources = [];
+  let alive = true, busy = false, checking = false, stopCheck = false, checkProgress = null, sources = [];
   let libraryEntries = [], selectedRepository = ''; // Personal copies may also have a Git origin.
-  let referenceDialog = null, resourceDialog = null;
+  let referenceDialog = null, resourceDialog = null, updateDialog = null;
   root.innerHTML = `
     ${PageHeader({title:options.title||'资源库',description:options.description||'按来源管理与搜索',actions:`${options.onCreate?'<button data-create data-variant="ghost" title="新建规则 / 子代理">新建</button>':''}${MoreActions('导入资源','<button data-git-add>GitHub 或 Git 仓库</button><button data-add-entry>skills.sh</button><button data-add>本地文件夹</button>','导入资源')}`})}
     ${options.compactLibrary?'<div class="library-layout"><aside class="library-repository-nav" aria-label="仓库与合集"><h3>仓库与合集</h3><input data-repository-search type="search" aria-label="查找仓库或合集" placeholder="查找仓库 / 合集…"><div data-repository-filters></div><button class="item-surface" data-manage-sources>管理来源</button></aside><div class="library-catalog-pane"><div class="library-catalog-heading"><div><h2>全部资源</h2><small data-library-count class="sr-only" role="status" aria-live="polite"></small></div><button class="library-mobile-source" data-select-source aria-expanded="false">选择来源</button></div>':''}
     <div class="toolbar${options.compactLibrary?' library-scope':''}"><input data-search type="search" aria-label="搜索来源或资源" placeholder="搜索资源名称或用途…">${options.compactLibrary?'<button data-library-clear hidden>清除筛选</button>':''}<div class="actions library-update-actions"><button data-check>检查全部更新</button><button data-update disabled>更新可用版本</button></div></div>
     <p data-msg class="inline-status muted" role="status" aria-live="polite"></p>
+    <section class="library-check-progress" data-check-progress hidden aria-label="更新检查进度"></section>
     <div data-sources><p class="muted">正在读取资源库…</p></div>
     <details class="library-maintenance"><summary>迁移已有资源</summary><div class="actions"><button data-cc-switch>从 CC Switch 迁移</button></div></details>${options.compactLibrary?'</div></div>':''}`;
   const q = s => root.querySelector(s);
@@ -136,7 +137,7 @@ export function CollectionsPanel(container, options = {}) {
   function changed() { const t = currentTarget(); if (t) setTarget(t); options.onChanged?.(); }
   function message(text) { if (alive) q('[data-msg]').textContent = text; }
   async function run(fn) {
-    if (busy) return;
+    if (busy || checking) return;
     busy = true; root.setAttribute('aria-busy', 'true');
     root.querySelectorAll('button').forEach(b => { b.disabled = true; });
     root.querySelectorAll('.toolbar input,.toolbar select,[data-repository-search]').forEach(e=>{e.disabled=true;});
@@ -172,12 +173,56 @@ export function CollectionsPanel(container, options = {}) {
   }
   function syncUpdateControls() {
     const scope=updateScope();
-    q('[data-update]').disabled = busy || (!scope.sources.some(s=>s.update?.state==='available'&&s.update.preview?.preview_id)&&!scope.skills.some(e=>e.update?.state==='upstream-new'&&e.update.preview_id));
-    q('[data-check]').disabled = busy || !(scope.sources.some(s=>s.management!=='external'&&s.can_update!==false) || scope.skills.length);
+    q('[data-update]').disabled = busy || checking || (!scope.sources.some(s=>s.update?.state==='available'&&s.update.preview?.preview_id)&&!scope.skills.some(e=>e.update?.state==='upstream-new'&&e.update.preview_id));
+    q('[data-check]').disabled = busy || checking || !(scope.sources.some(s=>s.management!=='external'&&s.can_update!==false) || scope.skills.length);
     q('[data-check]').textContent=filtersActive()?'检查筛选项':'检查全部更新';
     q('[data-update]').textContent=filtersActive()?'更新筛选项':'更新可用版本';
   }
   const UPDATE_LABELS = {'up-to-date':'已是最新','upstream-new':'可更新','local-modified':'本地已修改',conflict:'本地与上游冲突','upstream-missing':'上游已移除',stale:'请重新检查',error:'检查失败'};
+  function syncMutationControls() {
+    root.querySelectorAll('[data-group-check],[data-check-one],[data-skill-check],[data-group-update],[data-update-one],[data-skill-update],[data-group-install],[data-remove],[data-git-add],[data-add-entry],[data-add],[data-cc-switch],[data-create],[data-first],[data-refresh-external],[data-catalog-binding],[data-catalog-edit]').forEach(b=>{b.disabled=busy||checking;});
+    syncUpdateControls();
+  }
+  function renderCheckProgress() {
+    if(!alive||!checkProgress)return;
+    const box=q('[data-check-progress]'),open=box.querySelector('details')?.open;
+    const p=checkProgress;box.hidden=false;
+    const current=checking&&p.refreshing?'正在读取检查结果…':checking?(stopCheck?'正在完成当前项，随后停止：':'正在检查：')+(p.entries.find(e=>e.status==='正在检查')?.name||'准备开始'):p.stopped?'检查已停止':'检查完成';
+    box.innerHTML=`<p data-check-current role="status" aria-live="polite"><strong>${esc(current)}</strong></p><progress data-check-bar max="${p.entries.length}" value="${p.done}" aria-label="已完成 ${p.done} 项，共 ${p.entries.length} 项"></progress><div class="tab-actions"><p data-check-count>已完成 ${p.done} / ${p.entries.length} 项 · 可更新 ${p.available} 项 · 失败 ${p.failed} 项</p>${checking?`<button data-check-stop ${stopCheck?'disabled':''}>${stopCheck?'等待当前项结束':'停止检查'}</button>`:''}</div><details ${open||p.failed?'open':''}><summary>检查明细</summary><ul class="library-update-list">${p.entries.map(e=>`<li><strong>${esc(e.name)}</strong><p class="${e.status==='失败'?'field-error':'muted'}">${esc(e.status)}${e.error?'：'+esc(e.error):''}</p></li>`).join('')}</ul></details>`;
+    box.querySelector('[data-check-stop]')?.addEventListener('click',()=>{stopCheck=true;renderCheckProgress();});
+  }
+  async function checkUpdates(collections, skills) {
+    if(busy||checking||!alive)return;
+    const entries=[...collections.filter(s=>s.management!=='external'&&s.can_update!==false).map(s=>({name:'合集 · '+s.name,source:s})),...skills.map(e=>({name:'Skill · '+e.name,skill:e}))].map(e=>({...e,status:'等待检查'}));
+    if(!entries.length)return;
+    checking=true;stopCheck=false;checkProgress={entries,done:0,available:0,failed:0,stopped:false};
+    syncMutationControls();renderCheckProgress();message('正在检查更新，可继续搜索、筛选和查看资源。');
+    try {
+      for(const entry of entries) {
+        if(stopCheck||!alive)break;
+        entry.status='正在检查';renderCheckProgress();
+        try {
+          const result=entry.source?await api.collectionCheck(entry.source.id):await api.checkUpdate(entry.skill.name);
+          const statuses=entry.source?result.items:[result.status];
+          const failed=statuses.some(s=>s.state==='error'),available=statuses.some(s=>['available','upstream-new'].includes(s.state));
+          entry.status=failed?'失败':available?'可更新':entry.source?'已是最新':UPDATE_LABELS[result.status.state]||'检查完成';
+          entry.error=statuses.filter(s=>s.state==='error').map(s=>s.error||s.note||'检查失败').join('；');
+          if(failed)checkProgress.failed++;
+          if(available)checkProgress.available++;
+        } catch(e) {entry.status='失败';entry.error=e.message;checkProgress.failed++;}
+        checkProgress.done++;renderCheckProgress();
+      }
+    } finally {
+      checkProgress.refreshing=true;checkProgress.stopped=checkProgress.done<entries.length;
+      for(const entry of entries)if(entry.status==='等待检查')entry.status='未检查';
+      renderCheckProgress();
+      if(alive) {
+        try{await refresh();message(`${checkProgress.stopped?'检查已停止':'检查完成'}：${checkProgress.done} / ${entries.length} 项，可更新 ${checkProgress.available} 项，失败 ${checkProgress.failed} 项。`);}
+        catch(e){message('检查结果暂时无法刷新：'+e.message);}
+        checking=false;renderCheckProgress();syncMutationControls();
+      } else checking=false;
+    }
+  }
   const updateLabel = entry => UPDATE_LABELS[entry.update?.state] || '尚未检查更新';
   function skillControls(entry, check = true) {
     if (!entry.can_check_update) return '';
@@ -186,17 +231,48 @@ export function CollectionsPanel(container, options = {}) {
   function bindSkillUpdates() {
     root.querySelectorAll('[data-catalog-binding]').forEach(b=>{b.onclick=()=>{const e=libraryEntries.find(e=>e.id===b.dataset.catalogBinding);if(e)bindingDialog.show({kind:'skill',id:e.id},e.source);};});
 
-    root.querySelectorAll('[data-skill-check]').forEach(b => { b.onclick = () => run(async () => {
-      const entry = libraryEntries.find(e => e.name === b.dataset.skillCheck);
-      try { await api.checkUpdate(entry.name); message('检查完成。'); }
-      finally { await refresh(); }
-    }); });
+    root.querySelectorAll('[data-skill-check]').forEach(b => { b.onclick = () => checkUpdates([], [libraryEntries.find(e => e.name === b.dataset.skillCheck)]); });
     root.querySelectorAll('[data-skill-update]').forEach(b => { b.onclick = () => run(() => update([], [libraryEntries.find(e => e.name === b.dataset.skillUpdate)])); });
   }
   async function update(items, skills = []) {
-    const refs = items.flatMap(s => s.references || []);
-    const removed = items.flatMap(s => s.update.preview.removed || []);
-    if (!await confirmAction('更新 ' + (items.length + skills.length) + ' 个来源或 Skill？' + (items.length ? '\n合集按整个版本更新：'+items.map(s=>s.name).join('、')+'。\n涉及 '+refs.length+' 处使用。' : '') + '\n不会自动修改项目。' + (removed.length ? '\n上游删除：' + removed.join('、') : '') + '\n旧版本保留。', {title:'更新资源库', confirmLabel:'确认更新'})) return;
+    const state=await api.state().catch(e=>({repos:[],error:e.message}));
+    if(!alive)return;
+    const names=new Map([...sources.flatMap(s=>s.resources||[]),...libraryEntries].map(e=>[e.id,e.name]));
+    const resourceName=id=>names.get(id)||id.split('/').slice(3).join('/')||id.split('/').pop();
+    const refs=[...new Map([...items,...skills].flatMap(s=>s.references||[]).map(r=>[JSON.stringify([r.repo_id,r.scope,r.resource_id]),r])).values()];
+    const removed=items.flatMap(s=>(s.update.preview.removed||[]).map(id=>({id,source:s.name,used:refs.some(r=>r.resource_id===id)})));
+    const blocked=removed.some(r=>r.used),unknownUsage=skills.filter(e=>e.references_error);
+    const origin=entry=>{
+      const g=repositoryGroups([{...entry.source,...entry,name:entry.name,url:entry.source?.repo_url||entry.url}])[0];
+      return g.host==='本地来源'?g.title:g.host+'/'+g.title;
+    };
+    const version=value=>value?`<code title="${esc(value)}">${esc(value.slice(0,12))}</code>`:'未记录';
+    const locations=new Map();
+    for(const r of refs) {
+      const key=JSON.stringify([r.repo_id,r.scope]);
+      if(!locations.has(key))locations.set(key,{...r,resources:[]});
+      locations.get(key).resources.push(resourceName(r.resource_id));
+    }
+    const locationRows=[...locations.values()].map(location=>{
+      const repo=(state.repos||[]).find(r=>r.repo_id===location.repo_id);
+      let scope=location.scope;
+      const wt=Object.entries(repo?.worktrees||{}).sort((a,b)=>b[0].length-a[0].length).find(([id])=>scope==='Worktree '+id||scope.startsWith('Worktree '+id+'/'));
+      if(wt)scope='Worktree '+(wt[1].branch?.replace(/^refs\/heads\//,'')||wt[1].path.split('/').pop())+scope.slice(('Worktree '+wt[0]).length);
+      const name=location.repo_id?(repo?.project?.name||repo?.common_dir?.replace(/\/\.git$/,'').split('/').pop()||'项目 '+location.repo_id):'跨项目配置';
+      return `<li><strong>${esc(name)}</strong><p class="muted">${esc(scope)}</p><p>${location.resources.map(esc).join('、')}</p></li>`;
+    }).join('');
+    const content=document.createElement('div');content.className='library-update-preview';
+    content.innerHTML=`<p data-update-summary>将更新 ${[items.length?items.length+' 个合集':'',skills.length?skills.length+' 个独立 Skill':''].filter(Boolean).join('和')}。</p>
+      ${items.length?`<section><h3>合集（${items.length}）</h3><p class="muted">每个合集整体更新，包含筛选结果以外的资源。</p><ul class="library-update-list">${items.map(s=>`<li data-update-collection="${esc(s.id)}"><strong>${esc(s.name)}</strong><p class="muted">${esc(origin(s))}</p><p>${version(s.lock?.resolved_commit||s.update.base_commit)} → ${version(s.update.preview.source?.lock?.resolved_commit)}</p><p>${(s.resources||[]).length} 项资源 → ${s.update.preview.resources?.length??'数量未记录'}${s.update.preview.resources?' 项资源':''}</p></li>`).join('')}</ul></section>`:''}
+      ${skills.length?`<section><h3>独立 Skill（${skills.length}）</h3><ul class="library-update-list">${skills.map(e=>`<li data-update-skill="${esc(e.id)}"><strong>${esc(e.name)}</strong><p class="muted">${esc(origin(e))}${e.source?.repo_path?' · '+esc(e.source.repo_path):''}</p><p>${version(e.source?.resolved_commit)} → ${version(e.update.upstream_commit)}</p></li>`).join('')}</ul></section>`:''}
+      ${removed.length?`<section><h3>上游移除（${removed.length}）</h3><ul class="library-update-list">${removed.map(r=>`<li data-update-removed><strong>${esc(resourceName(r.id))}</strong><p class="muted">来自 ${esc(r.source)}</p><p>${r.used?'仍有启用引用，需先停用或替换。':'更新后将从资源库的当前版本移除，旧版本保留。'}</p></li>`).join('')}</ul></section>`:''}
+      <section><h3>${unknownUsage.length?'已知启用位置':'已启用位置'}（${locations.size} 处）</h3>${refs.length?`<p class="muted">共 ${refs.length} 条资源引用；同一位置可能启用多个资源。</p><ul class="library-update-list">${locationRows}</ul>`:'<p>已读取的记录中没有启用引用。</p>'}${unknownUsage.length?`<p class="field-error">以下 Skill 的使用位置未能读取：${unknownUsage.map(e=>esc(e.name)+'：'+esc(e.references_error)).join('；')}</p>`:''}${state.error?`<p class="field-error">项目名称暂时无法读取：${esc(state.error)}</p>`:''}</section>
+      ${blocked?'<p class="field-error" data-update-blocked>上游移除的资源仍在使用，请先到上述位置停用或替换，再重新检查更新。</p>':'<p class="muted">本次更新资源库并保留旧版本。完成后，请到项目或跨项目配置预览并应用改动。</p>'}`;
+    const confirmed=new Promise(resolve=>{
+      updateDialog=Dialog(root,{title:'更新资源库',content,actions:[{label:blocked?'关闭':'取消',returnValue:false},...(blocked?[]:[{label:'确认更新',variant:'default',returnValue:true}])],onClose:value=>resolve(value===true)});
+    });
+    const proceed=await confirmed;updateDialog=null;
+    if(!proceed||!alive)return;
     const failures = [];
     try {
       if (items.length) {
@@ -210,29 +286,7 @@ export function CollectionsPanel(container, options = {}) {
     } finally { changed(); await refresh(); }
     message(failures.length ? '部分更新未完成：' + failures.join('；') + '。请重新检查；已成功的更新请到项目或跨项目配置应用。' : '资源库已更新。请到项目或跨项目配置应用改动。');
   }
-  q('[data-check]').onclick = () => run(async () => {
-    message('正在检查更新…');
-    let availableCount = 0, failedCount = 0;
-    const failures = [];
-    const scope=updateScope();
-    try {
-      const collections=scope.sources.filter(s=>s.management!=='external'&&s.can_update!==false);
-      for(const id of filtersActive()?collections.map(s=>s.id):collections.length?[undefined]:[]) {
-        try {
-          const v = await api.collectionCheck(id);
-          availableCount += v.items.filter(i => i.state === 'available').length;
-          failedCount += v.items.filter(i => i.state === 'error').length;
-        } catch (e) { failedCount++; failures.push('来源合集：' + e.message); }
-      }
-      for (const entry of scope.skills) {
-        try {
-          const v = await api.checkUpdate(entry.name);
-          if (v.status.state === 'upstream-new') availableCount++;
-        } catch (e) { failedCount++; failures.push(entry.name + '：' + e.message); }
-      }
-    } finally { await refresh(); }
-    message('检查完成：' + availableCount + ' 个可更新，' + failedCount + ' 个失败。' + failures.join('；'));
-  });
+  q('[data-check]').onclick = () => {const scope=updateScope();return checkUpdates(scope.sources,scope.skills);};
   q('[data-update]').onclick = () => run(() => {const scope=updateScope();return update(scope.sources.filter(s=>s.update?.state==='available'&&s.update.preview?.preview_id),scope.skills.filter(e=>e.update?.state==='upstream-new'&&e.update.preview_id));});
   // AIL-126：跨页往返（如引用 Dialog「前往管理」后返回）恢复搜索上下文。
   if (options.searchKey) {
@@ -244,18 +298,8 @@ export function CollectionsPanel(container, options = {}) {
     return {sources:group.sources.filter(s=>s.update?.state==='available'&&s.update.preview?.preview_id),
       skills:group.entries.filter(e=>e.personal&&e.can_check_update&&e.update?.state==='upstream-new'&&e.update.preview_id)};
   }
-  async function checkGroup(group) {
-    message('正在检查 '+group.title+'…');
-    const failures=[];
-    try {
-      for(const source of group.sources.filter(s=>s.management!=='external'&&s.can_update!==false)) {
-        try {await api.collectionCheck(source.id);}catch(e){failures.push(source.name+'：'+e.message);}
-      }
-      for(const entry of group.entries.filter(e=>e.personal&&e.can_check_update)) {
-        try {await api.checkUpdate(entry.name);}catch(e){failures.push(entry.name+'：'+e.message);}
-      }
-    } finally {await refresh();}
-    message(failures.length?'部分检查失败：'+failures.join('；'):'检查完成：'+group.title+'。');
+  function checkGroup(group) {
+    return checkUpdates(group.sources,group.entries.filter(e=>e.personal&&e.can_check_update));
   }
   function renderSources() {
     if (!alive) return;
@@ -318,14 +362,14 @@ export function CollectionsPanel(container, options = {}) {
         // Low-frequency actions are visible buttons here, not a menu on every row.
         const then=fn=>()=>{resourceDialog.close();fn();return false;};
         const actions=[{label:'关闭'}];
-        if(entry.personal&&options.onEdit)actions.push({label:'编辑',onAction:then(()=>options.onEdit(entry.id))});
-        if(entry.personal&&entry.kind==='skill'&&entry.source)actions.push({label:entry.source.source_kind==='local'&&!entry.source.repo_url?'关联 Git':'来源',onAction:then(()=>bindingDialog.show({kind:'skill',id:entry.id},entry.source))});
-        if(entry.can_check_update)actions.push({label:'检查更新',onAction:then(()=>run(async()=>{try{await api.checkUpdate(entry.name);message('检查完成。');}finally{await refresh();}}))});
-        if(entry.update?.state==='upstream-new'&&entry.update.preview_id)actions.push({label:'更新',onAction:then(()=>run(()=>update([],[entry])))});
+        if(entry.personal&&options.onEdit&&!checking)actions.push({label:'编辑',onAction:then(()=>options.onEdit(entry.id))});
+        if(entry.personal&&entry.kind==='skill'&&entry.source&&!checking)actions.push({label:entry.source.source_kind==='local'&&!entry.source.repo_url?'关联 Git':'来源',onAction:then(()=>bindingDialog.show({kind:'skill',id:entry.id},entry.source))});
+        if(entry.can_check_update&&!checking)actions.push({label:'检查更新',onAction:then(()=>checkUpdates([],[entry]))});
+        if(entry.update?.state==='upstream-new'&&entry.update.preview_id&&!checking)actions.push({label:'更新',onAction:then(()=>run(()=>update([],[entry])))});
         actions.push({label:'使用位置',variant:'default',onAction:then(()=>{referenceDialog?.destroy();referenceDialog=ResourceReferences(root,{resourceId:entry.id,resourceName:entry.name});})});
         resourceDialog?.destroy();resourceDialog=Dialog(root,{title:entry.name||entry.id,content,actions});
       };});
-      root.querySelectorAll('[data-group-check]').forEach(b=>{b.onclick=()=>run(()=>checkGroup(scopeByGroup.get(b.dataset.groupCheck)));});
+      root.querySelectorAll('[data-group-check]').forEach(b=>{b.onclick=()=>checkGroup(scopeByGroup.get(b.dataset.groupCheck));});
       root.querySelectorAll('[data-group-update]').forEach(b=>{b.onclick=()=>run(()=>{const pending=groupUpdates(scopeByGroup.get(b.dataset.groupUpdate));return update(pending.sources,pending.skills);});});
       root.querySelectorAll('[data-group-install]').forEach(b=>{b.onclick=()=>{const g=byGroup.get(b.dataset.groupInstall);gitDialog.show({url:g.url,ref:g.ref});};});
       q('[data-first]')?.addEventListener('click',()=>gitDialog.show());
@@ -336,7 +380,7 @@ export function CollectionsPanel(container, options = {}) {
         referenceDialog?.destroy();const entry=unique.get(b.dataset.catalogUsage);
         referenceDialog=ResourceReferences(root,{resourceId:entry.id,resourceName:entry.name});
       };});
-      bindSkillUpdates();
+      bindSkillUpdates();syncMutationControls();
       return;
     }
     syncUpdateControls();
@@ -380,7 +424,7 @@ export function CollectionsPanel(container, options = {}) {
       referenceDialog = ResourceReferences(root, { resourceId: b.dataset.resourceRefs, resourceName: b.dataset.resourceName, onChanged: async () => { changed(); await refresh(); } });
     }; });
     root.querySelectorAll('[data-refresh-external]').forEach(b => { b.onclick = () => run(refresh); });
-    root.querySelectorAll('[data-check-one]').forEach(b => { b.onclick = () => run(async () => { message('正在检查上游…'); await api.collectionCheck(b.dataset.checkOne); await refresh(); message('检查完成。'); }); });
+    root.querySelectorAll('[data-check-one]').forEach(b => { b.onclick = () => checkUpdates([sources.find(s=>s.id===b.dataset.checkOne)], []); });
     root.querySelectorAll('[data-update-one]').forEach(b => { b.onclick = () => run(() => update([sources.find(s => s.id === b.dataset.updateOne)])); });
     root.querySelectorAll('[data-remove]').forEach(b => { b.onclick = () => run(async () => {
       const p = await api.collectionRemove(b.dataset.remove);
@@ -388,6 +432,7 @@ export function CollectionsPanel(container, options = {}) {
       if (!await confirmAction('移除来源“' + p.source.name + '”？\n' + p.note, {title:'移除来源', confirmLabel:'移除来源', destructive:true})) return;
       await api.collectionRemove(b.dataset.remove, true); changed(); await refresh(); message('来源已移除。已有项目文件和历史版本未删除。');
     }); });
+    syncMutationControls();
   }
   function showSources(items) {
     if(items.length===1){showSource(items[0].id);return;}
@@ -403,14 +448,14 @@ export function CollectionsPanel(container, options = {}) {
     const source=sources.find(s=>s.id===id);if(!source)return;
     const content=document.createElement('div');
     content.innerHTML=`<p class="path">${esc(source.connection_url||source.url||source.store_path||'本地文件夹')}</p>${source.migration?.provider==='cc-switch'?'<p class="muted">从 CC Switch 迁入</p>':''}${source.error?`<p class="field-error">${esc(source.error)}</p>`:''}<p>${source.resources.length} 项能力</p><dl class="source-version"><dt>当前版本</dt><dd><code>${esc(source.lock?.resolved_commit||'本地内容')}</code></dd><dt>分支 / 标签</dt><dd>${esc(source.update_ref||source.lock?.ref_||source.lock?.ref||'默认分支')}</dd></dl>`;
-    const modal=Dialog(root,{title:source.name||'来源详情',content,actions:[{label:'关闭'},...(source.can_rebind!==false&&source.management!=='external'?[{label:'变更来源',onAction:()=>{modal.close();bindingDialog.show({kind:'collection',id},source);return false;}}]:[]),{label:'移除来源',variant:'destructive',onAction:async()=>{
+    const modal=Dialog(root,{title:source.name||'来源详情',content,actions:[{label:'关闭'},...(!checking?[...(source.can_rebind!==false&&source.management!=='external'?[{label:'变更来源',onAction:()=>{modal.close();bindingDialog.show({kind:'collection',id},source);return false;}}]:[]),{label:'移除来源',variant:'destructive',onAction:async()=>{
       try {
         const preview=await api.collectionRemove(id);
         if(preview.references.length){message('此来源仍在项目中使用，请先到对应项目移除能力。');return false;}
         if(!await confirmAction(`移除「${source.name}」及其 ${source.resources.length} 项能力？`,{title:'移除来源',confirmLabel:'移除',destructive:true}))return false;
         await api.collectionRemove(id,true);changed();await refresh();
       }catch(e){message(e.message);return false;}
-    }}]});
+    }}]:[])]});
     referenceDialog?.destroy();referenceDialog=modal;
   }
   async function refresh() {
@@ -423,5 +468,5 @@ export function CollectionsPanel(container, options = {}) {
     }
   }
   refresh().catch(e => message(e.message));
-  return { refresh, destroy() { alive = false; resourceDialog?.destroy();referenceDialog?.destroy(); migrationDialog.destroy(); importDialog.destroy(); gitDialog.destroy(); bindingDialog.destroy(); root.remove(); } };
+  return { refresh, destroy() { alive = false; stopCheck=true;updateDialog?.close();updateDialog?.destroy();resourceDialog?.destroy();referenceDialog?.destroy(); migrationDialog.destroy(); importDialog.destroy(); gitDialog.destroy(); bindingDialog.destroy(); root.remove(); } };
 }
