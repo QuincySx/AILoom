@@ -35,6 +35,7 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
     if(width>700&&(!shell.breadcrumbVisible||shell.breadcrumbHeight!==52))throw Error(name+' has a misplaced breadcrumb');
     if(width<=700&&shell.breadcrumbVisible)throw Error(name+' duplicates the mobile navigation');
     if(width>700&&shell.rail&&(shell.rail.x!==(width<1200?164:184)||shell.rail.width!==(width<1200?192:200)||shell.rail.radius!=='0px'))throw Error(name+' turns the configuration tree into an inset card');
+    if(width>700&&['project-settings','knowledge'].includes(name)&&!shell.rail)throw Error(name+' hides the directory tree on desktop');
     if(shell.bodyBackground!=='rgb(255, 255, 255)')throw Error(name+' has an incorrect content background');
     geometry.shell=shell;
     if(geometry.scroll>width+1)throw Error(name+' overflows '+width+': '+JSON.stringify(geometry));
@@ -105,19 +106,24 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
   await evaluate("[...document.querySelectorAll('[data-tree-open]')].find(b=>JSON.parse(b.dataset.treeOpen)[2]==='docs').click()");
   await waitFor("!!document.querySelector('[data-config-unavailable]')");await capture('missing-directory',390);
   await evaluate("location.hash='#/projects/nongit-visual'");await waitFor("!!document.querySelector('[data-tool-change]')");await capture('folder-project',390);
-  // Local files keep the directory context; shared settings deliberately hide its tree.
+  // All project tabs retain the workspace directory navigation.
   await evaluate("document.querySelector('.section-nav a[href$=\"/files\"]').click()");
   await waitFor("!!document.querySelector('.native-files [data-native-heading]')");
   for(const width of [1440,1024,390,320])await capture('project-files',width);
   const filesRoute=await evaluate('location.hash');
+  const selectedDirectory=await evaluate("document.querySelector('[role=tree] [aria-selected=true]').dataset.treeKey");
   await evaluate("document.querySelector('.section-nav a[href$=\"/settings\"]').click()");
   await waitFor("!!document.querySelector('.project-settings-profile')");
   const settingsHistory=await evaluate('history.length');
   if(!await evaluate(`(()=>{const nav=document.querySelector('nav[aria-label="项目导航"]');return nav&&[...nav.querySelectorAll('a')].map(a=>a.textContent).join('|')==='AI 能力|本地文件|项目设置'&&nav.querySelector('[aria-current="page"]')?.textContent==='项目设置';})()`))throw Error('Settings lost the project tabs');
-  if(await evaluate("!!document.querySelector('.workspace-rail')"))throw Error('Shared settings show a directory tree');
+  if(!await evaluate("!!document.querySelector('#app.workspace-host .workspace-rail [role=tree]')"))throw Error('Project settings lost the workspace directory tree');
+  if(await evaluate("document.querySelector('[role=tree] [aria-selected=true]').dataset.treeKey")!==selectedDirectory)throw Error('Settings changed the selected directory');
   for(const width of [1440,1024,390,320])await capture('project-settings',width);
+  await evaluate("document.querySelector('[data-switch-directory]').click()");
+  if(!await evaluate("document.querySelector('[data-switch-directory]').getAttribute('aria-expanded')==='true'&&document.querySelector('.workspace-rail').getBoundingClientRect().width>0"))throw Error('Settings directory navigation is unavailable on mobile');
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await evaluate("document.querySelector('.section-nav a[href$=\"/knowledge\"]').click()");
-  await waitFor("!!document.querySelector('.knowledge-settings')");await capture('knowledge',390);
+  await waitFor("!!document.querySelector('.knowledge-settings')");await capture('knowledge',1440);await capture('knowledge',390);
   await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/instructions"]').click()`);
   await waitFor(`document.querySelector('nav[aria-label="项目设置"] a[aria-current="page"]')?.textContent==='项目说明'&&!document.querySelector('[data-save]').disabled`);
   await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/knowledge"]').click()`);
@@ -140,13 +146,22 @@ export async function verifyDesign({evaluate,waitFor,send,screenshot,output}) {
   if(!await evaluate(`(async()=>{const {currentTarget}=await import('/ui/state/target.js');return currentTarget().rootPath==='/fixture/AILoom-feature';})()`))throw Error('Forward to settings lost the selected Worktree');
   // Cancelling Back must preserve both the draft and the browser history entry.
   await evaluate(`document.querySelector('nav[aria-label="项目设置"] a[href$="/settings"]').click()`);await waitFor("!!document.querySelector('.project-settings-profile')");
-  await evaluate(`{const name=document.querySelector('.project-settings-profile input[name=name]');name.value='unsaved project name';name.dispatchEvent(new Event('input',{bubbles:true}));history.back();}`);
+  await evaluate(`{const name=document.querySelector('.project-settings-profile input[name=name]');name.value='unsaved project name';name.dispatchEvent(new Event('input',{bubbles:true}));[...document.querySelectorAll('[data-tree-open]')].find(b=>{const key=JSON.parse(b.dataset.treeOpen);return key[1]==='main';}).click();}`);
+  await waitFor("!!document.querySelector('dialog:modal')");
+  await evaluate("[...document.querySelectorAll('dialog:modal button')].find(b=>b.textContent==='取消').click()");
+  if(!await evaluate("document.querySelector('.project-settings-profile input[name=name]').value==='unsaved project name'&&document.querySelector('[data-switch-directory]').textContent.includes('feature/cli / apps/web')"))throw Error('Cancelling a directory switch lost the settings draft or selection');
+  await evaluate('history.back()');
   await waitFor("!!document.querySelector('dialog:modal')");
   await evaluate("[...document.querySelectorAll('dialog:modal button')].find(b=>b.textContent==='取消').click()");
   await waitFor("!document.querySelector('dialog:modal')&&location.hash.endsWith('/settings')");
   if(!await evaluate("document.querySelector('.project-settings-profile input[name=name]').value==='unsaved project name'"))throw Error('Cancelling Back lost the settings draft');
   await evaluate("document.querySelector('.project-settings-profile').reset();history.back()");
   await waitFor("!!document.querySelector('[data-tool-change]')&&document.querySelector('[data-switch-directory]').textContent.includes('feature/cli / apps/web')");
+  await evaluate(`document.querySelector('nav[aria-label="项目导航"] a[href$="/settings"]').click()`);await waitFor("!!document.querySelector('.project-settings-profile')");
+  await evaluate("[...document.querySelectorAll('[data-tree-open]')].find(b=>JSON.parse(b.dataset.treeOpen)[1]==='main').click()");
+  await waitFor("document.querySelector('.project-settings-profile .path').textContent==='/fixture/AILoom'&&JSON.parse(document.querySelector('[role=tree] [aria-selected=true]').dataset.treeKey)[1]==='main'");
+  await evaluate(`document.querySelector('nav[aria-label="项目导航"] a[href$="/files"]').click()`);await waitFor("!!document.querySelector('.native-files [data-native-heading]')");
+  if(!await evaluate(`(async()=>{const {currentTarget}=await import('/ui/state/target.js');return currentTarget().rootPath==='/fixture/AILoom'&&currentTarget().viewKind==='directory';})()`))throw Error('Leaving settings ignored the directory selected in its tree');
   await evaluate("location.hash='#/library/global'");await waitFor("document.querySelectorAll('[data-global-skill]').length===64");
   for(const width of [1440,1024,390,320]) {
     await capture('global',width);
@@ -236,7 +251,7 @@ export async function verifyFlow({evaluate,waitFor,screenshot,output,configureTo
   const knowledgeRoute=await evaluate("location.hash+'/knowledge'");
   await evaluate(`location.hash=${JSON.stringify(knowledgeRoute)}`);
   await waitFor("!!document.querySelector('.knowledge-settings [data-submit]')");
-  if(await evaluate("!!document.querySelector('.workspace-rail')"))throw Error('Project knowledge unexpectedly shows the capability directory tree');
+  if(!await evaluate("!!document.querySelector('.workspace-rail [role=tree]')"))throw Error('Project knowledge lost the workspace directory tree');
   const initialized=await evaluate("!!document.querySelector('.knowledge-settings [data-checkpoint]')");
   await evaluate("document.querySelector('.knowledge-location').open=true");
   await evaluate(initialized?"document.querySelector('.knowledge-settings [data-checkpoint]').click()":"document.querySelector('.knowledge-settings [data-form]').requestSubmit()");

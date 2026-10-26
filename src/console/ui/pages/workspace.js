@@ -1,5 +1,6 @@
 import { ManagedDefinition } from '../features/managedDefinition.js';
 import { NativeFiles } from '../features/nativeFiles.js';
+import * as projectSettings from './projectSettings.js';
 // Directory-first workspace. The server remains the source of configuration and deployment truth.
 import { api, esc } from '../services/api.js';
 import { directoryTarget, sharedSettingsTarget, layerOfTarget, diffOf, setTarget, currentGeneration, shouldApply, globallyAvailable } from '../state/target.js';
@@ -50,6 +51,7 @@ export function mount(container, {projectId,tab}) {
   let filter = '', search = '';
   let notice = '', localPanel=null;
   const filesView=tab==='files';
+  const settingsView=['settings','profile','instructions','knowledge'].includes(tab);
   const dialogs = [];
   const controller = new AbortController();
   const q = selector => root.querySelector(selector);
@@ -104,8 +106,10 @@ export function mount(container, {projectId,tab}) {
     return scopeSets.get(scopeKey(wtId))?.root_inherits !== false;
   }
   const primaryWorktree=p=>Object.keys(p.worktrees).find(k=>p.worktrees[k].status!=='missing'&&p.common_dir===p.worktrees[k].path+'/.git')||Object.keys(p.worktrees).find(k=>p.worktrees[k].status!=='missing')||Object.keys(p.worktrees)[0];
-  function openTreeNode(project, id, rel='', kind='project', add=false) {
+  async function openTreeNode(project, id, rel='', kind='project', add=false) {
     if(busy)return;
+    if(localPanel?.isDirty?.()&&!await confirmAction('当前页面有未保存内容。确定放弃这些修改并离开？',{title:'离开当前目录',confirmLabel:'放弃并离开'}))return;
+    if(disposed)return;
     if(!add){
       root.classList.remove('tree-open');
       const switcher=q('[data-switch-directory]');
@@ -173,23 +177,27 @@ export function mount(container, {projectId,tab}) {
   async function activate(rel='',nextWt=wtId,kind=rel?'directory':'worktree') {
     relative=rel;wtId=nextWt;nodeKind=kind;notice='';
     const wt=repo.worktrees[wtId];
-    const args={projectId:repo.repo_id,name:projectName(repo),worktreeId:isGit()?wtId:'root',rootPath:wt.path,relativeDir:relative||null,kind:isGit()?'git':'nongit'};
-    target=isGit()&&nodeKind==='project'?sharedSettingsTarget(args):directoryTarget(args);
+    const rootPath=settingsView
+      ? (wt?.status!=='missing'?wt?.path:null)||Object.values(repo.worktrees).find(w=>w.status!=='missing')?.path||wt?.path||repo.common_dir.replace(/\/\.git$/,'')
+      : wt.path;
+    const args={projectId:repo.repo_id,name:projectName(repo),worktreeId:isGit()?wtId:'root',rootPath,relativeDir:relative||null,kind:isGit()?'git':'nongit'};
+    target=settingsView||isGit()&&nodeKind==='project'?sharedSettingsTarget(args):directoryTarget(args);
     setTarget(target);renderTree();await refresh();
     if(!disposed)sessionStorage.setItem('ailoom-directory-view',JSON.stringify({repoId:repo.repo_id,wt:wtId,dir:relative,node:nodeKind}));
   }
   function renderHead() {
     const label=relative?(isGit()?wtLabel(wtId)+' / ':'')+relative:nodeKind==='worktree'?wtLabel(wtId):isGit()?'项目默认':projectName(repo);
-    setBreadcrumb([{label:'项目',href:'#/projects'},{label:projectName(repo),href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label}]);
-    q('[data-workspace-head]').innerHTML=`<div class="workspace-heading">${PageHeader({title:filesView?'本地文件':nodeKind==='project'&&isGit()?'项目默认':'AI 能力',description:filesView?'确认工具实际会读取什么。':'选择、保存，再应用到本地工具。',actions:'<span class="workspace-applybar" data-workspace-footer></span>'})}</div>
+    setBreadcrumb([{label:'项目',href:'#/projects'},{label:projectName(repo),href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:settingsView?'项目设置':label}]);
+    q('[data-workspace-head]').innerHTML=`<div class="workspace-heading">${PageHeader({title:settingsView?'项目设置':filesView?'本地文件':nodeKind==='project'&&isGit()?'项目默认':'AI 能力',description:settingsView?'共享设置对整个项目生效。':filesView?'确认工具实际会读取什么。':'选择、保存，再应用到本地工具。',actions:settingsView?'':'<span class="workspace-applybar" data-workspace-footer></span>'})}</div>
       <button class="workspace-mobile-switch" data-switch-directory aria-label="切换配置目录" aria-expanded="${root.classList.contains('tree-open')}" aria-controls="workspace-directory-nav">${lucide('folder')}<span><strong>${esc(projectName(repo))}</strong><small>${esc(label)}</small></span>${lucide('chevron-down')}</button>
-      ${projectNavigation({id:repo.repo_id,active:filesView?'files':'capabilities'})}`;
+      ${projectNavigation({id:repo.repo_id,active:settingsView?'settings':filesView?'files':'capabilities',settingsTab:settingsView?tab:'settings'})}`;
     q('[data-switch-directory]').onclick=()=>{const open=root.classList.toggle('tree-open');q('[data-switch-directory]').setAttribute('aria-expanded',String(open));if(open)q('[data-tree-key][aria-selected=true]')?.focus();};
-    root.querySelectorAll('.section-nav a').forEach(a=>{a.onclick=remember;});
+    q('[data-workspace-head]').querySelectorAll('.section-nav a').forEach(a=>{a.onclick=remember;});
   }
   async function loadFolders(projects=[repo], onlyMissing=false) {
     await Promise.all(projects.flatMap(project=>Object.entries(project.worktrees).map(async([id,w])=>{
       const key=scopeKey(id,project);
+      if(w.status==='missing'){scopeSets.set(key,{dirs:scopeSets.get(key)?.dirs||[],error:'目录不存在'});return;}
       if(onlyMissing&&scopeSets.has(key))return;
       try{await api.approveDir(w.path);const v=await api.projectDirs(w.path);if(!disposed)scopeSets.set(key,v);}
       catch(e){if(!disposed)scopeSets.set(key,{dirs:scopeSets.get(key)?.dirs||[],error:e.message});}
@@ -264,6 +272,19 @@ export function mount(container, {projectId,tab}) {
     effective=null;
     const version = ++loadVersion, gen = currentGeneration();
     renderHead();
+    if(settingsView) {
+      const slot=q('[data-workspace-content]');slot.replaceChildren();
+      localPanel=projectSettings.mount(slot,{projectId:repo.repo_id,tab,repo,rootPath:target.rootPath,embedded:true,onProjectChanged:updated=>{
+        if(disposed||version!==loadVersion)return;
+        repo=updated;repos=[repo];
+        if(!repo.worktrees[wtId]){wtId=primaryWorktree(repo);relative='';nodeKind=isGit()&&wtId?'worktree':'project';}
+        target={...target,name:projectName(repo)};setTarget(target);
+        sessionStorage.setItem('ailoom-directory-view',JSON.stringify({repoId:repo.repo_id,wt:wtId,dir:relative,node:nodeKind}));
+        renderTree();renderHead();
+        void loadFolders([repo],true);
+      }});
+      message('');return;
+    }
     q('[data-workspace-content]').innerHTML = '<p class="workspace-loading" role="status">正在读取这个目录的能力…</p>';
     q('[data-workspace-footer]').innerHTML = '<span class="muted">正在检查改动…</span>';
     try {
@@ -552,7 +573,8 @@ export function mount(container, {projectId,tab}) {
       wtId=back?.repoId===repo.repo_id&&repo.worktrees[back.wt]?back.wt:primaryWorktree(repo);
       relative=back?.repoId===repo.repo_id?back.dir||'':'';
       nodeKind=back?.repoId===repo.repo_id?(back.node||(relative?'directory':isGit()?'worktree':'project')):isGit()?'worktree':'project';
-      if(!wtId)throw Error('这个项目没有可用目录。');
+      if(!wtId&&!settingsView)throw Error('这个项目没有可用目录。');
+      if(!wtId){relative='';nodeKind='project';}
       shell();renderTree();await loadFolders(repos,true);await activate(relative,wtId,nodeKind);
       let pending;try{pending=JSON.parse(sessionStorage.getItem('ailoom-pick-resource'));}catch{}
       if(!disposed&&effective&&pending?.repoId===repo.repo_id){sessionStorage.removeItem('ailoom-pick-resource');const entry=catalog.entries?.find(e=>e.id===pending.id);if(entry)addCapabilities(entry.kind,entry.id);}

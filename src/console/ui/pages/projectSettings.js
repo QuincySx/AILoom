@@ -1,4 +1,4 @@
-// AIL-124：项目共享设置 —— 保留项目导航，设置内页签共用一条历史记录。
+// AIL-124：项目共享设置 —— 嵌入目录工作区，设置内页签共用一条历史记录。
 // 作用范围整个项目；Markdown 指令只在这里编辑。
 // 返回目录时保持原工作目录、子目录与页签（sessionStorage 一次性恢复）。
 
@@ -34,7 +34,7 @@ export function mount(container, ctx = {}) {
 
   async function load() {
     try {
-      const state = await api.state();
+      const state = ctx.repo ? {repos:[ctx.repo]} : await api.state();
       if (disposed) return;
       state.repos = state.repos.map(r => r.repo_id.startsWith('nongit-') && !Object.keys(r.worktrees || {}).length
         ? {...r, worktrees:{local:{path:r.common_dir, status:'active'}}} : r);
@@ -46,7 +46,8 @@ export function mount(container, ctx = {}) {
       }
       const worktrees = Object.values(repo.worktrees || {}), available = worktrees.filter(w=>w.status!=='missing');
       const rememberedWorktree = remembered?.repoId===repo.repo_id?repo.worktrees?.[remembered.wt]:null;
-      const wtPath = (rememberedWorktree?.status!=='missing'?rememberedWorktree?.path:null)
+      const wtPath = available.find(w=>w.path===ctx.rootPath)?.path
+        || (rememberedWorktree?.status!=='missing'?rememberedWorktree?.path:null)
         || available.find(w=>repo.common_dir===w.path+'/.git')?.path || available[0]?.path
         // 全部失联时仍可进入设置清理登记，清理后也保留项目设置入口。
         || worktrees[0]?.path || repo.common_dir.replace(/\/\.git$/, '');
@@ -55,7 +56,7 @@ export function mount(container, ctx = {}) {
         projectId: repo.repo_id, name: repo.project?.name || repo.repo_id,
         rootPath: wtPath, kind: repo.repo_id.startsWith('nongit-') ? 'nongit' : 'git',
       });
-      setTarget(target);
+      if(!ctx.embedded)setTarget(target);
       renderShell();
       await renderTab();
     } catch (e) { error(e); }
@@ -64,10 +65,10 @@ export function mount(container, ctx = {}) {
   function renderShell() {
     const name=repo.project?.name||Object.values(repo.worktrees||{})[0]?.path?.split('/').filter(Boolean).pop()||repo.repo_id;
     const section=tab===1?'instructions':tab===3?'knowledge':'settings';
-    setBreadcrumb([{label:'项目',href:'#/projects'},{label:name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:'项目设置'}]);
+    if(!ctx.embedded)setBreadcrumb([{label:'项目',href:'#/projects'},{label:name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:'项目设置'}]);
     // The breadcrumb already names the project and leads back to it.
-    root.innerHTML = `${PageHeader({title:'项目设置',description:'共享设置对整个项目生效。'})}
-      ${projectNavigation({id:repo.repo_id,active:'settings',settingsTab:section})}
+    root.innerHTML = `${ctx.embedded?'':PageHeader({title:'项目设置',description:'共享设置对整个项目生效。'})}
+      ${ctx.embedded?'':projectNavigation({id:repo.repo_id,active:'settings',settingsTab:section})}
       ${projectNavigation({id:repo.repo_id,active:section,settings:true})}
       <p data-message role="status"></p>
       <div data-content></div>`;
@@ -132,6 +133,7 @@ export function mount(container, ctx = {}) {
         const saved = await api.projectMetadata({repo_id:repo.repo_id, name:name.value, category:category.value});
         if (disposed) return;
         repo.project = saved;
+        ctx.onProjectChanged?.(repo);
         name.value = saved.name || ''; category.value = saved.category || '';
         setBreadcrumb([{label:'项目',href:'#/projects'},{label:saved.name,href:'#/projects/'+encodeURIComponent(repo.repo_id)},{label:'项目设置'}]);
         root.querySelector('[data-message]').textContent = '已保存';
@@ -217,6 +219,7 @@ export function mount(container, ctx = {}) {
         const updated = state.repos.find(r=>r.repo_id===repo.repo_id);
         if (!updated) throw new Error('项目不存在');
         repo.worktrees = updated.worktrees;
+        ctx.onProjectChanged?.(repo);
         await directories();
       } catch (e) { if (active()) root.querySelector('[data-message]').textContent = e.message; }
       finally { updatingDirectories = false; if (active()) directoryActions(); }
@@ -228,6 +231,7 @@ export function mount(container, ctx = {}) {
         const result = await api.repoPrune(repo.repo_id);
         if (!active()) return;
         repo.worktrees = result.worktrees;
+        ctx.onProjectChanged?.(repo);
         await directories();
         if (active()) root.querySelector('[data-message]').textContent = result.removed.length
           ? `已清理 ${result.removed.length} 个失联目录的记录，原有配置已保留。`
@@ -240,7 +244,7 @@ export function mount(container, ctx = {}) {
   load();
   return {
     isDirty: () => dirty(),
-    destroy() { disposed = true; children.forEach(c => c.destroy?.()); setTarget(null); root.remove(); },
+    destroy() { disposed = true; children.forEach(c => c.destroy?.()); if(!ctx.embedded)setTarget(null); root.remove(); },
   };
 }
 

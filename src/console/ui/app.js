@@ -16,7 +16,6 @@ import * as pageOnboarding from './pages/onboarding.js';
 import * as pageLibrary from './pages/library.js';
 import * as pageTasks from './pages/tasks.js';
 import * as pageProjects from './pages/projects.js';
-import * as pageProjectSettings from './pages/projectSettings.js';
 import * as pageNativeFiles from './pages/nativeFiles.js';
 import * as pageWorkspace from './pages/workspace.js';
 
@@ -172,15 +171,14 @@ async function route() {
       return;
     }
   }
-  const projectFiles = settingsMatch?.[2] === 'files';
-  const def = settingsMatch ? {title:({instructions:'项目说明',knowledge:'知识库',files:'本地文件'})[settingsMatch[2]]||'项目设置', mount:projectFiles?pageWorkspace.mount:pageProjectSettings.mount}
+  const def = settingsMatch ? {title:({instructions:'项目说明',knowledge:'知识库',files:'本地文件'})[settingsMatch[2]]||'项目设置', mount:pageWorkspace.mount}
     : projectMatch ? {title:'目录能力', mount:pageWorkspace.mount} : ROUTES[location.hash];
   document.title = `AILoom 本地控制台 · ${def.title}`;
   const app = document.querySelector('#app');
   currentPage?.destroy?.();
   currentPage = null;
   app.innerHTML = '';
-  app.classList.toggle('workspace-host', !!projectMatch || projectFiles);
+  app.classList.toggle('workspace-host', !!projectMatch || !!settingsMatch);
   setBreadcrumb([{label:'工作空间'}, {label:def.title}]);
   if (settingsMatch) {
     currentPage = def.mount(app, {

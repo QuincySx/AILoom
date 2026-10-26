@@ -33,6 +33,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
     const worktrees=state.worktrees||[];
     root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>直接开始，无需填写提示词或挑选文档。AI 会从本仓库各工作目录的资料和已有知识中识别业务规则、开发流程、模块约束、决策取舍与问题经验，去重整理，保留背景、演变和出处。</p>
       <p data-organize-count>已有 ${esc(state.source_count||0)} 篇知识资料 · 开始后自动收集 ${esc(worktrees.length)} 个工作目录及其子目录的资料</p>
+      <p class="muted" data-organize-evidence>AI 会对照相关代码核对当前实现，注明分支与核对范围；过时文档保留历史背景，无法确认的结论标为待核实。整理完成后仍需独立评估。</p>
       ${state.project_id?`<p data-organize-project>所属项目：<strong>${esc(state.project_name)}</strong></p><details><summary>原文与整理结果分别保存</summary><p>打开知识库根目录的 README.md 即可导航，wiki/ 中的 Markdown 可由你或 AI 直接维护，sources/ 保留原始资料与出处。</p><div class="path">原文：${esc(state.raw_path)}</div><div class="path">知识入口：${esc(state.report_path)}</div>${state.excluded_documents?.length?`<p>${esc(state.excluded_documents.length)} 篇旧文档缺少匹配的项目归属，本次未纳入。</p>`:''}</details>`:''}
       <details data-organize-sources><summary>查看整理范围</summary><ul>${worktrees.map(s=>`<li>${esc(s.label)}<div class="path muted">${esc(s.path)}</div></li>`).join('')}</ul><p class="muted">保留原文和各分支出处，AI 按内容判断是否值得纳入开发知识。无法读取或超出范围的资料会在结果中说明。</p></details>
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>

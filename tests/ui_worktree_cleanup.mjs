@@ -88,6 +88,7 @@ export async function verifyWorktreeCleanup({evaluate,waitFor,send,screenshot,ou
   await waitFor("document.querySelector('[data-message]').textContent.includes('已清理 2 个') && document.querySelector('[data-prune]').disabled && !document.querySelector('[data-refresh]').disabled");
   await assert("document.querySelectorAll('[data-directories] .ui-item').length===1 && !document.querySelector('[data-directories] .badge.warn') && document.querySelector('[data-prune-hint]').hidden",'Successful cleanup did not replace the list with the remaining healthy worktree');
   await assert("document.querySelector('[data-message]').textContent.includes('原有配置已保留')",'Cleanup success omits configuration preservation');
+  await assert("!!document.querySelector('.workspace-rail')&&![...document.querySelectorAll('[data-tree-open]')].some(b=>['first','second'].includes(JSON.parse(b.dataset.treeOpen)[1]))",'Cleanup left removed Worktrees in the settings directory tree');
   for(const width of [1440,390,320])await capture('cleaned',width);
 
   // Healthy and empty Git projects keep refresh available and cleanup unavailable.
