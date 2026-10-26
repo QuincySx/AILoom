@@ -3,7 +3,7 @@ use super::location::{self, OrganizationInput};
 use crate::error::{code, Error, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -15,6 +15,7 @@ const RUNNERS: &[(&str, &str, &str)] = &[
     ("cursor", "Cursor Agent", "agent"),
 ];
 const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
+const CLI_LOG_LIMIT: u64 = 64 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // 模型返回编纂传输稿，应用按稳定主题 ID 保存为独立 Wiki 页面。
 const ORGANIZATION_PROMPT: &str = include_str!("res/organize-wiki.md");
@@ -299,6 +300,24 @@ fn read_output(path: &Path) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| fail("AI CLI 返回了非 UTF-8 文本"))
 }
 
+fn read_diagnostic(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let start = file.metadata()?.len().saturating_sub(64 * 1024);
+    file.seek(SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024).read_to_end(&mut bytes)?;
+    // 丢弃被截断的首行，避免将半条错误或 URL 当作完整诊断。
+    let first = if start == 0 {
+        0
+    } else {
+        bytes
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(bytes.len(), |i| i + 1)
+    };
+    Ok(String::from_utf8_lossy(&bytes[first..]).into_owned())
+}
+
 pub fn generate(
     prepared: &Prepared,
     cancelled: impl Fn() -> bool,
@@ -347,11 +366,19 @@ fn generate_with_timeout(
                 "整理超过 30 分钟，已停止本次 CLI，请检查工具连接或缩小整理重点",
             ));
         }
-        if [&stdout_path, &stderr_path, &output_path].iter().any(|p| {
-            p.metadata()
-                .map(|m| m.len() > OUTPUT_LIMIT)
-                .unwrap_or(false)
-        }) {
+        let stdout_limit = if prepared.runner.id == "codex" {
+            CLI_LOG_LIMIT
+        } else {
+            OUTPUT_LIMIT
+        };
+        if [
+            (&stdout_path, stdout_limit),
+            (&stderr_path, CLI_LOG_LIMIT),
+            (&output_path, OUTPUT_LIMIT),
+        ]
+        .iter()
+        .any(|(p, limit)| p.metadata().map(|m| m.len() > *limit).unwrap_or(false))
+        {
             terminate(&mut child);
             let _ = writer.join();
             return Err(fail("AI CLI 输出过大，已停止本次整理"));
@@ -371,7 +398,7 @@ fn generate_with_timeout(
         .map_err(|_| fail("无法向 AI CLI 传入整理任务"))?;
     if !status.success() {
         // 不持久化模型的逐步工具日志；失败诊断只保留限长文本并隐藏 URL 内嵌凭据。
-        let diagnostic = read_output(&stderr_path).unwrap_or_default();
+        let diagnostic = read_diagnostic(&stderr_path).unwrap_or_default();
         let diagnostic = crate::gitx::redact_credentials(&diagnostic);
         return Err(fail(format!(
             "{} 整理失败（{}）：{}。请先在终端确认该工具已登录且可正常运行",
@@ -1245,6 +1272,50 @@ print('this is not the final report')"#,
             "生成过程保留初始化首页"
         );
         publish(&data, &p, &test_report(&report)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn large_cli_work_logs_do_not_use_the_final_report_limit() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib
+sys.stdin.read()
+sys.stderr.write('x' * (5 * 1024 * 1024) + '\nread completed\n')
+sys.stdout.write('x' * (5 * 1024 * 1024))
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# Completed', encoding='utf-8')"#,
+        );
+        p.runner.executable = Some(executable);
+        assert_eq!(
+            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap(),
+            "# Completed"
+        );
+        let (_script, executable) = fake_cli(
+            r#"import sys
+sys.stdin.read()
+sys.stderr.write('x' * (5 * 1024 * 1024) + '\nactual failure\n')
+sys.exit(3)"#,
+        );
+        p.runner.executable = Some(executable);
+        let error =
+            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap_err();
+        assert!(error.message.contains("actual failure"));
+        assert!(error.message.len() < 2000);
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib
+sys.stdin.read()
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('x' * (5 * 1024 * 1024))"#,
+        );
+        p.runner.executable = Some(executable);
+        assert!(
+            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
+                .unwrap_err()
+                .message
+                .contains("输出过大")
+        );
     }
 
     #[cfg(unix)]
