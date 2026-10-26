@@ -74,11 +74,25 @@ fn knowledge_repository_choice_requires_directory_authorization() {
     assert_eq!(post("/api/fs/approve", json!({"path":project})).0, 200);
     let body = json!({"action":"init","root":project,"repository_path":repository});
     assert_eq!(post("/api/knowledge", body.clone()).0, 403);
-    assert!(!repository.join("project").exists());
+    assert_eq!(std::fs::read_dir(&repository).unwrap().count(), 0);
+    assert!(!project.join(".ailoom/knowledge.json").exists());
     assert_eq!(post("/api/fs/approve", json!({"path":repository})).0, 200);
     let (code, value) = post("/api/knowledge", body);
     assert_eq!(code, 200, "{value}");
-    assert!(repository.join("project/README.md").is_file());
+    let declaration = ailoom::knowledge::portable::read(&project)
+        .unwrap()
+        .unwrap();
+    let folder = format!("project--{}", declaration.project_id);
+    assert!(repository.join(&folder).join("README.md").is_file());
+    assert_eq!(
+        value["location"]["path"],
+        repository
+            .join(folder)
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
 }
 
 #[test]
