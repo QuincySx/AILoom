@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod task;
+
 const RUNNERS: &[(&str, &str, &str)] = &[
     ("codex", "Codex", "codex"),
     ("claude", "Claude Code", "claude"),
@@ -177,10 +179,10 @@ pub fn collect_sources(
     Ok(collection)
 }
 
-fn prompt(prepared: &Prepared) -> String {
+fn manifest(prepared: &Prepared) -> Value {
     let input = &prepared.input;
     let focus = prepared.focus.trim();
-    let manifest = json!({
+    json!({
         "repository":input.root,
         "project_id":input.project_id,
         "project_name":input.project_name,
@@ -194,7 +196,12 @@ fn prompt(prepared: &Prepared) -> String {
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
         "generated_at":crate::ids::now_iso(),
         "schema":"ailoom-repository-wiki/v1",
-    });
+    })
+}
+
+#[cfg(test)]
+fn prompt(prepared: &Prepared) -> String {
+    let manifest = manifest(prepared);
     format!("{ORGANIZATION_PROMPT}\n\n## 本次任务清单\n\n{manifest}\n")
 }
 
@@ -235,7 +242,9 @@ fn command(prepared: &Prepared, output: &Path) -> Command {
                     "Read,Glob,Grep",
                     "--add-dir",
                 ])
-                .arg(&prepared.input.path);
+                .arg(&prepared.input.path)
+                .arg("--add-dir")
+                .arg(output.parent().unwrap());
         }
         "pi" => {
             command.args([
@@ -342,6 +351,8 @@ fn generate_with_timeout(
     let output_path = work.path().join("report.md");
     let stdout_path = work.path().join("stdout.txt");
     let stderr_path = work.path().join("stderr.txt");
+    // Prepare bounded input before launching any tool; all detail remains in task files.
+    let prompt = task::prepare(prepared, work.path())?;
     let mut child = command(prepared, &output_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(std::fs::File::create(&stdout_path)?))
@@ -349,7 +360,6 @@ fn generate_with_timeout(
         .spawn()
         .map_err(|e| fail(format!("无法启动 {}：{e}", prepared.runner.name)))?;
     let mut stdin = child.stdin.take().unwrap();
-    let prompt = prompt(prepared);
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
     let started = Instant::now();
     progress("正在读取资料并编纂仓库开发知识");
@@ -400,19 +410,7 @@ fn generate_with_timeout(
         // 不持久化模型的逐步工具日志；失败诊断只保留限长文本并隐藏 URL 内嵌凭据。
         let diagnostic = read_diagnostic(&stderr_path).unwrap_or_default();
         let diagnostic = crate::gitx::redact_credentials(&diagnostic);
-        return Err(fail(format!(
-            "{} 整理失败（{}）：{}。请先在终端确认该工具已登录且可正常运行",
-            prepared.runner.name,
-            status,
-            diagnostic
-                .chars()
-                .rev()
-                .take(1500)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>()
-        )));
+        return Err(cli_failure(&prepared.runner.name, status, &diagnostic));
     }
     written.map_err(|e| fail(format!("AI CLI 没有完整读取整理任务：{e}")))?;
     let report = read_output(if prepared.runner.id == "codex" {
@@ -424,6 +422,43 @@ fn generate_with_timeout(
         return Err(fail("AI CLI 未返回整理文档，原有知识保持不变"));
     }
     Ok(report)
+}
+
+fn cli_failure(name: &str, status: std::process::ExitStatus, diagnostic: &str) -> Error {
+    let lower = diagnostic.to_lowercase();
+    let hint = if [
+        "input_too_large",
+        "input exceeds the maximum length",
+        "context_length_exceeded",
+        "maximum context length",
+        "prompt is too long",
+    ]
+    .iter()
+    .any(|s| lower.contains(s))
+    {
+        "整理输入超过工具限制，属于任务输入问题；原有知识与本次原文保留"
+    } else if [
+        "not logged in",
+        "login required",
+        "authentication required",
+        "unauthorized",
+    ]
+    .iter()
+    .any(|s| lower.contains(s))
+    {
+        "工具认证失败，请在终端确认该工具已登录后重试；原有知识保留"
+    } else {
+        "请查看工具返回的具体错误；原有知识与本次原文保留"
+    };
+    let detail: String = diagnostic
+        .chars()
+        .rev()
+        .take(1500)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    fail(format!("{name} 整理失败（{status}）：{detail}。{hint}"))
 }
 
 pub fn publish(data: &Path, prepared: &Prepared, report: &str) -> Result<PathBuf> {
@@ -1276,6 +1311,113 @@ print('this is not the final report')"#,
             "生成过程保留初始化首页"
         );
         publish(&data, &p, &test_report(&report)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn multi_megabyte_metadata_uses_bounded_input_without_losing_sources_or_origins() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        p.input.documents.clear();
+        for i in 0..2887 {
+            let path = PathBuf::from(format!("sources/raw/{i:064}.md"));
+            p.input.documents.push(path.clone());
+            p.input.origins.insert(
+                path,
+                (0..4)
+                    .map(|j| location::ingest::Origin {
+                        worktree_id: format!("worktree-{j}"),
+                        directory: format!("工作目录-{j}-{}", "sdk-feature-branch-".repeat(12)),
+                        document: format!("packages/module-{i}/docs/开发决策-{j}.md").into(),
+                        branch: Some(format!("feature/{j}")),
+                        commit: Some("a".repeat(40)),
+                        worktree_dirty: j != 0,
+                    })
+                    .collect(),
+            );
+        }
+        p.input.previous_documents.push(
+            serde_json::from_value(json!({
+                "path":"wiki/manual-contract.md",
+                "title":"人工维护的接口约定",
+                "kind":"topic"
+            }))
+            .unwrap(),
+        );
+        p.input
+            .excluded_documents
+            .push("legacy/ambiguous.md".into());
+        p.collection = Some(
+            json!({"documents_read":11257,"worktree_count":4,"skipped":[{"path":"unreadable.mdx","reason":"不是 UTF-8 文本"}]}),
+        );
+        assert!(prompt(&p).chars().count() > 4_236_735);
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, json
+text = sys.stdin.read()
+assert len(text.encode('utf-8')) <= 65536
+entry = json.loads(text.rsplit('## 本次任务入口\n\n', 1)[1])
+task = json.loads(pathlib.Path(entry['task_index']).read_text())
+def rows(field):
+    result = []
+    for name in field['files']:
+        path = pathlib.Path(name)
+        assert path.stat().st_size <= 48 * 1024
+        result.extend(json.loads(path.read_text()))
+    assert len(result) == field['count']
+    return result
+documents = rows(task['source_documents'])
+assert len(documents) == 2887 and documents[-1].endswith('00000000002886.md')
+origins = rows(task['source_origins'])
+assert len(origins) == 2887 * 4
+assert origins[-1]['document'] == documents[-1]
+assert origins[-1]['origin']['document'] == 'packages/module-2886/docs/开发决策-3.md'
+assert origins[-1]['origin']['branch'] == 'feature/3'
+assert origins[-1]['origin']['worktree_dirty'] is True
+assert rows(task['previous_documents'])[-1]['path'] == 'wiki/manual-contract.md'
+assert rows(task['excluded_documents']) == ['legacy/ambiguous.md']
+assert rows(task['collection']['skipped'])[0]['reason'] == '不是 UTF-8 文本'
+assert task['collection']['documents_read'] == 11257
+assert task['focus'] == '数据库维护'
+assert '文档可能已经过时' in text
+assert '不能用它的代码冒充来源分支的实现证据' in text
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# synthetic complete', encoding='utf-8')"#,
+        );
+        p.runner.executable = Some(executable);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        assert_eq!(
+            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(10)).unwrap(),
+            "# synthetic complete"
+        );
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn input_size_authentication_and_other_failures_have_distinct_guidance() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        for (diagnostic, expected, login) in [
+            (
+                "Error: turn/start: Input exceeds the maximum length of 1048576 characters. input_too_large actual_chars:4236735",
+                "任务输入问题",
+                false,
+            ),
+            ("not logged in", "工具认证失败", true),
+            ("network connection timed out", "具体错误", false),
+        ] {
+            let (_script, executable) = fake_cli(&format!(
+                "import sys\nsys.stdin.read()\nsys.stderr.write({diagnostic:?})\nsys.exit(1)"
+            ));
+            p.runner.executable = Some(executable);
+            let error = generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
+                .unwrap_err();
+            assert!(error.message.contains(expected), "{}", error.message);
+            assert_eq!(error.message.contains("登录"), login, "{}", error.message);
+        }
     }
 
     #[cfg(unix)]
