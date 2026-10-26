@@ -243,10 +243,11 @@ export function CollectionsPanel(container, options = {}) {
     const removed=items.flatMap(s=>(s.update.preview.removed||[]).map(id=>({id,source:s.name,used:refs.some(r=>r.resource_id===id)})));
     const blocked=removed.some(r=>r.used),unknownUsage=skills.filter(e=>e.references_error);
     const origin=entry=>{
+      if(entry.source?.source_kind==='local')return '本地文件夹 · '+entry.source.discovery_entry.replace(/^local-dir:/,'');
       const g=repositoryGroups([{...entry.source,...entry,name:entry.name,url:entry.source?.repo_url||entry.url}])[0];
       return g.host==='本地来源'?g.title:g.host+'/'+g.title;
     };
-    const version=value=>value?`<code title="${esc(value)}">${esc(value.slice(0,12))}</code>`:'未记录';
+    const version=(commit,digest)=>{const value=commit||digest;return value?`${commit?'':'内容 '}<code title="${esc(value)}">${esc(value.slice(0,12))}</code>`:'未记录';};
     const locations=new Map();
     for(const r of refs) {
       const key=JSON.stringify([r.repo_id,r.scope]);
@@ -263,8 +264,8 @@ export function CollectionsPanel(container, options = {}) {
     }).join('');
     const content=document.createElement('div');content.className='library-update-preview';
     content.innerHTML=`<p data-update-summary>将更新 ${[items.length?items.length+' 个合集':'',skills.length?skills.length+' 个独立 Skill':''].filter(Boolean).join('和')}。</p>
-      ${items.length?`<section><h3>合集（${items.length}）</h3><p class="muted">每个合集整体更新，包含筛选结果以外的资源。</p><ul class="library-update-list">${items.map(s=>`<li data-update-collection="${esc(s.id)}"><strong>${esc(s.name)}</strong><p class="muted">${esc(origin(s))}</p><p>${version(s.lock?.resolved_commit||s.update.base_commit)} → ${version(s.update.preview.source?.lock?.resolved_commit)}</p><p>${(s.resources||[]).length} 项资源 → ${s.update.preview.resources?.length??'数量未记录'}${s.update.preview.resources?' 项资源':''}</p></li>`).join('')}</ul></section>`:''}
-      ${skills.length?`<section><h3>独立 Skill（${skills.length}）</h3><ul class="library-update-list">${skills.map(e=>`<li data-update-skill="${esc(e.id)}"><strong>${esc(e.name)}</strong><p class="muted">${esc(origin(e))}${e.source?.repo_path?' · '+esc(e.source.repo_path):''}</p><p>${version(e.source?.resolved_commit)} → ${version(e.update.upstream_commit)}</p></li>`).join('')}</ul></section>`:''}
+      ${items.length?`<section><h3>合集（${items.length}）</h3><p class="muted">每个合集整体更新，包含筛选结果以外的资源。</p><ul class="library-update-list">${items.map(s=>`<li data-update-collection="${esc(s.id)}"><strong>${esc(s.name)}</strong><p class="muted">${esc(origin(s))}</p><p>${version(s.lock?.resolved_commit||s.update.base_commit,s.lock?.content_digest)} → ${version(s.update.preview.source?.lock?.resolved_commit,s.update.preview.source?.lock?.content_digest)}</p><p>${(s.resources||[]).length} 项资源 → ${s.update.preview.resources?.length??'数量未记录'}${s.update.preview.resources?' 项资源':''}</p></li>`).join('')}</ul></section>`:''}
+      ${skills.length?`<section><h3>独立 Skill（${skills.length}）</h3><ul class="library-update-list">${skills.map(e=>`<li data-update-skill="${esc(e.id)}"><strong>${esc(e.name)}</strong><p class="muted">${esc(origin(e))}${e.source?.repo_path?' · '+esc(e.source.repo_path):''}</p><p>${version(e.source?.resolved_commit,e.update.imported_digest||e.source?.imported_digest)} → ${version(e.update.upstream_commit,e.update.upstream_digest)}</p></li>`).join('')}</ul></section>`:''}
       ${removed.length?`<section><h3>上游移除（${removed.length}）</h3><ul class="library-update-list">${removed.map(r=>`<li data-update-removed><strong>${esc(resourceName(r.id))}</strong><p class="muted">来自 ${esc(r.source)}</p><p>${r.used?'仍有启用引用，需先停用或替换。':'更新后将从资源库的当前版本移除，旧版本保留。'}</p></li>`).join('')}</ul></section>`:''}
       <section><h3>${unknownUsage.length?'已知启用位置':'已启用位置'}（${locations.size} 处）</h3>${refs.length?`<p class="muted">共 ${refs.length} 条资源引用；同一位置可能启用多个资源。</p><ul class="library-update-list">${locationRows}</ul>`:'<p>已读取的记录中没有启用引用。</p>'}${unknownUsage.length?`<p class="field-error">以下 Skill 的使用位置未能读取：${unknownUsage.map(e=>esc(e.name)+'：'+esc(e.references_error)).join('；')}</p>`:''}${state.error?`<p class="field-error">项目名称暂时无法读取：${esc(state.error)}</p>`:''}</section>
       ${blocked?'<p class="field-error" data-update-blocked>上游移除的资源仍在使用，请先到上述位置停用或替换，再重新检查更新。</p>':'<p class="muted">本次更新资源库并保留旧版本。完成后，请到项目或跨项目配置预览并应用改动。</p>'}`;
