@@ -68,8 +68,17 @@ fn shared_repository_inside_worktree_is_not_ingested_as_project_evidence() {
         .unwrap();
     }
     std::fs::write(app.join("lesson.md"), "# App original\nappsource").unwrap();
+    let sdk_status = location::run(
+        &data,
+        &Request {
+            action: "status".into(),
+            root: sdk.clone(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     std::fs::write(
-        repository.join("sdk/wiki/sdk.md"),
+        Path::new(sdk_status["location"]["path"].as_str().unwrap()).join("wiki/sdk.md"),
         "# SDK knowledge\nsdkprivate",
     )
     .unwrap();

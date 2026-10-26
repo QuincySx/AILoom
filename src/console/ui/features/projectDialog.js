@@ -1,6 +1,6 @@
 import { api } from '../services/api.js';
 import { directoryInfo } from './knowledgePanel.js';
-import { recoveryFields, cloneDestination } from './knowledgeRecovery.js';
+import { recoveryFields, cloneDestination, projectDirectoryNote } from './knowledgeRecovery.js';
 import { Dialog } from '../components/dialog.js';
 
 // All project-entry points share this form. Inspection never registers a project.
@@ -75,7 +75,7 @@ export function ProjectDialog(container, {onCreated} = {}) {
       q('[data-recovery-fields]').innerHTML=result.initialized?'':recoveryFields(result.recovery);
       const mode=q('[data-recovery-mode]');if(mode)mode.onchange=()=>{recoveryPreview=null;q('[data-preview]').textContent='';q('[data-pick-knowledge]').textContent=mode.value==='clone'?'选择父文件夹…':'选择文件夹…';controls();};
       q('[data-project-state]').textContent=result.initialized?'该目录所属项目已有知识库。':`项目：${result.project_root}`;
-      q('[data-knowledge-note]').textContent=result.initialized?'沿用现有配置；修改位置可在项目设置中迁移。':repositoryMode?`使用其中的 ${result.directory_name}/ 文件夹；其他项目使用各自文件夹，共用一份知识库仓库。`:'此项目的 Worktree 和子目录共用。';
+      q('[data-knowledge-note]').textContent=result.initialized?'沿用现有配置；修改位置可在项目设置中迁移。':repositoryMode?projectDirectoryNote(result):'此项目的 Worktree 和子目录共用。';
       controls();await inspectDirectory();
     } catch(e) {if(alive&&version===generation){q('[data-project-state]').textContent='';message(e.message);controls();}}
   }
@@ -85,7 +85,7 @@ export function ProjectDialog(container, {onCreated} = {}) {
     const repositoryMode=q('[data-storage-mode]').value==='repository';
     f('path').value=repositoryMode?inspected.repository_path:inspected.default_path;
     q('[data-storage-label]').textContent=repositoryMode?'知识库仓库':'本项目知识目录';
-    q('[data-knowledge-note]').textContent=repositoryMode?`使用其中的 ${inspected.directory_name}/ 文件夹；可共用同一仓库，也可另选仓库。`:'直接使用所选目录保存本项目知识，可自行作为独立 Git 仓库维护。';
+    q('[data-knowledge-note]').textContent=repositoryMode?projectDirectoryNote(inspected):'直接使用所选目录保存本项目知识，可自行作为独立 Git 仓库维护。';
     f('path').oninput();inspectDirectory();
   };
   async function pick(target) {

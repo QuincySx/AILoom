@@ -1,5 +1,9 @@
 import { esc } from '../services/api.js';
 
+export function projectDirectoryNote(state) {
+  return (state.directory_name?`使用其中的 ${state.directory_name}/ 文件夹。`:'保存时自动创建“仓库名--项目ID”文件夹。')+'同名仓库按项目ID区分，可共用同一知识库仓库。';
+}
+
 export function recoveryFields(recovery) {
   if (!recovery) return '';
   const source = recovery.declaration.source;

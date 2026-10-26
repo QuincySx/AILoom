@@ -117,6 +117,10 @@ pub fn write(root: &Path, d: &Declaration) -> Result<()> {
     crate::sync_common::atomic_write(&safe_file(root)?, &serde_json::to_vec_pretty(d)?)
 }
 pub fn describe(b: &Binding) -> Result<Declaration> {
+    describe_with_project(b, None)
+}
+
+pub(super) fn describe_with_project(b: &Binding, project_id: Option<&str>) -> Result<Declaration> {
     let old = read(&b.project_root)?;
     if old.as_ref().is_some_and(|d| d.knowledge_id != b.id) {
         return Err(fail("项目声明指向另一知识库，请恢复已有知识库"));
@@ -172,7 +176,10 @@ pub fn describe(b: &Binding) -> Result<Declaration> {
                 .map(|d| d.repository_urls.as_slice())
                 .unwrap_or_default(),
         ),
-        project_id: old.map(|d| d.project_id).unwrap_or_else(crate::ids::new_id),
+        project_id: old
+            .map(|d| d.project_id)
+            .or_else(|| project_id.map(str::to_owned))
+            .unwrap_or_else(crate::ids::new_id),
         knowledge_id: b.id.clone(),
         source,
     })

@@ -25,8 +25,8 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
       if(body.root!==root)throw Error('Unexpected fixture root');
       if(body.action==='inspect')return {git:null};
       if(body.action==='ingestion-status')return {sources:[],document_count:0,revision_count:0,knowledge_path:'/fixture/Knowledge'};
-      if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:fixture.path}:null,needs_separation:fixture.needsSeparation,default_path:fixture.needsSeparation?'/fixture/IndependentKnowledge':'/fixture/Knowledge',...(fixture.repository?{repository_path:fixture.repository,directory_name:'app-monorepo'}:{})};
-      if(body.action==='move'){fixture.calls.move.push(body);return {preview:true,expected:'move-preview',to:body.repository_path?body.repository_path+'/app-monorepo':body.path,files:12,affected_projects:['knowledge-fixture']};}
+      if(body.action==='status')return {initialized:fixture.initialized,files:12,location:fixture.initialized?{path:fixture.path}:null,needs_separation:fixture.needsSeparation,default_path:fixture.needsSeparation?'/fixture/IndependentKnowledge':'/fixture/Knowledge',...(fixture.repository?{repository_path:fixture.repository,directory_name:fixture.directoryName||'app-monorepo'}:{})};
+      if(body.action==='move'){fixture.calls.move.push(body);return {preview:true,expected:'move-preview',to:body.repository_path?body.repository_path+'/'+(fixture.directoryName||'app-monorepo'):body.path,files:12,affected_projects:['knowledge-fixture']};}
       if(body.action==='separate'){fixture.calls.separate.push(body);if(!body.execute)return {preview:true,expected:'split-preview',to:body.path,files:12,affected_projects:['knowledge-fixture'],unassigned_sources:['unknown.md']};if(body.expected!=='split-preview')throw Error('Wrong preview token');fixture.needsSeparation=false;fixture.path=body.path;return {separated:true};}
       if(body.action==='checkpoint'){fixture.calls.checkpoint++;return {};}
       if(body.action==='organization-page'){fixture.calls.pages.push(body.page);return {path:body.page,body:'# 独立模块知识\n'+injection};}
@@ -247,15 +247,16 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await evaluate("document.querySelector('[data-form]').requestSubmit()");
   await waitFor("document.querySelector('.knowledge-location [data-message]').textContent.includes('已提取本项目的知识目录')");
   await assert("window.knowledgeOrganization.calls.separate.length===2 && window.knowledgeOrganization.calls.separate[1].expected==='split-preview' && window.knowledgeOrganization.calls.separate[1].execute===true",'Split confirmation lost the exact preview token');
-  await visitHistory();await evaluate("window.knowledgeOrganization.repository='/fixture/agent-knowledge';window.knowledgeOrganization.path='/fixture/agent-knowledge/app-monorepo'");await visitKnowledge();
+  const directory='app-monorepo--11111111-1111-4111-8111-111111111111';
+  await visitHistory();await evaluate(`window.knowledgeOrganization.repository='/fixture/agent-knowledge';window.knowledgeOrganization.directoryName='${directory}';window.knowledgeOrganization.path='/fixture/agent-knowledge/${directory}'`);await visitKnowledge();
   await evaluate("document.querySelector('.knowledge-location').open=true");
-  await assert("document.querySelector('[data-storage-mode]').value==='repository' && document.querySelector('[name=path]').value==='/fixture/agent-knowledge' && document.querySelector('[data-storage-note]').textContent.includes('app-monorepo/')",'Shared repository choice does not show its project folder');
+  await assert(`document.querySelector('[data-storage-mode]').value==='repository' && document.querySelector('[name=path]').value==='/fixture/agent-knowledge' && document.querySelector('[data-storage-note]').textContent.includes('${directory}/')`,'Shared repository choice does not show its project folder');
   for(const width of [1440,390])await capture('shared-repository',width,'.knowledge-location');
   await evaluate("document.querySelector('[name=path]').value='/fixture/shared-next';document.querySelector('[data-form]').requestSubmit()");
   await waitFor("document.querySelector('[data-submit]').textContent==='迁移并切换'");
-  await assert("window.knowledgeOrganization.calls.move.at(-1).repository_path==='/fixture/shared-next' && !window.knowledgeOrganization.calls.move.at(-1).path && document.querySelector('[data-preview]').textContent.includes('/fixture/shared-next/app-monorepo')",'Shared placement is not scoped to the project folder');
+  await assert(`window.knowledgeOrganization.calls.move.at(-1).repository_path==='/fixture/shared-next' && !window.knowledgeOrganization.calls.move.at(-1).path && document.querySelector('[data-preview]').textContent.includes('/fixture/shared-next/${directory}')`,'Shared placement is not scoped to the project folder');
   await evaluate("const mode=document.querySelector('[data-storage-mode]');mode.value='directory';mode.dispatchEvent(new Event('change'))");
-  await assert("document.querySelector('[name=path]').value==='/fixture/agent-knowledge/app-monorepo' && document.querySelector('[data-preview]').textContent===''");
+  await assert(`document.querySelector('[name=path]').value==='/fixture/agent-knowledge/${directory}' && document.querySelector('[data-preview]').textContent===''`);
   await evaluate("document.querySelector('[name=path]').value='/fixture/standalone';document.querySelector('[data-form]').requestSubmit()");
   await waitFor("document.querySelector('[data-submit]').textContent==='迁移并切换'");
   await assert("window.knowledgeOrganization.calls.move.at(-1).path==='/fixture/standalone' && !window.knowledgeOrganization.calls.move.at(-1).repository_path",'Direct project directory choice was forced into the shared repository');

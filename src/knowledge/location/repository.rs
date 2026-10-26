@@ -25,11 +25,18 @@ pub(super) fn directory_name(root: &Path) -> String {
     }
 }
 
+fn project_directory(root: &Path, project_id: &str) -> String {
+    // 48 Unicode characters plus a full UUID remain below a 255-byte filename limit.
+    let name: String = directory_name(root).chars().take(48).collect();
+    format!("{name}--{project_id}")
+}
+
 pub(super) fn prepare(
     data: &Path,
     cat: &Catalog,
     root: &Path,
     r: &Request,
+    project_id: Option<&str>,
 ) -> Result<(Request, Option<PathBuf>)> {
     let mut next = r.clone();
     let repository = match &r.repository_path {
@@ -56,14 +63,47 @@ pub(super) fn prepare(
     }
     let path = match &r.path {
         Some(path) => destination(path)?,
-        None => cat
-            .projects
-            .values()
-            .find(|b| {
-                b.project_root == root && b.path.starts_with(&repository) && b.path != repository
-            })
-            .map(|b| b.path.clone())
-            .unwrap_or_else(|| repository.join(directory_name(root))),
+        None => {
+            let existing = cat
+                .projects
+                .values()
+                .find(|b| {
+                    b.project_root == root
+                        && b.path.starts_with(&repository)
+                        && b.path != repository
+                })
+                .map(|b| b.path.clone());
+            let restored = if existing.is_none() && r.action == "init" {
+                if let Some(declaration) = super::super::portable::read(root)? {
+                    let found =
+                        lookup::locate(data, &declaration.project_id, 100, Some(&repository))?;
+                    let candidates: Vec<_> = found["candidates"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .filter(|c| c["knowledge_id"] == declaration.knowledge_id)
+                        .collect();
+                    if candidates.len() > 1 || found["total"].as_u64().unwrap_or(0) > 100 {
+                        return Err(fail("该项目有多个知识副本，请用 --path 指定要恢复的目录"));
+                    }
+                    candidates
+                        .first()
+                        .and_then(|c| c["knowledge_path"].as_str())
+                        .map(PathBuf::from)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            match existing.or(restored) {
+                Some(path) => path,
+                None => repository.join(project_directory(
+                    root,
+                    project_id.ok_or_else(|| fail("项目身份缺失，请先初始化或恢复项目知识库"))?,
+                )),
+            }
+        }
     };
     let path = destination(&path)?;
     if path == repository || !path.starts_with(&repository) {
@@ -89,14 +129,17 @@ pub(super) fn status(data: &Path, cat: &Catalog, root: &Path, result: &mut Value
         .as_str()
         .and_then(|id| cat.repositories.get(id));
     let repository = selected.cloned().unwrap_or_else(|| default_root(data, cat));
-    let name = selected
-        .and_then(|repository| {
-            result["location"]["path"]
-                .as_str()
-                .and_then(|path| Path::new(path).strip_prefix(repository).ok())
-                .map(|p| p.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| directory_name(root));
+    let actual = selected.and_then(|repository| {
+        result["location"]["path"]
+            .as_str()
+            .and_then(|path| Path::new(path).strip_prefix(repository).ok())
+            .map(|p| p.to_string_lossy().into_owned())
+    });
+    let proposed = super::super::portable::read(root)
+        .ok()
+        .flatten()
+        .map(|d| project_directory(root, &d.project_id));
+    let name = actual.or(proposed);
     result["repository_path"] = json!(repository);
     result["directory_name"] = json!(name);
     result["storage_mode"] = json!(if result["initialized"] == true && selected.is_none() {
@@ -106,7 +149,8 @@ pub(super) fn status(data: &Path, cat: &Catalog, root: &Path, result: &mut Value
     });
     // Recovery hints refer to the exact project directory, not the shared repository.
     if result["recovery"].is_null() || result["initialized"] == true {
-        result["default_path"] = json!(repository.join(name));
+        result["default_path"] =
+            json!(repository.join(name.unwrap_or_else(|| directory_name(root))));
     }
 }
 
@@ -145,7 +189,14 @@ pub(super) fn navigation(cat: &Catalog, repository: &Path) -> Result<()> {
                     .join("README.md")
                     .to_string_lossy()
                     .replace('\\', "/");
-                projects.insert(link, directory_name(&b.project_root));
+                projects.insert(
+                    link,
+                    b.path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                );
             }
         }
     }

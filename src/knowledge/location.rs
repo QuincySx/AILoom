@@ -260,8 +260,13 @@ fn binding<'a>(cat: &'a Catalog, id: &str) -> Result<&'a Binding> {
         .ok_or_else(|| fail("尚未初始化项目知识库"))
 }
 
-fn declaration(data: &Path, b: &Binding, r: &Request) -> Result<super::portable::Declaration> {
-    let mut declaration = super::portable::describe(b)?;
+fn declaration(
+    data: &Path,
+    b: &Binding,
+    r: &Request,
+    project_id: Option<&str>,
+) -> Result<super::portable::Declaration> {
+    let mut declaration = super::portable::describe_with_project(b, project_id)?;
     if let Some(url) = &r.repository_url {
         if !declaration.repository_urls.contains(url) {
             if declaration.repository_urls.len() >= 64 {
@@ -592,8 +597,18 @@ pub fn run(data: &Path, r: &Request) -> Result<Value> {
         .get(&id)
         .map(|b| b.project_root.clone())
         .unwrap_or_else(|| root.clone());
-    let (prepared, repository) = repository::prepare(data, &cat, &owner, r)?;
-    let mut result = run_project(data, &prepared, &mut cat, id, root.clone())?;
+    let project_id = super::portable::read(&owner)?
+        .map(|d| d.project_id)
+        .or_else(|| (r.action == "init").then(crate::ids::new_id));
+    let (prepared, repository) = repository::prepare(data, &cat, &owner, r, project_id.as_deref())?;
+    let mut result = run_project(
+        data,
+        &prepared,
+        &mut cat,
+        id,
+        root.clone(),
+        project_id.as_deref(),
+    )?;
     if r.action == "status" {
         repository::status(data, &cat, &owner, &mut result);
     }
@@ -622,6 +637,7 @@ fn run_project(
     cat: &mut Catalog,
     id: String,
     root: PathBuf,
+    project_id: Option<&str>,
 ) -> Result<Value> {
     if r.action == "reset-wiki" {
         return rebuild::run(data, r, cat, &id, &root);
@@ -730,7 +746,7 @@ fn run_project(
         if let Some(b) = cat.projects.get(&id) {
             if b.path == dest {
                 checked_tree(b)?;
-                let declaration = declaration(data, b, r)?;
+                let declaration = declaration(data, b, r, None)?;
                 let state = if b.remote.is_none() {
                     super::state::checkpoint(data, &id, b, &declaration)?
                 } else {
@@ -800,7 +816,7 @@ fn run_project(
                 &serde_json::to_vec_pretty(&json!({"schema_version":1,"id":b.id}))?,
             )?;
         }
-        let declaration = declaration(data, &b, r)?;
+        let declaration = declaration(data, &b, r, project_id)?;
         separate::validate_owner(&checked_tree(&b)?, &declaration.project_id)?;
         crate::sync_common::atomic_write(
             &layout::marker_at(&dest),
@@ -828,7 +844,7 @@ fn run_project(
     let old = binding(cat, &id)?.clone();
     let source = checked_tree(&old)?;
     if r.action == "checkpoint" {
-        let declaration = declaration(data, &old, r)?;
+        let declaration = declaration(data, &old, r, None)?;
         layout::validate_project(&source, &declaration.project_id)?;
         let state = super::state::checkpoint(data, &id, &old, &declaration)?;
         super::portable::write(&old.project_root, &declaration)?;

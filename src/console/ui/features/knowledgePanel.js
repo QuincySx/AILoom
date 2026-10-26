@@ -1,4 +1,4 @@
-import { recoveryFields, cloneDestination } from './knowledgeRecovery.js';
+import { recoveryFields, cloneDestination, projectDirectoryNote } from './knowledgeRecovery.js';
 import { api, esc } from '../services/api.js';
 import { KnowledgeOrganization } from './knowledgeOrganization.js';
 
@@ -30,7 +30,7 @@ export function KnowledgePanel(container, {rootPath}) {
         ${recoveryFields(recovery)}
         ${!recovery&&!separating&&state.repository_path?'<label>存放方式<select data-storage-mode><option value="repository">知识库仓库，按项目分文件夹</option><option value="directory">直接指定项目知识目录</option></select></label>':''}
         <label><span data-storage-label>${repositoryMode?'知识库仓库':'本项目知识目录'}</span><div class="input-action"><input name="path" required value="${esc(storagePath)}"><button type="button" data-pick>选择文件夹…</button></div></label>
-        <p class="muted" data-storage-note>${repositoryMode?`本项目使用其中的 ${esc(state.directory_name)}/ 文件夹；可与其他项目共用同一仓库，也可另选仓库。`:''}</p>
+        <p class="muted" data-storage-note>${repositoryMode?esc(projectDirectoryNote(state)):''}</p>
         <p class="muted" data-directory-info></p>
         <div data-preview></div><p data-message role="status"></p>
         <div class="actions"><button type="submit" class="primary" data-submit>${loc?(separating?'预览拆分':'预览迁移'):recovery?'预览恢复':'保存位置'}</button>
@@ -49,7 +49,7 @@ ${loc?'<button type="button" data-checkpoint>保存恢复配置</button>':''}
       repositoryMode=q('[data-storage-mode]').value==='repository';
       q('[name=path]').value=repositoryMode?state.repository_path:loc?.path||state.default_path;
       q('[data-storage-label]').textContent=repositoryMode?'知识库仓库':'本项目知识目录';
-      q('[data-storage-note]').textContent=repositoryMode?`本项目使用其中的 ${state.directory_name}/ 文件夹；可与其他项目共用同一仓库，也可另选仓库。`:'直接使用所选目录保存本项目知识，可自行作为独立 Git 仓库维护。';
+      q('[data-storage-note]').textContent=repositoryMode?projectDirectoryNote(state):'直接使用所选目录保存本项目知识，可自行作为独立 Git 仓库维护。';
       q('[data-form]').dispatchEvent(new Event('input'));inspect();
     };
     const mode=q('[data-recovery-mode]');if(mode)mode.onchange=()=>{q('[data-pick]').textContent=mode.value==='clone'?'选择父文件夹…':'选择文件夹…';q('[data-form]').dispatchEvent(new Event('input'));};
