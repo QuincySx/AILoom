@@ -147,39 +147,42 @@ fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
             return;
         }
     };
-    // 结果原文先记入任务账本；发布时发生内容冲突也可以查看本次生成的草稿。
-    {
-        let mut ledger = state.jobs.lock_ok();
-        let job = ledger.get_mut(id).unwrap();
-        job.result["report"] = json!(report);
-        job.result["saved"] = json!(false);
-        jobs::persist_job(&state.data_root, job);
-    }
-    if jobs::is_cancelled(state, id) {
-        finish(
+    match organize::complete(
+        &state.data_root,
+        &prepared,
+        report,
+        || jobs::is_cancelled(state, id),
+        |note| jobs::set_status(state, id, JobStatus::Running, note),
+        |report, issue| {
+            // Preserve each diagnosed draft before asking the model to change it.
+            let mut ledger = state.jobs.lock_ok();
+            let job = ledger.get_mut(id).unwrap();
+            job.result["report"] = json!(report);
+            job.result["saved"] = json!(false);
+            if let Some(issue) = issue {
+                if !job.result["repair_history"].is_array() {
+                    job.result["repair_history"] = json!([]);
+                }
+                job.result["repair_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"report":report,"diagnostic":issue.to_json()}));
+            }
+            jobs::persist_job(&state.data_root, job);
+        },
+    ) {
+        Ok(result) => finish(state, id, JobStatus::Success, Some(json!(result)), None),
+        Err(e) => finish(
             state,
             id,
-            JobStatus::Cancelled,
+            if jobs::is_cancelled(state, id) {
+                JobStatus::Cancelled
+            } else {
+                JobStatus::Failed
+            },
             None,
-            Some("整理已取消，本次草稿保留在操作记录中".into()),
-        );
-        return;
-    }
-    jobs::set_status(
-        state,
-        id,
-        JobStatus::Running,
-        "核对知识库内容并保存整理结果",
-    );
-    match organize::publish(&state.data_root, &prepared, &report) {
-        Ok(path) => finish(
-            state,
-            id,
-            JobStatus::Success,
-            Some(json!({"saved":true,"report_path":path})),
-            None,
+            Some(e.message),
         ),
-        Err(e) => finish(state, id, JobStatus::Failed, None, Some(e.message)),
     }
 }
 
@@ -190,7 +193,7 @@ fn finish(
     result: Option<Value>,
     error: Option<String>,
 ) {
-    {
+    let needs_revision = {
         let mut ledger = state.jobs.lock_ok();
         if let Some(job) = ledger.get_mut(id) {
             job.error = error;
@@ -200,12 +203,16 @@ fn finish(
                 }
             }
         }
-    }
+        ledger
+            .get(id)
+            .is_some_and(|job| job.result["needs_revision"] == true)
+    };
     jobs::set_status(
         state,
         id,
         status,
         match status {
+            JobStatus::Success if needs_revision => "整理稿与诊断已保留，仍待修订；当前知识未替换",
             JobStatus::Success => "整理完成，开发知识已保存；内容尚需独立评估，后续检索可用",
             JobStatus::Cancelled => "整理已取消",
             _ => "整理失败，原有知识与上次整理结果保留",

@@ -9,6 +9,16 @@ export function collectionDetails(collection) {
   return `<details class="knowledge-collection"><summary>本次资料读取情况${skipped.length?' · 存在未读取或未保存项':''}</summary><p>检查 ${esc(collection.worktree_count||0)} 个工作目录，读取 ${esc(collection.documents_read||0)} 篇候选资料。</p>${skipped.length?`<ul>${skipped.map(s=>`<li>${esc([s.directory,s.path].filter(Boolean).join(' / '))}：${esc(s.reason)}</li>`).join('')}</ul>`:''}</details>`;
 }
 
+export function organizationOutcome(job) {
+  if(job?.result?.needs_revision)return '整理稿待修订';
+  return labels[job?.status]||job?.status||'';
+}
+
+export function revisionDetails(result) {
+  const history=result?.repair_history||[];
+  return `${result?.warning?`<p class="muted" role="status">${esc(result.warning)}</p>`:''}${history.length?`<details class="knowledge-revisions"><summary>AI 修订记录（${history.length}）</summary>${history.map((entry,i)=>`<details><summary>第 ${i+1} 份草稿 · ${esc(entry.diagnostic?.message||'待核对')}</summary><pre class="knowledge-organization-report">${esc(entry.report)}</pre></details>`).join('')}</details>`:''}`;
+}
+
 export function KnowledgeOrganization(container, {rootPath}) {
   const root=document.createElement('section');root.className='knowledge-organization';container.append(root);
   let alive=true, state=null, job=null, timer=null, busy=false, checking=false, runner='codex', focus='', pageRequest=0;
@@ -42,7 +52,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
       ${!state.source_count?'<p class="muted">还没有入库资料也可以直接开始，系统会自动读取工作目录内的文档。配置恢复副本和工具资源不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
-      <div data-organize-collection></div>
+      <div data-organize-collection></div><div data-organize-revisions></div>
       <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库开发知识</summary>${state.pages?.length?`<nav class="knowledge-pages" aria-label="知识页面"><button type="button" data-wiki-index>知识首页</button>${state.pages.map((p,i)=>`<button type="button" data-wiki-page="${i}">${esc(p.title)}</button>`).join('')}</nav>`:''}<p data-wiki-path class="path">${esc(state.report_path||'')}</p><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
       <details data-organize-draft hidden><summary>本次未保存的整理草稿</summary><pre class="knowledge-organization-report"></pre></details>`;
     q('[data-organize-runner]').onchange=()=>{remember();controls();};
@@ -61,8 +71,9 @@ export function KnowledgeOrganization(container, {rootPath}) {
   function showJob() {
     if(!job)return;
     const note=job.progress?.at(-1)||'';
-    message((labels[job.status]||job.status)+(job.error?'：'+job.error:note?' · '+note:''));
+    message(organizationOutcome(job)+(job.error?'：'+job.error:note?' · '+note:''));
     q('[data-organize-collection]').innerHTML=collectionDetails(job.result?.collection);
+    q('[data-organize-revisions]').innerHTML=revisionDetails(job.result);
     const draft=q('[data-organize-draft]');
     draft.hidden=!(job.result?.report&&!job.result.saved&&!running(job));
     if(!draft.hidden)draft.querySelector('pre').textContent=job.result.report;

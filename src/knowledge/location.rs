@@ -465,7 +465,8 @@ pub(super) fn publish_organization(
             "旧库 README 是原始资料，请先使用 reset-wiki 迁移原文，再生成知识首页",
         ));
     }
-    let files = wiki::compile(input, report, &tree)?;
+    let files = wiki::compile(input, report, &tree)
+        .map_err(|error| error.context(json!({"kind":"draft_issue","stage":"wiki_compilation"})))?;
     let mut projected = tree.clone();
     projected.extend(files.clone());
     let cat = load(data)?;

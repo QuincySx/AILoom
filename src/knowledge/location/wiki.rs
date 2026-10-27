@@ -373,37 +373,55 @@ fn sections(report: &str) -> Result<BTreeMap<String, String>> {
     let mut fence = None;
     for line in report.lines() {
         if !code_line(line, &mut fence) && line.starts_with("## ") {
-            let key = line.trim_start_matches("## ").trim();
-            if !SECTIONS.contains(&key) || parts.contains_key(key) {
-                return Err(fail("整理稿包含未知或重复章节，请重新整理"));
+            let key = line.trim_start_matches("## ").trim().to_ascii_lowercase();
+            if SECTIONS.contains(&key.as_str()) {
+                parts.entry(key.clone()).or_default();
+                current = Some(key);
+            } else {
+                // A nested/explanatory heading is content, not a reason to discard the draft.
+                let key = current.get_or_insert_with(|| "overview".into());
+                let body = parts.entry(key.clone()).or_default();
+                body.push_str(line);
+                body.push('\n');
             }
-            parts.insert(key.into(), String::new());
-            current = Some(key.to_string());
         } else if let Some(key) = &current {
             let body = parts.get_mut(key).unwrap();
             body.push_str(line);
             body.push('\n');
         }
     }
-    if SECTIONS.iter().any(|s| !parts.contains_key(*s)) {
-        return Err(fail("整理稿缺少索引、主题、来源或自检章节，未替换原有知识"));
+    if ["topics", "sources"]
+        .iter()
+        .any(|s| !parts.contains_key(*s))
+    {
+        return Err(fail("整理稿缺少主题或来源章节，需要 AI 补齐，原有知识保留"));
+    }
+    for key in SECTIONS {
+        parts.entry(key.to_string()).or_insert_with(|| {
+            if *key == "validation" {
+                "本轮生成稿，尚未经独立评估。AI 未单列自检记录，覆盖及适用性仍需复核。\n".into()
+            } else {
+                String::new()
+            }
+        });
     }
     Ok(parts)
 }
 
-fn topics(body: &str) -> Result<BTreeMap<String, String>> {
+fn topics(body: &str) -> Result<(String, BTreeMap<String, String>)> {
     let mut fence = None;
     if !body
         .lines()
         .any(|line| !code_line(line, &mut fence) && line.starts_with("### topic-"))
     {
         return Err(fail(
-            "AI 未生成知识主题，本次草稿未写入知识库；请查看资料读取情况后重试",
+            "AI 未生成知识主题，需要核对资料读取范围并形成可用主题；草稿保留",
         ));
     }
     let mut result = BTreeMap::<String, String>::new();
     let mut key = None;
     let mut fence = None;
+    let mut introduction = String::new();
     for line in body.lines() {
         if !code_line(line, &mut fence) && line.starts_with("### topic-") {
             let id = line.trim_start_matches("### ").trim();
@@ -413,7 +431,7 @@ fn topics(body: &str) -> Result<BTreeMap<String, String>> {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
                 || result.contains_key(id)
             {
-                return Err(fail("主题 ID 无效或重复"));
+                return Err(fail(format!("主题 ID 无效或重复：{id}")));
             }
             result.insert(id.into(), String::new());
             key = Some(id.to_string());
@@ -421,18 +439,15 @@ fn topics(body: &str) -> Result<BTreeMap<String, String>> {
             let text = result.get_mut(k).unwrap();
             text.push_str(line);
             text.push('\n');
-        } else if !line.trim().is_empty() {
-            return Err(fail("主题正文必须放在独立 topic 标题下"));
+        } else {
+            introduction.push_str(line);
+            introduction.push('\n');
         }
     }
-    if result.len() > 256
-        || result
-            .values()
-            .any(|t| t.trim().is_empty() || t.len() > 32 * 1024)
-    {
-        return Err(fail("主题为空或超过 32 KB，请按模块或独立问题继续拆分"));
+    if result.values().any(|t| t.trim().is_empty()) {
+        return Err(fail("整理稿包含空主题，需要 AI 补齐或移除空入口"));
     }
-    Ok(result)
+    Ok((introduction, result))
 }
 
 pub(super) fn markdown_path(path: &Path) -> String {
@@ -580,6 +595,9 @@ fn links(
                         relative(from, &p),
                         fragment.map(|f| format!("#{f}")).unwrap_or_default()
                     )
+                } else if dest.starts_with("https://") || dest.starts_with("http://") {
+                    // A reference to an upstream issue/spec is data; saving it does not fetch it.
+                    crate::gitx::redact_credentials(dest)
                 } else {
                     return Err(fail(format!("整理稿包含不受支持的链接：{dest}")));
                 };
@@ -634,7 +652,22 @@ fn citations(text: &str) -> BTreeSet<String> {
 
 pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> Result<Tree> {
     let mut parts = sections(report)?;
-    let topic_parts = topics(&parts["topics"])?;
+    let (introduction, topic_parts) = topics(&parts["topics"])?;
+    if !introduction.trim().is_empty() {
+        parts
+            .get_mut("overview")
+            .unwrap()
+            .push_str(&format!("\n{introduction}"));
+    }
+    if parts["index"].trim().is_empty() {
+        let mut index = "先按问题定位主题，检查适用条件、直接证据与评估状态，并结合当前代码使用；历史、实验、待核实和建议不能直接当作当前执行指令。\n\n".to_string();
+        index.extend(
+            topic_parts.iter().map(|(id, body)| {
+                format!("- [{}](#{id})\n", markdown_name(&topic_title(id, body)))
+            }),
+        );
+        parts.insert("index".into(), index);
+    }
     let directory = PathBuf::from("wiki");
     let entry = PathBuf::from("README.md");
     let mut targets = BTreeMap::new();
@@ -722,9 +755,6 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
             title: title.into(),
             kind: key.into(),
         });
-    }
-    if parts["index"].len() + parts["overview"].len() + parts["validation"].len() > 24 * 1024 {
-        return Err(fail("项目索引超过 24 KB，请将正文移至模块主题页"));
     }
     let index = links(&parts["index"], &entry, &targets, input, tree)?;
     let overview = links(&parts["overview"], &entry, &targets, input, tree)?;

@@ -348,6 +348,16 @@ fn generate_with_timeout(
     progress: impl Fn(&str),
     timeout: Duration,
 ) -> Result<String> {
+    generate_draft(prepared, cancelled, progress, timeout, None)
+}
+
+fn generate_draft(
+    prepared: &Prepared,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+    timeout: Duration,
+    correction: Option<(&str, &Error)>,
+) -> Result<String> {
     if cancelled() {
         return Err(fail("整理已取消，原有知识和整理结果保留"));
     }
@@ -356,7 +366,11 @@ fn generate_with_timeout(
     let stdout_path = work.path().join("stdout.txt");
     let stderr_path = work.path().join("stderr.txt");
     // Prepare bounded input before launching any tool; all detail remains in task files.
-    let prompt = task::prepare(prepared, work.path())?;
+    let prompt = if let Some((report, issue)) = correction {
+        task::repair(prepared, work.path(), report, issue)?
+    } else {
+        task::prepare(prepared, work.path())?
+    };
     let mut child = command(prepared, &output_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(std::fs::File::create(&stdout_path)?))
@@ -366,7 +380,11 @@ fn generate_with_timeout(
     let mut stdin = child.stdin.take().unwrap();
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
     let started = Instant::now();
-    progress("正在自主查找本地 Markdown、阅读资料并核对代码");
+    progress(if correction.is_some() {
+        "AI 正在核对具体文件与诊断，修订现有整理稿"
+    } else {
+        "正在自主查找本地 Markdown、阅读资料并核对代码"
+    });
     let status = loop {
         if cancelled() {
             terminate(&mut child);
@@ -470,6 +488,87 @@ pub fn publish(data: &Path, prepared: &Prepared, report: &str) -> Result<PathBuf
         return Err(fail("整理文档必须是非空 Markdown，且不超过 4 MB"));
     }
     location::publish_organization(data, &prepared.input, report)
+}
+
+#[derive(Debug, Serialize)]
+pub struct Completion {
+    pub saved: bool,
+    pub report_path: Option<PathBuf>,
+    pub needs_revision: bool,
+    pub warning: Option<String>,
+    pub repair_attempts: usize,
+}
+
+/// Editorial problems go back to the agent; storage conflicts never trigger a rewrite.
+pub fn complete(
+    data: &Path,
+    prepared: &Prepared,
+    mut report: String,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+    retain: impl Fn(&str, Option<&Error>),
+) -> Result<Completion> {
+    retain(&report, None);
+    for attempt in 0..=2 {
+        if cancelled() {
+            return Err(fail("整理已取消，本次草稿保留在操作记录中"));
+        }
+        progress("核对知识库内容并保存整理结果");
+        let issue = match publish(data, prepared, &report) {
+            Ok(path) => {
+                return Ok(Completion {
+                    saved: true,
+                    report_path: Some(path),
+                    needs_revision: false,
+                    warning: None,
+                    repair_attempts: attempt,
+                })
+            }
+            Err(error) if error.context["kind"] == "draft_issue" => error,
+            Err(error) => return Err(error),
+        };
+        retain(&report, Some(&issue));
+        if attempt == 2 {
+            return Ok(Completion {
+                saved: false,
+                report_path: None,
+                needs_revision: true,
+                warning: Some(format!(
+                    "AI 已修订两次，草稿及诊断已保留，仍待修订：{}",
+                    issue.message
+                )),
+                repair_attempts: attempt,
+            });
+        }
+        progress(&format!(
+            "发现需要核对的格式或引用，交给 AI 修订（第 {} 次）",
+            attempt + 1
+        ));
+        report = match generate_draft(
+            prepared,
+            &cancelled,
+            &progress,
+            TIMEOUT,
+            Some((&report, &issue)),
+        ) {
+            Ok(report) => report,
+            Err(error) if !cancelled() => {
+                return Ok(Completion {
+                    saved: false,
+                    report_path: None,
+                    needs_revision: true,
+                    warning: Some(format!(
+                        "AI 修订未完成，已有草稿及诊断已保留：{}",
+                        error.message
+                    )),
+                    repair_attempts: attempt + 1,
+                })
+            }
+            Err(error) => return Err(error),
+        };
+        retain(&report, None);
+    }
+    unreachable!()
 }
 
 #[cfg(test)]
@@ -681,6 +780,193 @@ mod tests {
                 before
             );
         }
+    }
+
+    #[test]
+    fn editorial_format_variations_preserve_content_without_arbitrary_page_limits() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let large = "有效模块知识。".repeat(6000);
+        let report = test_report(&format!(
+            "{large}\n\n[上游 issue](https://github.com/example/project/issues/42#comment)"
+        ))
+        .replace("## topics\n", "## TOPICS\n\n主题之前的导读应保留。\n")
+        .replace(
+            "## maintenance\n",
+            "## maintenance\n\n建议一。\n\n## 具体背景\n\n背景应保留。\n\n## maintenance\n",
+        )
+        .replace(
+            "[迁移](#topic-migration)\n\n## overview",
+            &format!("{}\n\n## overview", "简短入口说明。".repeat(3000)),
+        );
+        publish(&data, &p, &report).unwrap();
+        let home = std::fs::read_to_string(p.input.path.join("README.md")).unwrap();
+        assert!(home.contains("主题之前的导读应保留"));
+        assert!(home.len() > 24 * 1024);
+        let topic = std::fs::read_to_string(p.input.path.join("wiki/topic-migration.md")).unwrap();
+        assert!(topic.contains(&large) && topic.len() > 32 * 1024);
+        assert!(
+            topic.contains("[上游 issue](https://github.com/example/project/issues/42#comment)")
+        );
+        let maintenance =
+            std::fs::read_to_string(p.input.path.join("wiki/maintenance.md")).unwrap();
+        assert!(
+            maintenance.contains("建议一")
+                && maintenance.contains("背景应保留")
+                && maintenance.contains("参见")
+        );
+        let p = prepared(&data, &root);
+        let mut report = "## topics\n\n".to_string();
+        for i in 0..257 {
+            report.push_str(&format!(
+                "### topic-module-{i}\n\n主题：模块 {i}。\n来源记录与适用边界。\n\n"
+            ));
+        }
+        report.push_str("## sources\n\n来源由人工后续复核。\n");
+        publish(&data, &p, &report).unwrap();
+        let home = std::fs::read_to_string(p.input.path.join("README.md")).unwrap();
+        assert!(home.contains("topic-module-256.md") && home.contains("尚未经独立评估"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editorial_issues_are_repaired_by_the_agent_with_bounded_input_and_retained_drafts() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let corrected = test_report("Important recovered knowledge，来源记录，待核实。");
+        let body = format!(
+            r#"import sys, pathlib, json
+text = sys.stdin.read()
+assert len(text.encode()) <= 65536
+entry = json.loads(text.split('## 本次任务入口\n\n',1)[1].split('\n## 核对并修订已有整理稿',1)[0])
+files = json.loads(text.strip().splitlines()[-1])
+draft = pathlib.Path(files['draft']).read_text()
+assert len(draft) > 1048576 and 'Important recovered knowledge' in draft
+issue = json.loads(pathlib.Path(files['diagnostic']).read_text())
+assert issue['context']['kind'] == 'draft_issue'
+assert '迁移后核对行数' in (pathlib.Path(entry['knowledge_directory'])/'sources/notes/migration.md').read_text()
+assert '不能为通过校验伪造路径' in text
+args = sys.argv[1:]
+assert args[:6] == ['--no-daemon','-a','never','exec','--sandbox','read-only']
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text({corrected:?},encoding='utf-8')
+"#
+        );
+        let (_script, executable) = fake_cli(&body);
+        p.runner.executable = Some(executable);
+        let drafts = std::cell::RefCell::new(Vec::new());
+        let report = "Important recovered knowledge\n".repeat(40000);
+        let result = complete(
+            &data,
+            &p,
+            report.clone(),
+            || false,
+            |_| {},
+            |text, issue| {
+                drafts
+                    .borrow_mut()
+                    .push((text.to_string(), issue.map(|e| e.message.clone())));
+            },
+        )
+        .unwrap();
+        assert!(result.saved && !result.needs_revision);
+        assert_eq!(result.repair_attempts, 1);
+        assert!(drafts
+            .borrow()
+            .iter()
+            .any(|(text, issue)| text == &report && issue.is_some()));
+        assert_eq!(drafts.borrow().last().unwrap().0, corrected);
+        assert!(
+            std::fs::read_to_string(p.input.path.join("wiki/topic-migration.md"))
+                .unwrap()
+                .contains("Important recovered knowledge")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unsuccessful_repairs_keep_a_reviewable_draft_without_replacing_the_wiki() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib
+sys.stdin.read()
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 仍需补齐结构\n保留重要经验。')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let diagnosed = std::cell::Cell::new(0);
+        let result = complete(
+            &data,
+            &p,
+            "# 初稿\n保留重要经验。".into(),
+            || false,
+            |_| {},
+            |_, issue| {
+                if issue.is_some() {
+                    diagnosed.set(diagnosed.get() + 1);
+                }
+            },
+        )
+        .unwrap();
+        assert!(!result.saved && result.needs_revision);
+        assert_eq!(result.repair_attempts, 2);
+        assert_eq!(diagnosed.get(), 3);
+        assert!(result.warning.unwrap().contains("草稿及诊断已保留"));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+        let (_script, executable) = fake_cli("import sys\nsys.stdin.read()\nsys.stderr.write('tool temporarily unavailable')\nsys.exit(1)");
+        p.runner.executable = Some(executable);
+        let result = complete(&data, &p, "# 已有草稿".into(), || false, |_| {}, |_, _| {}).unwrap();
+        assert!(result.needs_revision && !result.saved);
+        assert!(result
+            .warning
+            .unwrap()
+            .contains("tool temporarily unavailable"));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn content_conflicts_and_cancellation_do_not_trigger_model_rewrites() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        std::fs::write(p.input.path.join(note_path(&p)), "人工修改必须保留").unwrap();
+        // No CLI executable is configured: any attempt to rewrite would panic.
+        let error = complete(
+            &data,
+            &p,
+            test_report("旧草稿"),
+            || false,
+            |_| {},
+            |_, _| {},
+        )
+        .unwrap_err();
+        assert!(error.message.contains("内容已变化"));
+        assert_ne!(error.context["kind"], "draft_issue");
+        let p = prepared(&data, &root);
+        let cancelled = std::cell::Cell::new(false);
+        let retained = std::cell::Cell::new(false);
+        let error = complete(
+            &data,
+            &p,
+            "# 待修订草稿".into(),
+            || cancelled.get(),
+            |_| {},
+            |_, issue| {
+                retained.set(true);
+                if issue.is_some() {
+                    cancelled.set(true);
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(retained.get() && error.message.contains("取消"));
     }
 
     #[test]

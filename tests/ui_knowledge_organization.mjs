@@ -184,6 +184,19 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await evaluate("document.querySelector('[data-organize-draft]').open=true");
   await noInjection();await capture('failed-draft',390,'[data-organize-draft]');
 
+  // Unresolved editorial issues retain every draft and show a review state, not success/failure.
+  const pending=await start();
+  await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(pending)},'success','# 待修订草稿\n有效知识仍保留。'+f.injection);Object.assign(f.latest.result,{needs_revision:true,warning:'引用仍待核对 '+f.injection,repair_attempts:2,repair_history:[{report:'# 原始草稿\n'+f.injection,diagnostic:{message:'具体引用需要核对 '+f.injection}}]});}`);
+  await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理稿待修订') && !document.querySelector('[data-organize-start]').disabled");
+  await assert("!document.querySelector('[data-organize-draft]').hidden && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && document.querySelector('[data-organize-revisions]').textContent.includes('原始草稿')",'Review state discarded the draft/history or replaced the saved report');
+  await noInjection();
+  await visitHistory();
+  await evaluate(`document.querySelector('[data-job-open="${pending}"]').click()`);
+  await assert("document.querySelector('[data-detail-body] .badge').textContent==='待修订' && document.querySelector('[data-detail-body] .badge').classList.contains('warn') && document.querySelector('[data-detail-body]').textContent.includes('引用仍待核对') && document.querySelector('[data-detail-body]').textContent.includes('原始草稿')",'Task history mislabels a retained draft or hides the diagnostic');
+  await noInjection();
+  await visitKnowledge();
+  await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理稿待修订')");
+
   // Cancellation can retry after failure and sends only one request while pending.
   const cancelled=await start();
   await evaluate("window.knowledgeOrganization.failCancel=1;document.querySelector('[data-organize-cancel]').click()");
