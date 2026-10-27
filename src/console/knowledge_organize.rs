@@ -129,6 +129,7 @@ fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
         &prepared,
         || jobs::is_cancelled(state, id),
         |note| jobs::set_status(state, id, JobStatus::Running, note),
+        |report| retain_draft(state, id, report, None, true),
     );
     let report = match result {
         Ok(report) => report,
@@ -153,23 +154,7 @@ fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
         report,
         || jobs::is_cancelled(state, id),
         |note| jobs::set_status(state, id, JobStatus::Running, note),
-        |report, issue| {
-            // Preserve each diagnosed draft before asking the model to change it.
-            let mut ledger = state.jobs.lock_ok();
-            let job = ledger.get_mut(id).unwrap();
-            job.result["report"] = json!(report);
-            job.result["saved"] = json!(false);
-            if let Some(issue) = issue {
-                if !job.result["repair_history"].is_array() {
-                    job.result["repair_history"] = json!([]);
-                }
-                job.result["repair_history"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(json!({"report":report,"diagnostic":issue.to_json()}));
-            }
-            jobs::persist_job(&state.data_root, job);
-        },
+        |report, issue, partial| retain_draft(state, id, report, issue, partial),
     ) {
         Ok(result) => finish(state, id, JobStatus::Success, Some(json!(result)), None),
         Err(e) => finish(
@@ -184,6 +169,30 @@ fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
             Some(e.message),
         ),
     }
+}
+
+fn retain_draft(
+    state: &ServerState,
+    id: &str,
+    report: &str,
+    issue: Option<&crate::error::Error>,
+    partial: bool,
+) {
+    let mut ledger = state.jobs.lock_ok();
+    let job = ledger.get_mut(id).unwrap();
+    job.result["report"] = json!(report);
+    job.result["saved"] = json!(false);
+    job.result["report_partial"] = json!(partial);
+    if let Some(issue) = issue {
+        if !job.result["repair_history"].is_array() {
+            job.result["repair_history"] = json!([]);
+        }
+        job.result["repair_history"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"report":report,"diagnostic":issue.to_json()}));
+    }
+    jobs::persist_job(&state.data_root, job);
 }
 
 fn finish(

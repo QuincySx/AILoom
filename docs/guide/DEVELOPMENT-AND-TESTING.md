@@ -1,6 +1,6 @@
 # 开发、验收与日常使用
 
-当前候选版是 `0.4.0-rc.16`，发布到 npm `next` 通道供试装；`latest` 通道仍为 `0.3.0`。候选版的已知限制见 [更新记录](../../CHANGELOG.md)。最新版本不等于稳定版本；先修阻断问题，再交付一个固定的候选包供真实使用验收。候选通过后，同一份制品进入正式发布，不在发布时重新构建另一份。
+当前候选版是 `0.4.0-rc.17`，发布到 npm `next` 通道供试装；`latest` 通道仍为 `0.3.0`。候选版的已知限制见 [更新记录](../../CHANGELOG.md)。最新版本不等于稳定版本；先修阻断问题，再交付一个固定的候选包供真实使用验收。候选通过后，同一份制品进入正式发布，不在发布时重新构建另一份。
 
 | 用途 | 执行哪个程序 | 项目与数据 | 升级节奏 |
 |---|---|---|---|
@@ -39,7 +39,7 @@ npm --prefix packaging/npm run install:local -- --no-restart
 
 升级安装后运行 `ailoom service restart`，再刷新网页。修复版 CLI 不会静默复用不同安装位置或旧构建启动的服务。已有任务先完成，正常停止后使用原端口启动当前程序。
 
-这里的“当前程序”指实际执行重启的程序。使用 mise 连续执行升级与重启时，PATH 可能尚未刷新，应使用 `mise exec npm:ailoom-cli@0.4.0-rc.16 -- ailoom service restart` 指定新版本，再核对 `build.version` 和 `update_required=false`；完整步骤见 [安装与升级](INSTALL.md#升级)。
+这里的“当前程序”指实际执行重启的程序。使用 mise 连续执行升级与重启时，PATH 可能尚未刷新，应使用 `mise exec npm:ailoom-cli@0.4.0-rc.17 -- ailoom service restart` 指定新版本，再核对 `build.version` 和 `update_required=false`；完整步骤见 [安装与升级](INSTALL.md#升级)。
 
 ## 开发入口
 

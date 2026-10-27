@@ -49,6 +49,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>
       <details data-organize-options ${focus.trim()?'open':''}><summary>补充整理要求（可选）</summary><label>额外关注的内容<textarea data-organize-focus rows="2" maxlength="2000" placeholder="留空即按默认规则全面整理，例如也可补充：优先整理硬件连接的排障经验">${esc(focus)}</textarea></label></details>
       <p class="muted">调用所选工具的本机配置和登录状态，使用其模型服务。整理结果会保存到本项目知识库，后续检索可用。</p>
+      <p class="muted" data-organize-runtime>整理不限运行时长，页面会持续更新耗时与最近输出情况；可随时取消，已收到的正文会保留为草稿。</p>
       ${!state.source_count?'<p class="muted">还没有入库资料也可以直接开始，系统会自动读取工作目录内的文档。配置恢复副本和工具资源不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
@@ -76,7 +77,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
     q('[data-organize-revisions]').innerHTML=revisionDetails(job.result);
     const draft=q('[data-organize-draft]');
     draft.hidden=!(job.result?.report&&!job.result.saved&&!running(job));
-    if(!draft.hidden)draft.querySelector('pre').textContent=job.result.report;
+    if(!draft.hidden){draft.querySelector('summary').textContent=job.result.report_partial?'本次未完成的正文草稿':'本次未保存的整理草稿';draft.querySelector('pre').textContent=job.result.report;}
   }
   async function load() {
     if(checking||!alive)return;

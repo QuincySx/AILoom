@@ -3,9 +3,13 @@ use super::location::{self, OrganizationInput};
 use crate::error::{code, Error, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 mod task;
@@ -16,9 +20,10 @@ const RUNNERS: &[(&str, &str, &str)] = &[
     ("pi", "Pi", "pi"),
     ("cursor", "Cursor Agent", "agent"),
 ];
-const OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
-const CLI_LOG_LIMIT: u64 = 64 * 1024 * 1024;
-const TIMEOUT: Duration = Duration::from_secs(30 * 60);
+// Matches the existing library storage budget; it does not terminate a running tool.
+const OUTPUT_LIMIT: u64 = 128 * 1024 * 1024;
+const DIAGNOSTIC_TAIL: usize = 64 * 1024;
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(15);
 // 模型返回编纂传输稿，应用按稳定主题 ID 保存为独立 Wiki 页面。
 const ORGANIZATION_PROMPT: &str = include_str!("res/organize-wiki.md");
 const DEFAULT_FOCUS: &str =
@@ -311,51 +316,68 @@ fn read_output(path: &Path) -> Result<String> {
     let mut bytes = Vec::new();
     file.take(OUTPUT_LIMIT + 1).read_to_end(&mut bytes)?;
     if bytes.len() as u64 > OUTPUT_LIMIT {
-        return Err(fail("整理输出超过 4 MB，请缩小整理重点后重试"));
+        return Err(fail(
+            "整理输出超过知识库 128 MB 存储容量；可保留的正文已留在草稿中",
+        ));
     }
     String::from_utf8(bytes).map_err(|_| fail("AI CLI 返回了非 UTF-8 文本"))
 }
 
-fn read_diagnostic(path: &Path) -> std::io::Result<String> {
-    let mut file = std::fs::File::open(path)?;
-    let start = file.metadata()?.len().saturating_sub(64 * 1024);
-    file.seek(SeekFrom::Start(start))?;
-    let mut bytes = Vec::new();
-    file.take(64 * 1024).read_to_end(&mut bytes)?;
-    // 丢弃被截断的首行，避免将半条错误或 URL 当作完整诊断。
-    let first = if start == 0 {
-        0
-    } else {
-        bytes
-            .iter()
-            .position(|b| *b == b'\n')
-            .map_or(bytes.len(), |i| i + 1)
-    };
-    Ok(String::from_utf8_lossy(&bytes[first..]).into_owned())
+/// Drain continuously so verbose tools never block or get killed for producing logs.
+fn capture(
+    mut reader: impl Read + Send + 'static,
+    report_path: Option<PathBuf>,
+    count: Arc<AtomicU64>,
+) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut report = report_path.map(std::fs::File::create).transpose()?;
+        let mut saved = 0;
+        let mut tail = Vec::new();
+        let mut buffer = [0; 16 * 1024];
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            count.fetch_add(n as u64, Ordering::Relaxed);
+            if let Some(report) = report.as_mut() {
+                let bytes = n.min(OUTPUT_LIMIT.saturating_sub(saved) as usize);
+                report.write_all(&buffer[..bytes])?;
+                saved += bytes as u64;
+            }
+            tail.extend_from_slice(&buffer[..n]);
+            if tail.len() > DIAGNOSTIC_TAIL {
+                tail.drain(..tail.len() - DIAGNOSTIC_TAIL);
+            }
+        }
+        Ok(tail)
+    })
+}
+
+fn retain_candidate(path: &Path, retain: &impl Fn(&str)) {
+    if let Ok(file) = std::fs::File::open(path) {
+        let mut bytes = Vec::new();
+        if file.take(OUTPUT_LIMIT).read_to_end(&mut bytes).is_ok() && !bytes.is_empty() {
+            retain(&String::from_utf8_lossy(&bytes));
+        }
+    }
 }
 
 pub fn generate(
     prepared: &Prepared,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
+    retain: impl Fn(&str),
 ) -> Result<String> {
-    generate_with_timeout(prepared, cancelled, progress, TIMEOUT)
-}
-
-fn generate_with_timeout(
-    prepared: &Prepared,
-    cancelled: impl Fn() -> bool,
-    progress: impl Fn(&str),
-    timeout: Duration,
-) -> Result<String> {
-    generate_draft(prepared, cancelled, progress, timeout, None)
+    generate_draft(prepared, cancelled, progress, retain, Instant::now(), None)
 }
 
 fn generate_draft(
     prepared: &Prepared,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
-    timeout: Duration,
+    retain: impl Fn(&str),
+    started: Instant,
     correction: Option<(&str, &Error)>,
 ) -> Result<String> {
     if cancelled() {
@@ -363,8 +385,6 @@ fn generate_draft(
     }
     let work = tempfile::tempdir()?;
     let output_path = work.path().join("report.md");
-    let stdout_path = work.path().join("stdout.txt");
-    let stderr_path = work.path().join("stderr.txt");
     // Prepare bounded input before launching any tool; all detail remains in task files.
     let prompt = if let Some((report, issue)) = correction {
         task::repair(prepared, work.path(), report, issue)?
@@ -373,73 +393,111 @@ fn generate_draft(
     };
     let mut child = command(prepared, &output_path)
         .stdin(Stdio::piped())
-        .stdout(Stdio::from(std::fs::File::create(&stdout_path)?))
-        .stderr(Stdio::from(std::fs::File::create(&stderr_path)?))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| fail(format!("无法启动 {}：{e}", prepared.runner.name)))?;
     let mut stdin = child.stdin.take().unwrap();
     let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
-    let started = Instant::now();
+    let stdout_count = Arc::new(AtomicU64::new(0));
+    let stderr_count = Arc::new(AtomicU64::new(0));
+    let stdout = capture(
+        child.stdout.take().unwrap(),
+        (prepared.runner.id != "codex").then(|| output_path.clone()),
+        Arc::clone(&stdout_count),
+    );
+    let stderr = capture(
+        child.stderr.take().unwrap(),
+        None,
+        Arc::clone(&stderr_count),
+    );
+    let mut last_note = Duration::ZERO;
+    let mut last_activity = Duration::ZERO;
+    let mut observed = 0;
+    let mut retained_size = 0;
+    let mut exited = None;
     progress(if correction.is_some() {
         "AI 正在核对具体文件与诊断，修订现有整理稿"
     } else {
         "正在自主查找本地 Markdown、阅读资料并核对代码"
     });
-    let status = loop {
+    let outcome = loop {
         if cancelled() {
             terminate(&mut child);
-            let _ = writer.join();
-            return Err(fail("整理已取消，原有知识和整理结果保留"));
+            break Err(fail("整理已取消，已有正文保留为未完成草稿"));
         }
-        if started.elapsed() > timeout {
-            terminate(&mut child);
-            let _ = writer.join();
-            return Err(fail(
-                "整理超过 30 分钟，已停止本次 CLI，请检查工具连接或缩小整理重点",
+        let elapsed = started.elapsed();
+        let report_size = output_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let bytes = stdout_count.load(Ordering::Relaxed)
+            + stderr_count.load(Ordering::Relaxed)
+            + if prepared.runner.id == "codex" {
+                report_size
+            } else {
+                0
+            };
+        if bytes != observed {
+            last_activity = elapsed;
+            observed = bytes;
+        }
+        if elapsed.saturating_sub(last_note) >= PROGRESS_INTERVAL {
+            progress(&format!(
+                "AI 已运行 {} 分 {} 秒；距最近输出 {} 秒，任务继续，可随时取消",
+                elapsed.as_secs() / 60,
+                elapsed.as_secs() % 60,
+                elapsed.saturating_sub(last_activity).as_secs()
             ));
-        }
-        let stdout_limit = if prepared.runner.id == "codex" {
-            CLI_LOG_LIMIT
-        } else {
-            OUTPUT_LIMIT
-        };
-        if [
-            (&stdout_path, stdout_limit),
-            (&stderr_path, CLI_LOG_LIMIT),
-            (&output_path, OUTPUT_LIMIT),
-        ]
-        .iter()
-        .any(|(p, limit)| p.metadata().map(|m| m.len() > *limit).unwrap_or(false))
-        {
-            terminate(&mut child);
-            let _ = writer.join();
-            return Err(fail("AI CLI 输出过大，已停止本次整理"));
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => std::thread::sleep(Duration::from_millis(200)),
-            Err(e) => {
-                terminate(&mut child);
-                let _ = writer.join();
-                return Err(e.into());
+            last_note = elapsed;
+            if report_size != retained_size {
+                retain_candidate(&output_path, &retain);
+                retained_size = report_size;
             }
         }
+        if exited.is_none() {
+            match child.try_wait() {
+                Ok(status) => exited = status,
+                Err(e) => {
+                    terminate(&mut child);
+                    break Err(e.into());
+                }
+            }
+        }
+        // Descendants may still hold a pipe after the launcher exits; keep cancellation live.
+        if exited.is_some() && stdout.is_finished() && stderr.is_finished() && writer.is_finished()
+        {
+            break Ok(exited.take().unwrap());
+        }
+        std::thread::sleep(Duration::from_millis(200));
     };
     let written = writer
         .join()
         .map_err(|_| fail("无法向 AI CLI 传入整理任务"))?;
+    let stdout_result = stdout.join();
+    let stderr_result = stderr.join();
+    retain_candidate(&output_path, &retain);
+    let status = outcome?;
+    stdout_result.map_err(|_| fail("无法收集 AI CLI 正文"))??;
+    let diagnostic = stderr_result.map_err(|_| fail("无法收集 AI CLI 诊断"))??;
     if !status.success() {
         // 不持久化模型的逐步工具日志；失败诊断只保留限长文本并隐藏 URL 内嵌凭据。
-        let diagnostic = read_diagnostic(&stderr_path).unwrap_or_default();
-        let diagnostic = crate::gitx::redact_credentials(&diagnostic);
+        let first = if stderr_count.load(Ordering::Relaxed) > DIAGNOSTIC_TAIL as u64 {
+            diagnostic
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(diagnostic.len(), |i| i + 1)
+        } else {
+            0
+        };
+        let diagnostic =
+            crate::gitx::redact_credentials(&String::from_utf8_lossy(&diagnostic[first..]));
         return Err(cli_failure(&prepared.runner.name, status, &diagnostic));
     }
     written.map_err(|e| fail(format!("AI CLI 没有完整读取整理任务：{e}")))?;
-    let report = read_output(if prepared.runner.id == "codex" {
-        &output_path
-    } else {
-        &stdout_path
-    })?;
+    if prepared.runner.id != "codex" && stdout_count.load(Ordering::Relaxed) > OUTPUT_LIMIT {
+        return Err(fail(
+            "整理输出超过知识库 128 MB 存储容量；可保留的正文已留在草稿中",
+        ));
+    }
+    let report = read_output(&output_path)?;
     if report.trim().is_empty() {
         return Err(fail("AI CLI 未返回整理文档，原有知识保持不变"));
     }
@@ -485,7 +543,9 @@ fn cli_failure(name: &str, status: std::process::ExitStatus, diagnostic: &str) -
 
 pub fn publish(data: &Path, prepared: &Prepared, report: &str) -> Result<PathBuf> {
     if report.trim().is_empty() || report.len() as u64 > OUTPUT_LIMIT {
-        return Err(fail("整理文档必须是非空 Markdown，且不超过 4 MB"));
+        return Err(fail(
+            "整理文档必须是非空 Markdown，且不超过知识库 128 MB 存储容量",
+        ));
     }
     location::publish_organization(data, &prepared.input, report)
 }
@@ -506,9 +566,9 @@ pub fn complete(
     mut report: String,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
-    retain: impl Fn(&str, Option<&Error>),
+    retain: impl Fn(&str, Option<&Error>, bool),
 ) -> Result<Completion> {
-    retain(&report, None);
+    retain(&report, None, false);
     for attempt in 0..=2 {
         if cancelled() {
             return Err(fail("整理已取消，本次草稿保留在操作记录中"));
@@ -527,7 +587,7 @@ pub fn complete(
             Err(error) if error.context["kind"] == "draft_issue" => error,
             Err(error) => return Err(error),
         };
-        retain(&report, Some(&issue));
+        retain(&report, Some(&issue), false);
         if attempt == 2 {
             return Ok(Completion {
                 saved: false,
@@ -548,7 +608,8 @@ pub fn complete(
             prepared,
             &cancelled,
             &progress,
-            TIMEOUT,
+            |draft| retain(draft, None, true),
+            Instant::now(),
             Some((&report, &issue)),
         ) {
             Ok(report) => report,
@@ -566,7 +627,7 @@ pub fn complete(
             }
             Err(error) => return Err(error),
         };
-        retain(&report, None);
+        retain(&report, None, false);
     }
     unreachable!()
 }
@@ -861,7 +922,7 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text({corrected:
             report.clone(),
             || false,
             |_| {},
-            |text, issue| {
+            |text, issue, _partial| {
                 drafts
                     .borrow_mut()
                     .push((text.to_string(), issue.map(|e| e.message.clone())));
@@ -903,7 +964,7 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 仍需�
             "# 初稿\n保留重要经验。".into(),
             || false,
             |_| {},
-            |_, issue| {
+            |_, issue, _partial| {
                 if issue.is_some() {
                     diagnosed.set(diagnosed.get() + 1);
                 }
@@ -920,7 +981,15 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 仍需�
         );
         let (_script, executable) = fake_cli("import sys\nsys.stdin.read()\nsys.stderr.write('tool temporarily unavailable')\nsys.exit(1)");
         p.runner.executable = Some(executable);
-        let result = complete(&data, &p, "# 已有草稿".into(), || false, |_| {}, |_, _| {}).unwrap();
+        let result = complete(
+            &data,
+            &p,
+            "# 已有草稿".into(),
+            || false,
+            |_| {},
+            |_, _, _| {},
+        )
+        .unwrap();
         assert!(result.needs_revision && !result.saved);
         assert!(result
             .warning
@@ -944,7 +1013,7 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 仍需�
             test_report("旧草稿"),
             || false,
             |_| {},
-            |_, _| {},
+            |_, _, _| {},
         )
         .unwrap_err();
         assert!(error.message.contains("内容已变化"));
@@ -958,7 +1027,7 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 仍需�
             "# 待修订草稿".into(),
             || cancelled.get(),
             |_| {},
-            |_, issue| {
+            |_, issue, _partial| {
                 retained.set(true);
                 if issue.is_some() {
                     cancelled.set(true);
@@ -1298,7 +1367,7 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# Discov
         );
         p.runner.executable = Some(executable);
         assert_eq!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap(),
+            generate(&p, || false, |_| {}, |_| {}).unwrap(),
             "# Discovered local document"
         );
     }
@@ -1801,7 +1870,7 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# 仓库
 print('this is not the final report')"#,
         );
         p.runner.executable = Some(executable);
-        let report = generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap();
+        let report = generate(&p, || false, |_| {}, |_| {}).unwrap();
         assert_eq!(report, "# 仓库维护知识与建议\n迁移后验证行数。");
         assert!(
             p.input.path.join(&p.input.report_path).is_file(),
@@ -1885,7 +1954,7 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# synthe
         p.runner.executable = Some(executable);
         let before = std::fs::read(p.input.path.join("README.md")).unwrap();
         assert_eq!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(10)).unwrap(),
+            generate(&p, || false, |_| {}, |_| {}).unwrap(),
             "# synthetic complete"
         );
         assert_eq!(
@@ -1912,7 +1981,7 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# synthe
                 "import sys\nsys.stdin.read()\nsys.stderr.write({diagnostic:?})\nsys.exit(1)"
             ));
             p.runner.executable = Some(executable);
-            let error = generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
+            let error = generate(&p, || false, |_| {}, |_| {})
                 .unwrap_err();
             assert!(error.message.contains(expected), "{}", error.message);
             assert_eq!(error.message.contains("登录"), login, "{}", error.message);
@@ -1927,14 +1996,16 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# synthe
         let (_script, executable) = fake_cli(
             r#"import sys, pathlib
 sys.stdin.read()
-sys.stderr.write('x' * (5 * 1024 * 1024) + '\nread completed\n')
-sys.stdout.write('x' * (5 * 1024 * 1024))
+for _ in range(70):
+    sys.stderr.write('x' * (1024 * 1024))
+    sys.stdout.write('x' * (1024 * 1024))
+sys.stderr.write('\nread completed\n')
 args = sys.argv[1:]
 pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('# Completed', encoding='utf-8')"#,
         );
         p.runner.executable = Some(executable);
         assert_eq!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap(),
+            generate(&p, || false, |_| {}, |_| {}).unwrap(),
             "# Completed"
         );
         let (_script, executable) = fake_cli(
@@ -1944,8 +2015,7 @@ sys.stderr.write('x' * (5 * 1024 * 1024) + '\nactual failure\n')
 sys.exit(3)"#,
         );
         p.runner.executable = Some(executable);
-        let error =
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5)).unwrap_err();
+        let error = generate(&p, || false, |_| {}, |_| {}).unwrap_err();
         assert!(error.message.contains("actual failure"));
         assert!(error.message.len() < 2000);
         let (_script, executable) = fake_cli(
@@ -1955,17 +2025,144 @@ args = sys.argv[1:]
 pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('x' * (5 * 1024 * 1024))"#,
         );
         p.runner.executable = Some(executable);
-        assert!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
-                .unwrap_err()
-                .message
-                .contains("输出过大")
+        assert_eq!(
+            generate(&p, || false, |_| {}, |_| {}).unwrap().len(),
+            5 * 1024 * 1024
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn cli_failure_empty_response_timeout_and_cancel_preserve_previous_knowledge() {
+    fn long_and_quiet_generation_and_repairs_continue_past_the_former_deadline() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let report = test_report("长任务的知识正文。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys, time, pathlib
+sys.stdin.read()
+time.sleep(0.6)
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text({report:?},encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        let issue = fail("具体引用需要核对");
+        for correction in [None, Some(("旧草稿", &issue))] {
+            let notes = std::cell::RefCell::new(Vec::new());
+            let drafts = std::cell::RefCell::new(Vec::new());
+            // Advance the same production clock by 45 minutes without a 45-minute test.
+            let started = Instant::now() - Duration::from_secs(45 * 60);
+            let result = generate_draft(
+                &p,
+                || false,
+                |note| notes.borrow_mut().push(note.to_string()),
+                |draft| drafts.borrow_mut().push(draft.to_string()),
+                started,
+                correction,
+            )
+            .unwrap();
+            assert_eq!(result, report);
+            assert!(notes
+                .borrow()
+                .iter()
+                .any(|note| note.contains("45 分") && note.contains("任务继续")));
+            assert_eq!(drafts.borrow().last().unwrap(), &report);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_and_tool_failure_retain_received_body_without_publishing_it() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        for cancel in [true, false] {
+            let (_script, executable) = fake_cli(&format!(
+                r#"import sys, pathlib, time
+sys.stdin.read()
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 未完成正文\n已收到的知识必须保留。',encoding='utf-8')
+time.sleep({})
+sys.stderr.write('synthetic tool failure')
+sys.exit(3)
+"#,
+                if cancel { 30.0 } else { 0.2 }
+            ));
+            p.runner.executable = Some(executable);
+            let drafts = std::cell::RefCell::new(Vec::new());
+            let started = Instant::now();
+            let error = generate(
+                &p,
+                || cancel && started.elapsed() > Duration::from_millis(500),
+                |_| {},
+                |draft| drafts.borrow_mut().push(draft.to_string()),
+            )
+            .unwrap_err();
+            assert!(error.message.contains(if cancel {
+                "取消"
+            } else {
+                "synthetic tool failure"
+            }));
+            assert!(drafts
+                .borrow()
+                .last()
+                .unwrap()
+                .contains("已收到的知识必须保留"));
+            assert!(started.elapsed() < Duration::from_secs(5));
+            assert_eq!(
+                std::fs::read(p.input.path.join("README.md")).unwrap(),
+                before
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_still_works_when_a_descendant_keeps_output_pipes_open() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let (_script, executable) = fake_cli("import sys, subprocess\nsys.stdin.read()\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n");
+        p.runner.executable = Some(executable);
+        let started = Instant::now();
+        let error = generate(
+            &p,
+            || started.elapsed() > Duration::from_millis(500),
+            |_| {},
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(error.message.contains("取消"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn text_stdout_runners_keep_received_body_on_success_and_failure() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        p.runner.id = "pi".into();
+        for success in [true, false] {
+            let (_script, executable) = fake_cli(&format!("import sys\nsys.stdin.read()\nsys.stdout.write('正文' * (2 * 1024 * 1024))\nsys.stdout.flush()\nsys.exit({})", if success {0} else {3}));
+            p.runner.executable = Some(executable);
+            let retained = std::cell::RefCell::new(String::new());
+            let result = generate(
+                &p,
+                || false,
+                |_| {},
+                |draft| *retained.borrow_mut() = draft.to_string(),
+            );
+            assert!(retained.borrow().len() > 4 * 1024 * 1024);
+            if success {
+                assert_eq!(result.unwrap(), *retained.borrow());
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_failure_empty_response_and_cancel_preserve_previous_knowledge() {
         let (_tmp, root, data) = fixture();
         let mut p = prepared(&data, &root);
         let original = std::fs::read(p.input.path.join(note_path(&p))).unwrap();
@@ -1973,36 +2170,24 @@ pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('x' * (5 
             "import sys\nsys.stdin.read()\nsys.stderr.write('not logged in')\nsys.exit(3)",
         );
         p.runner.executable = Some(executable);
-        assert!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
-                .unwrap_err()
-                .message
-                .contains("not logged in")
-        );
+        assert!(generate(&p, || false, |_| {}, |_| {})
+            .unwrap_err()
+            .message
+            .contains("not logged in"));
         let (_script2, executable) = fake_cli("import sys, pathlib\nsys.stdin.read()\npathlib.Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('')");
         p.runner.executable = Some(executable);
-        assert!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_secs(5))
-                .unwrap_err()
-                .message
-                .contains("未返回")
-        );
+        assert!(generate(&p, || false, |_| {}, |_| {})
+            .unwrap_err()
+            .message
+            .contains("未返回"));
         let (_script3, executable) = fake_cli("import sys, time\nsys.stdin.read()\ntime.sleep(30)");
         p.runner.executable = Some(executable);
-        let started = Instant::now();
-        assert!(
-            generate_with_timeout(&p, || false, |_| {}, Duration::from_millis(250))
-                .unwrap_err()
-                .message
-                .contains("已停止")
-        );
-        assert!(started.elapsed() < Duration::from_secs(5));
         let cancel_after = Instant::now();
-        assert!(generate_with_timeout(
+        assert!(generate(
             &p,
             || cancel_after.elapsed() > Duration::from_millis(250),
             |_| {},
-            Duration::from_secs(5)
+            |_| {}
         )
         .unwrap_err()
         .message

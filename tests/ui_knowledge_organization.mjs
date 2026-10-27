@@ -207,6 +207,17 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await waitFor("document.querySelector('[data-organize-message]').textContent.includes('已取消') && document.querySelector('[data-organize-cancel]').hidden && !document.querySelector('[data-organize-start]').disabled");
   await assert(`window.knowledgeOrganization.calls.cancel.every(id=>id===${JSON.stringify(cancelled)}) && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && document.querySelector('[data-organize-draft]').hidden`,'Cancellation changed the saved report or targeted another task');
 
+  const partial=await start();
+  await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(partial)},'cancelled','# 中途收到的正文\n保留内容。'+f.injection);f.latest.result.report_partial=true;}`);
+  await waitFor("!document.querySelector('[data-organize-draft]').hidden && !document.querySelector('[data-organize-start]').disabled");
+  await assert("document.querySelector('[data-organize-draft] summary').textContent.includes('未完成') && document.querySelector('[data-organize-draft] pre').textContent.includes('中途收到的正文') && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Cancellation discarded received body or published an incomplete report');
+  await assert("document.querySelector('[data-organize-runtime]').textContent.includes('不限运行时长')",'Runtime policy is not visible');
+  await noInjection();
+  await visitHistory();
+  await evaluate(`document.querySelector('[data-job-open="${partial}"]').click()`);
+  await assert("document.querySelector('[data-detail-body]').textContent.includes('未完成的正文草稿')",'History hides the incomplete status');
+  await noInjection();await visitKnowledge();
+
   // An initial status error has a usable retry button.
   await visitHistory();
   await evaluate("window.knowledgeOrganization.failStatus=1;location.hash='#/projects/knowledge-fixture/knowledge'");
