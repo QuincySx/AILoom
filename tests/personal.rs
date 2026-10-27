@@ -96,6 +96,289 @@ fn make_repo(c: &Ctx, name: &str) -> PathBuf {
     repo
 }
 
+fn init_knowledge(c: &Ctx, ws: &Path) {
+    let knowledge = c.tmp.path().join("knowledge");
+    c.run_json(
+        ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "knowledge",
+            "--action",
+            "init",
+            "--path",
+            knowledge.to_str().unwrap(),
+        ],
+    );
+}
+
+fn enable_knowledge_host(c: &Ctx, ws: &Path, host: &str, state: &str) {
+    c.run_json(
+        ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "select",
+            "--repo",
+            ws.to_str().unwrap(),
+            "--host",
+            host,
+            "--state",
+            state,
+        ],
+    );
+}
+
+#[test]
+fn bound_knowledge_deploys_main_session_instructions_without_team_or_personal_entry() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    let baseline = "# 项目规范\n\n遵守既有流程\n";
+    std::fs::write(ws.join("AGENTS.md"), baseline).unwrap();
+    std::fs::write(ws.join("CLAUDE.md"), "# Claude 规范\n").unwrap();
+    ailoom::gitx::git_commit_all(&ws, "baseline", &["AGENTS.md", "CLAUDE.md"]).unwrap();
+    enable_knowledge_host(&c, &ws, "codex", "enable");
+    enable_knowledge_host(&c, &ws, "claude", "enable");
+    // No knowledge binding: choosing a host alone must not inject instructions.
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    assert!(!ws.join("AGENTS.override.md").exists());
+    init_knowledge(&c, &ws);
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    let view = std::fs::read_to_string(ws.join("AGENTS.override.md")).unwrap();
+    assert!(view.contains(baseline.trim_end()), "本地视图包含原项目规范");
+    assert!(view.contains(ailoom::adapters::builtin::RECALL_INSTRUCTIONS));
+    let claude = std::fs::read_to_string(ws.join(".claude/rules/ailoom-personal.md")).unwrap();
+    assert!(claude.contains(ailoom::adapters::builtin::RECALL_INSTRUCTIONS));
+    assert_eq!(
+        std::fs::read_to_string(ws.join("AGENTS.md")).unwrap(),
+        baseline
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.join("CLAUDE.md")).unwrap(),
+        "# Claude 规范\n"
+    );
+    assert!(!ws.join(".ailoom/project.toml").exists(), "不要求团队源");
+    let located = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "knowledge",
+            "--action",
+            "locate",
+            "--query",
+            ws.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(located["status"], "found", "空检索后的当前仓库索引入口可用");
+    // A sync after a baseline change must rebuild the view without losing the policy.
+    std::fs::write(ws.join("AGENTS.md"), "# 新规范\n新增约束\n").unwrap();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    let updated = std::fs::read_to_string(ws.join("AGENTS.override.md")).unwrap();
+    assert!(updated.contains("新增约束"));
+    assert_eq!(updated.matches("### 项目开发知识（AILoom）").count(), 1);
+    enable_knowledge_host(&c, &ws, "codex", "disable");
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    assert!(
+        !ws.join("AGENTS.override.md").exists(),
+        "禁用宿主后清理本地视图"
+    );
+    assert!(ws.join(".claude/rules/ailoom-personal.md").exists());
+}
+
+#[test]
+fn knowledge_instructions_preserve_personal_entry_and_unmanaged_override() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    init_knowledge(&c, &ws);
+    enable_knowledge_host(&c, &ws, "codex", "enable");
+    let input = c.tmp.path().join("personal.md");
+    std::fs::write(&input, "个人维护的偏好\n").unwrap();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "instructions",
+            "--file",
+            input.to_str().unwrap(),
+        ],
+    );
+    let existing = "# 人工维护的本地覆盖\n";
+    std::fs::write(ws.join("AGENTS.override.md"), existing).unwrap();
+    let plan = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "plan",
+        ],
+    );
+    assert!(plan["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|a| a["action"] == "conflict" && a["path"] == "AGENTS.override.md"));
+    assert_eq!(
+        std::fs::read_to_string(ws.join("AGENTS.override.md")).unwrap(),
+        existing
+    );
+    // Moving the user's file aside allows normal managed deployment without overwriting it.
+    std::fs::rename(ws.join("AGENTS.override.md"), ws.join("manual-override.md")).unwrap();
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    let view = std::fs::read_to_string(ws.join("AGENTS.override.md")).unwrap();
+    assert!(view.contains("个人维护的偏好"));
+    assert_eq!(view.matches("### 项目开发知识（AILoom）").count(), 1);
+    assert_eq!(
+        std::fs::read_to_string(ws.join("manual-override.md")).unwrap(),
+        existing
+    );
+}
+
+#[test]
+fn knowledge_defaults_do_not_block_hosts_without_instruction_support() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    init_knowledge(&c, &ws);
+    enable_knowledge_host(&c, &ws, "alva", "enable");
+    c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+        ],
+    );
+    assert!(!ws.join("AGENTS.override.md").exists());
+}
+
+#[test]
+fn knowledge_usage_in_worktree_subproject_keeps_the_shared_binding_and_scope() {
+    let c = Ctx::new();
+    let ws = make_repo(&c, "project");
+    init_knowledge(&c, &ws);
+    enable_knowledge_host(&c, &ws, "codex", "enable");
+    let wt = c.tmp.path().join("feature");
+    ailoom::gitx::git(
+        &ws,
+        &["worktree", "add", "-qb", "feature", wt.to_str().unwrap()],
+    )
+    .unwrap();
+    let sub = wt.join("packages/module");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join("AGENTS.md"), "# 模块约束\n").unwrap();
+    c.run_json(
+        &wt,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+            "--root",
+            wt.to_str().unwrap(),
+            "--scope",
+            "packages/module",
+        ],
+    );
+    let view = std::fs::read_to_string(sub.join("AGENTS.override.md")).unwrap();
+    assert!(view.contains("模块约束"));
+    assert!(view.contains(ailoom::adapters::builtin::RECALL_INSTRUCTIONS));
+    assert!(!ws.join("AGENTS.override.md").exists());
+    assert!(!wt.join("AGENTS.override.md").exists());
+    let original = c.run_json(
+        &ws,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "knowledge",
+            "--action",
+            "status",
+        ],
+    );
+    let scoped = c.run_json(
+        &sub,
+        &[
+            "--json",
+            "--data-root",
+            &c.dr(),
+            "knowledge",
+            "--action",
+            "status",
+        ],
+    );
+    assert_eq!(
+        original["location"], scoped["location"],
+        "检索指令不另建 Worktree 知识库"
+    );
+}
+
 #[test]
 fn missing_locked_team_source_blocks_writes_and_preserves_deployed_files() {
     let c = Ctx::new();

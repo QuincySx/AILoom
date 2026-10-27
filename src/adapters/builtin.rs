@@ -10,6 +10,7 @@ pub const RECALL_HINT_ID: &str = "ailoom-builtin/recall-hint";
 
 const RECALL_AGENT_MD: &str = include_str!("res/recall-agent.md");
 const SHARE_LEARNING_SKILL_MD: &str = include_str!("res/share-learning-skill.md");
+pub const RECALL_INSTRUCTIONS: &str = include_str!("res/recall-instructions.md");
 
 /// 渲染内置资源产物（目标工具启用且未被声明关闭时）。
 /// 文件内容与 AILoom 内置 Skill 完全一致：说明它由同步部署且未被改动（扫描时按托管展示）。
@@ -23,6 +24,15 @@ pub fn render(targets: &ToolTargets, builtins_enabled: bool) -> Vec<Artifact> {
     }
     let mut artifacts = Vec::new();
     if targets.claude {
+        artifacts.push(Artifact {
+            resource_id: RECALL_HINT_ID.into(),
+            target_tool: "claude".into(),
+            kind: "rule".into(),
+            path: ".claude/rules/ailoom-knowledge.md".into(),
+            body: ArtifactBody::Full {
+                content: RECALL_INSTRUCTIONS.into(),
+            },
+        });
         artifacts.push(Artifact {
             resource_id: RECALL_AGENT_ID.into(),
             target_tool: "claude".into(),
@@ -43,14 +53,14 @@ pub fn render(targets: &ToolTargets, builtins_enabled: bool) -> Vec<Artifact> {
         });
     }
     if targets.codex {
-        // Codex 无项目级自定义 Agent（能力矩阵 unknown）：以受管片段提示手动入口
+        // 主会话直接获得检索流程，不依赖模型先决定是否调用召回 Agent。
         artifacts.push(Artifact {
             resource_id: RECALL_HINT_ID.into(),
             target_tool: "codex".into(),
             kind: "doc".into(),
             path: "AGENTS.md".into(),
             body: ArtifactBody::Fragment {
-                content: "### 团队知识检索（AILoom）\n\n需要团队经验时运行：`ailoom recall --query \"<关键词>\"`。任务需要其他仓库知识时，先用 `ailoom knowledge --action locate --query \"<仓库名、Git 地址或路径>\"` 定位，再用返回的仓库作为 --root 查询；各仓库知识独立。可关闭：ailoom init --no-builtin".into(),
+                content: format!("{RECALL_INSTRUCTIONS}\n可关闭：ailoom init --no-builtin"),
             },
         });
     }

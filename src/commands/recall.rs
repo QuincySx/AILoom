@@ -103,6 +103,7 @@ pub fn run(args: &RecallArgs, json: bool, data_root: Option<&std::path::Path>) -
         "index_version": index.meta.revision,
         "fingerprint": crate::knowledge::index::fingerprint(&desired),
         "documents": index.documents.len(),
+        "source_root": snapshot.root,
         "results": hits,
         "archived_filtered": archived_count,
         "note": "索引过滤是相关性隔离，不构成访问控制",

@@ -46,6 +46,24 @@ impl Ctx {
     fn dr(&self) -> String {
         self.tmp.path().join("data").to_string_lossy().to_string()
     }
+    fn run_json_knowledge_init(&self, ws: &Path) {
+        let path = self.tmp.path().join("knowledge");
+        let (code, _, stderr) = self.run(
+            ws,
+            &[
+                "--data-root",
+                &self.dr(),
+                "knowledge",
+                "--action",
+                "init",
+                "--root",
+                ws.to_str().unwrap(),
+                "--path",
+                path.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(code, 0, "{stderr}");
+    }
 }
 
 fn setup_ws(c: &Ctx) -> PathBuf {
@@ -80,7 +98,10 @@ fn builtins_deployed_with_sync() {
     assert!(agent.is_file(), "召回 Agent 未部署");
     let text = std::fs::read_to_string(&agent).unwrap();
     assert!(text.contains("name: ailoom-recall"));
-    assert!(text.contains("ailoom recall"), "Agent 指导使用手动命令");
+    assert!(
+        text.contains("ailoom --json recall"),
+        "Agent 指导使用检索命令"
+    );
     assert!(text.contains("软约束"), "明确标注软约束");
     // 经验总结 Skill
     let skill = ws.join(".claude/skills/ailoom-share-learning/SKILL.md");
@@ -96,7 +117,14 @@ fn builtins_deployed_with_sync() {
     );
     // Codex 手动入口片段
     let agents = std::fs::read_to_string(ws.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("ailoom recall"), "Codex 手动入口片段");
+    assert!(
+        agents.contains("ailoom --json recall"),
+        "Codex 检索入口片段"
+    );
+    let main_rule = std::fs::read_to_string(ws.join(".claude/rules/ailoom-knowledge.md"))
+        .expect("Claude 主会话也必须加载检索流程，不能只依赖可选子代理");
+    assert!(main_rule.contains("source_path"));
+    assert!(main_rule.contains("当前代码"));
 }
 
 #[test]
@@ -126,6 +154,26 @@ fn no_builtin_flag_skips_deployment() {
         "关闭后不部署内置 Agent"
     );
     assert!(!ws.join(".claude/skills/ailoom-share-learning").exists());
+    assert!(!ws.join(".claude/rules/ailoom-knowledge.md").exists());
+    c.run_json_knowledge_init(&ws);
+    let (code, _, stderr) = c.run(
+        &ws,
+        &[
+            "--data-root",
+            &c.dr(),
+            "personal",
+            "--action",
+            "sync",
+            "--root",
+            ws.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !ws.join("AGENTS.override.md").exists(),
+        "个人模式也尊重显式关闭内置资源"
+    );
+    assert!(!ws.join(".claude/rules/ailoom-personal.md").exists());
 }
 
 #[test]
@@ -162,6 +210,15 @@ fn recall_manual_entry_always_available() {
     assert_eq!(code, 0, "{stderr}");
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert!(!v["result"]["results"].as_array().unwrap().is_empty());
+    let source_root = Path::new(v["result"]["source_root"].as_str().unwrap());
+    for hit in v["result"]["results"].as_array().unwrap() {
+        assert!(
+            source_root
+                .join(hit["source_path"].as_str().unwrap())
+                .is_file(),
+            "检索结果必须能定位可读取的正文"
+        );
+    }
     // 无匹配：明确空态，不报错
     let (code, stdout, _) = c.run(
         &ws,

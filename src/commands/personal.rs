@@ -705,11 +705,40 @@ pub fn prepare_personal(
         ));
     }
 
-    // 个人指令条目（AIL-042）：Codex 替代视图按作用域取最近基线（子项目用其目录内基线）
-    let entry = pi::load_entry(data_root_resolved, &repo_id, Some(wt_id.as_str()));
+    // 已绑定知识库的项目也必须有主会话检索入口；不依赖团队源或手写个人提示词。
+    // 继续使用个人指令产物，保留公司基线与现有手写内容，统一接受计划/冲突/卸载保护。
+    let mut entry = pi::load_entry(data_root_resolved, &repo_id, Some(wt_id.as_str()));
+    let builtins_enabled = ctx
+        .declaration_path()
+        .map(|p| crate::config::ProjectDeclaration::load(&p))
+        .transpose()?
+        .flatten()
+        .is_none_or(|d| d.builtins);
+    let has_knowledge = builtins_enabled
+        && crate::knowledge::location::is_initialized(data_root_resolved, &scope_dir)?;
+    let mut instruction_hosts = enabled_hosts.clone();
+    if has_knowledge {
+        if entry.is_none() {
+            // 未支持指令加载的宿主仍可部署能力，不因默认知识提示而阻断整次同步。
+            instruction_hosts.retain(|h| {
+                h == "claude" || h == "codex" || crate::adapters::hosts::lookup(h).is_some()
+            });
+        }
+        let content = entry.get_or_insert_with(String::new);
+        if !content.trim().is_empty() {
+            content.push_str("\n\n");
+        }
+        content.push_str(crate::adapters::builtin::RECALL_INSTRUCTIONS);
+        notes.push(if instruction_hosts.is_empty() {
+            "项目已绑定知识库，尚无启用且支持指令入口的宿主；需要选择宿主并同步才能部署检索指令".into()
+        } else {
+            format!("项目知识检索指令纳入以下宿主的同步计划：{}；是否实际阅读仍以会话工具调用与引用为准", instruction_hosts.join("、"))
+        });
+    }
+    // Codex 替代视图按作用域取最近基线（子项目用其目录内基线）。
     let instr_artifacts = match entry {
         Some(content) => {
-            let mut arts = pi::render(&scope_dir, &enabled_hosts, &content)?;
+            let mut arts = pi::render(&scope_dir, &instruction_hosts, &content)?;
             if let Some(rel) = &active_rel {
                 for a in &mut arts {
                     a.path = PathBuf::from(rel).join(&a.path);
