@@ -313,6 +313,7 @@ pub(super) struct OrganizationInput {
     pub previous_documents: Vec<wiki::Page>,
     pub excluded_documents: Vec<PathBuf>,
     pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
+    pub historical_origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     pub worktrees: Vec<ingest::Source>,
     fingerprint: String,
 }
@@ -338,7 +339,14 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
     layout::validate_project(&tree, &project_id)?;
     let report_path = PathBuf::from("README.md");
     let origins = ingest::current_documents(&tree, &project_id)?;
-    let recorded = ingest::recorded_paths(&tree, &project_id)?;
+    let recorded = ingest::recorded_origins(&tree, &project_id)?;
+    let historical_origins: BTreeMap<_, _> = recorded
+        .iter()
+        .filter(|(p, _)| {
+            !origins.contains_key(*p) && !archived.iter().any(|id| *p == Path::new(id))
+        })
+        .map(|(p, origins)| (p.clone(), origins.clone()))
+        .collect();
     let previous_documents = wiki::current(&tree, &project_id)?;
     let single_owner = wiki::single_owner(&cat, b, &tree, &project_id);
     let excluded_documents = tree
@@ -353,7 +361,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
                 && !p.starts_with("imports")
                 && !p.starts_with("resources")
                 && !p.starts_with("docs/organized")
-                && !recorded.contains(*p)
+                && !recorded.contains_key(*p)
                 && !wiki::source_owned(p, bytes, &project_id, single_owner)
         })
         .map(|(p, _)| p.clone())
@@ -381,8 +389,18 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         .iter()
         .map(|p| (p.path.clone(), crate::ids::sha256_hex(&tree[&p.path])))
         .collect();
+    let historical_hashes: BTreeMap<_, _> = historical_origins
+        .keys()
+        .map(|p| {
+            (
+                p.clone(),
+                tree.get(p).map(|bytes| crate::ids::sha256_hex(bytes)),
+            )
+        })
+        .collect();
     let fingerprint = crate::ids::sha256_hex(&serde_json::to_vec(
-        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report,"page_set":previous_documents,"pages":previous_hashes,"origins":origins}),
+        &json!({"knowledge_id":b.id,"project_id":project_id,"documents":hashes(&documents),"previous":previous_report,"page_set":previous_documents,"pages":previous_hashes,"origins":origins,
+            "historical_origins":historical_origins,"historical_hashes":historical_hashes}),
     )?);
     Ok(OrganizationInput {
         knowledge_id: b.id.clone(),
@@ -396,6 +414,7 @@ fn organization_input_unlocked(data: &Path, root: &Path) -> Result<OrganizationI
         previous_documents,
         excluded_documents,
         origins,
+        historical_origins,
         worktrees,
         fingerprint,
     })

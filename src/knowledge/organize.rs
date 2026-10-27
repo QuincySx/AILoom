@@ -189,6 +189,7 @@ fn manifest(prepared: &Prepared) -> Value {
         "knowledge_directory":input.path,
         "source_documents":input.documents,
         "source_origins":input.origins,
+        "historical_source_origins":input.historical_origins,
         "worktrees":input.worktrees,
         "collection":prepared.collection,
         "previous_report":input.previous_report.as_ref().map(|_| if input.path.join(&input.report_path).is_file() { input.report_path.clone() } else if input.path.join(location::legacy_wiki_index(&input.project_id)).is_file() {location::legacy_wiki_index(&input.project_id)} else {PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))}),
@@ -522,6 +523,164 @@ mod tests {
 
     fn test_report(body: &str) -> String {
         format!("# 仓库开发知识\n\n## index\n\n[迁移](#topic-migration)\n\n## overview\n\n测试资料范围。\n\n## topics\n\n### topic-migration\n\n主题：数据库迁移。\n\n{body}\n\n## maintenance\n\n参见[迁移](#topic-migration)。\n\n## questions\n\n无。\n\n## sources\n\n测试来源。\n\n## changes\n\n首次编纂。\n\n## validation\n\n尚未经独立评估。\n")
+    }
+
+    fn historical_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, Prepared, PathBuf) {
+        let (tmp, root, data) = fixture();
+        std::fs::write(root.join("decision.md"), "# Decision\nold-quota-constraint").unwrap();
+        let mut p = prepared(&data, &root);
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        let old = p.input.origins.keys().next().unwrap().clone();
+        std::fs::write(root.join("decision.md"), "# Decision\nquota lifted").unwrap();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        (tmp, root, data, p, old)
+    }
+
+    #[test]
+    fn historical_originals_can_be_cited_without_becoming_current_candidates() {
+        let (_tmp, root, data, p, old) = historical_fixture();
+        assert_eq!(p.source_count(), 2);
+        assert!(!p.input.documents.contains(&old));
+        assert!(!p.input.excluded_documents.contains(&old));
+        assert_eq!(
+            p.input.historical_origins[&old][0].document,
+            Path::new("decision.md")
+        );
+        let work = tempfile::tempdir().unwrap();
+        let startup = task::prepare(&p, work.path()).unwrap();
+        assert!(startup.len() < 64 * 1024);
+        let entry: Value =
+            serde_json::from_str(startup.rsplit("## 本次任务入口\n\n").next().unwrap()).unwrap();
+        let task: Value =
+            serde_json::from_slice(&std::fs::read(entry["task_index"].as_str().unwrap()).unwrap())
+                .unwrap();
+        let rows: Vec<Value> = task["historical_source_origins"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|file| {
+                serde_json::from_slice::<Vec<Value>>(
+                    &std::fs::read(file.as_str().unwrap()).unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["document"], json!(old));
+        assert_eq!(rows[0]["origin"]["document"], "decision.md");
+        // The failed real draft linked an old snapshot only to disclose that it was not read/adopted.
+        let report = test_report("Current module knowledge").replace(
+            "测试来源。",
+            &format!(
+                "[旧快照](../../{})仍被旧来源页引用；本轮未核正文，不纳当前证据。",
+                old.display()
+            ),
+        );
+        publish(&data, &p, &report).unwrap();
+        let sources = std::fs::read_to_string(p.input.path.join("wiki/sources.md")).unwrap();
+        assert!(sources.contains(&format!("[旧快照](../{})", old.display())));
+        assert!(sources.contains("本轮未核正文，不纳当前证据"));
+        assert_eq!(prepared(&data, &root).source_count(), 2);
+        // Topic citations to historical evidence are also valid, with historical scope retained.
+        let p = prepared(&data, &root);
+        publish(
+            &data,
+            &p,
+            &test_report(&format!(
+                "历史约束，尚未核对当前适用性：[原文](../../{})",
+                old.display()
+            )),
+        )
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(p.input.path.join("wiki/topic-migration.md"))
+                .unwrap()
+                .contains("历史约束，尚未核对当前适用性")
+        );
+    }
+
+    #[test]
+    fn historical_citations_check_integrity_and_preserve_existing_pages_on_failure() {
+        let (_tmp, root, data, p, old) = historical_fixture();
+        let snapshot = p.input.path.join(&old);
+        let original = std::fs::read(&snapshot).unwrap();
+        let home = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let report = test_report(&format!("[历史](../../{})", old.display()));
+        std::fs::write(&snapshot, "modified after generation started").unwrap();
+        assert!(publish(&data, &p, &report)
+            .unwrap_err()
+            .message
+            .contains("内容已变化"));
+        let p = prepared(&data, &root);
+        let error = publish(&data, &p, &report).unwrap_err();
+        assert!(error.message.contains("历史原文内容与采集记录不符"));
+        assert!(error.message.contains(old.to_str().unwrap()));
+        assert_eq!(std::fs::read(p.input.path.join("README.md")).unwrap(), home);
+        // Unused broken history does not prevent organizing intact current evidence.
+        publish(&data, &p, &test_report("intact current evidence")).unwrap();
+        let home = std::fs::read(p.input.path.join("README.md")).unwrap();
+        std::fs::remove_file(&snapshot).unwrap();
+        let p = prepared(&data, &root);
+        let error = publish(&data, &p, &report).unwrap_err();
+        assert!(error.message.contains("已登记的原文缺失"));
+        assert!(error.message.contains(old.to_str().unwrap()));
+        assert_eq!(std::fs::read(p.input.path.join("README.md")).unwrap(), home);
+        let topic = std::fs::read(p.input.path.join("wiki/topic-migration.md")).unwrap();
+        std::fs::write(&snapshot, original).unwrap();
+        let p = prepared(&data, &root);
+        let ctx = location::maintenance_context(&data, &root)
+            .unwrap()
+            .unwrap();
+        super::super::feedback::archive(&ctx, old.to_str().unwrap()).unwrap();
+        assert!(publish(&data, &p, &report)
+            .unwrap_err()
+            .message
+            .contains("内容已变化"));
+        let p = prepared(&data, &root);
+        assert!(!p.input.historical_origins.contains_key(&old));
+        let error = publish(&data, &p, &report).unwrap_err();
+        assert!(
+            error.message.contains("停用状态") && error.message.contains(old.to_str().unwrap())
+        );
+        assert_eq!(
+            std::fs::read(p.input.path.join("wiki/topic-migration.md")).unwrap(),
+            topic
+        );
+    }
+
+    #[test]
+    fn unresolved_source_links_identify_the_file_and_reason() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        std::fs::create_dir_all(p.input.path.join("resources")).unwrap();
+        std::fs::write(
+            p.input.path.join("resources/generated.md"),
+            "not original evidence",
+        )
+        .unwrap();
+        let unregistered = format!(
+            "sources/{}.md",
+            crate::ids::sha256_hex(b"unregistered original")
+        );
+        std::fs::write(p.input.path.join(&unregistered), "unregistered original").unwrap();
+        let p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        for (path, reason) in [
+            ("sources/missing.md", "文件不存在"),
+            ("resources/generated.md", "文件存在，但未登记"),
+            ("projects/another/learnings/private.md", "未登记为本项目"),
+            ("%2e%2e/other-project/sources/note.md", "路径无效或越界"),
+            (unregistered.as_str(), "文件存在，但未登记"),
+        ] {
+            let error =
+                publish(&data, &p, &test_report(&format!("[来源](../../{path})"))).unwrap_err();
+            assert!(error.message.contains(reason), "{}", error.message);
+            assert!(error.message.contains(path), "{}", error.message);
+            assert_eq!(
+                std::fs::read(p.input.path.join("README.md")).unwrap(),
+                before
+            );
+        }
     }
 
     #[test]

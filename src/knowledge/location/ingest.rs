@@ -60,13 +60,21 @@ fn manifest(tree: &Tree, project: &str) -> Result<Manifest> {
     Ok(m)
 }
 
-/// Every recorded snapshot has a known owner, including historical revisions.
-pub(super) fn recorded_paths(tree: &Tree, project: &str) -> Result<BTreeSet<PathBuf>> {
-    Ok(manifest(tree, project)?
-        .records
-        .into_iter()
-        .map(|record| layout::source(tree, project, &record.hash))
-        .collect())
+/// Historical ownership is retained; a cited snapshot's bytes must still be checked.
+pub(super) fn recorded_origins(
+    tree: &Tree,
+    project: &str,
+) -> Result<BTreeMap<PathBuf, Vec<Origin>>> {
+    let mut result: BTreeMap<PathBuf, Vec<Origin>> = BTreeMap::new();
+    for record in manifest(tree, project)?.records {
+        let origins = result
+            .entry(layout::source(tree, project, &record.hash))
+            .or_default();
+        if !origins.contains(&record.origin) {
+            origins.push(record.origin);
+        }
+    }
+    Ok(result)
 }
 
 /// Only the latest revision for each worktree/document is current. Historical originals remain on disk.

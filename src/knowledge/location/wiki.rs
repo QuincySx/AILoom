@@ -486,12 +486,16 @@ fn links(
     text: &str,
     from: &Path,
     targets: &BTreeMap<String, PathBuf>,
-    sources: &[PathBuf],
+    input: &OrganizationInput,
     tree: &Tree,
 ) -> Result<String> {
     let mut text = text.to_string();
     // Legacy v1 ledger used `D/<hash>.md` instead of clickable source links.
-    for p in sources {
+    for p in input
+        .documents
+        .iter()
+        .chain(input.historical_origins.keys())
+    {
         let short = format!("`D/{}`", p.file_name().unwrap().to_string_lossy());
         text = text.replace(&short, &format!("[原文](../../{})", p.display()));
     }
@@ -539,11 +543,37 @@ fn links(
                 } else if let Some(p) = dest.strip_prefix("../../") {
                     let (p, fragment) = p.split_once('#').map_or((p, None), |(p, f)| (p, Some(f)));
                     let p = PathBuf::from(decode_path(p)?);
-                    if p.components().any(|c| !matches!(c, Component::Normal(_)))
-                        || !sources.contains(&p)
-                        || !tree.contains_key(&p)
+                    if p.as_os_str().is_empty()
+                        || p.components().any(|c| !matches!(c, Component::Normal(_)))
                     {
-                        return Err(fail("整理稿引用了本项目来源清单以外的文件"));
+                        return Err(fail(format!("整理稿原文链接路径无效或越界：{dest}")));
+                    }
+                    let historical = input.historical_origins.contains_key(&p);
+                    if !input.documents.contains(&p) && !historical {
+                        let reason = if tree.contains_key(&p) {
+                            "文件存在，但未登记为本项目可引用的原文；请核对项目归属、资料类型及停用状态"
+                        } else {
+                            "文件不存在，也未登记为本项目原文；请核对链接或保存来源"
+                        };
+                        return Err(fail(format!(
+                            "整理稿原文引用无法确认：{}（{reason}）",
+                            p.display()
+                        )));
+                    }
+                    let bytes = tree.get(&p).ok_or_else(|| {
+                        fail(format!(
+                            "已登记的原文缺失：{}；请恢复原文后重试",
+                            p.display()
+                        ))
+                    })?;
+                    if historical
+                        && p.file_stem().and_then(|s| s.to_str())
+                            != Some(crate::ids::sha256_hex(bytes).as_str())
+                    {
+                        return Err(fail(format!(
+                            "历史原文内容与采集记录不符：{}；请恢复原文后重试",
+                            p.display()
+                        )));
                     }
                     format!(
                         "{}{}",
@@ -645,7 +675,7 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
     for (id, body) in &topic_parts {
         let path = targets[id].clone();
         let title = topic_title(id, body);
-        let mut body = links(body, &path, &targets, &input.documents, tree)?;
+        let mut body = links(body, &path, &targets, input, tree)?;
         let cited = citations(&body);
         if !cited.is_empty() {
             body.push_str("\n\n## 本页来源定位\n\n");
@@ -672,7 +702,7 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
         ("changes", "本轮变更"),
     ] {
         let path = targets[key].clone();
-        let body = links(&parts[key], &path, &targets, &input.documents, tree)?;
+        let body = links(&parts[key], &path, &targets, input, tree)?;
         let mut content = format!(
             "# {} · {title}\n\n<a id=\"{key}\"></a>\n\n[项目索引]({})\n\n{body}",
             markdown_name(&input.project_name),
@@ -696,15 +726,9 @@ pub(super) fn compile(input: &OrganizationInput, report: &str, tree: &Tree) -> R
     if parts["index"].len() + parts["overview"].len() + parts["validation"].len() > 24 * 1024 {
         return Err(fail("项目索引超过 24 KB，请将正文移至模块主题页"));
     }
-    let index = links(&parts["index"], &entry, &targets, &input.documents, tree)?;
-    let overview = links(&parts["overview"], &entry, &targets, &input.documents, tree)?;
-    let validation = links(
-        &parts["validation"],
-        &entry,
-        &targets,
-        &input.documents,
-        tree,
-    )?;
+    let index = links(&parts["index"], &entry, &targets, input, tree)?;
+    let overview = links(&parts["overview"], &entry, &targets, input, tree)?;
+    let validation = links(&parts["validation"], &entry, &targets, input, tree)?;
     let raw = layout::source_index(tree, &input.project_id);
     let mut content=format!("# {} · 开发知识\n\n[原始资料]({}) · [维护建议](wiki/maintenance.md) · [待核实问题](wiki/questions.md)\n\n可直接编辑本首页或 wiki/ 下的 Markdown，人工与 AI 维护同一份正文。\n\n<a id=\"overview\"></a>\n\n{overview}\n\n<a id=\"index\"></a><a id=\"topics\"></a>\n\n{index}\n\n## 更多入口\n\n",markdown_name(&input.project_name),markdown_path(&raw));
     for p in pages.iter().filter(|p| p.kind != "topic") {
