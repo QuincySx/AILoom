@@ -211,12 +211,37 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(partial)},'cancelled','# 中途收到的正文\n保留内容。'+f.injection);f.latest.result.report_partial=true;}`);
   await waitFor("!document.querySelector('[data-organize-draft]').hidden && !document.querySelector('[data-organize-start]').disabled");
   await assert("document.querySelector('[data-organize-draft] summary').textContent.includes('未完成') && document.querySelector('[data-organize-draft] pre').textContent.includes('中途收到的正文') && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Cancellation discarded received body or published an incomplete report');
-  await assert("document.querySelector('[data-organize-runtime]').textContent.includes('不限运行时长')",'Runtime policy is not visible');
+  await assert("document.querySelector('[data-organize-runtime]').textContent.includes('先规划') && document.querySelector('[data-organize-runtime]').textContent.includes('120 分钟')",'Planning and runtime budget are not visible');
   await noInjection();
   await visitHistory();
   await evaluate(`document.querySelector('[data-job-open="${partial}"]').click()`);
   await assert("document.querySelector('[data-detail-body]').textContent.includes('未完成的正文草稿')",'History hides the incomplete status');
   await noInjection();await visitKnowledge();
+
+  // Budget handoff is resumable and distinct from a failure or published knowledge.
+  const paused=await start();
+  await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(paused)},'success','# 已保留的阶段稿\n模块甲已有证据。'+f.injection);Object.assign(f.latest.result,{needs_continuation:true,report_partial:true,warning:'本轮已收尾 '+f.injection,checkpoint:{plan:'先甲后乙 '+f.injection,batches:[{title:'模块甲 '+f.injection,scope:'代码与来源'},{title:'模块乙',scope:'剩余资料'}],completed:['# 已返回阶段稿 '+f.injection],pending:['# 当前批次的部分成果 '+f.injection]}});}`);
+  await waitFor("document.querySelector('[data-organize-message]').textContent.includes('待继续') && document.querySelector('[data-organize-start]').textContent==='继续整理' && !document.querySelector('[data-organize-fresh]').hidden");
+  await assert("document.querySelector('.knowledge-stages').textContent.includes('已返回 1/2 批') && document.querySelector('.knowledge-stages').textContent.includes('模块乙') && document.querySelector('.knowledge-stages').textContent.includes('当前批次的部分成果') && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Budget handoff loses the plan, pending range or saved Wiki');
+  await noInjection();await visitHistory();
+  await evaluate(`document.querySelector('[data-job-open="${paused}"]').click()`);
+  await assert("document.querySelector('[data-detail-body] .badge').textContent==='待继续' && document.querySelector('[data-detail-body] .badge').classList.contains('warn') && document.querySelector('[data-detail-body] .knowledge-stages').textContent.includes('模块乙')",'History mislabels a budget handoff');
+  await noInjection();await visitKnowledge();
+  const resumed=await start();
+  await assert(`window.knowledgeOrganization.calls.start.at(-1).resume_job_id===${JSON.stringify(paused)}`,'Continue starts over instead of attaching the saved checkpoint');
+  await evaluate("{const f=window.knowledgeOrganization;f.latest.status='running';f.latest.result={saved:false,checkpoint:{plan:'保留计划',batches:[{title:'模块乙',scope:'剩余范围'}],completed:[]}};}");
+  await waitFor("!!document.querySelector('.knowledge-stages')");
+  const beforeProgress=await evaluate("document.querySelector('.knowledge-stages').open=true;window.knowledgeOrganization.latest.result.checkpoint.partial='新返回的阶段正文';window.knowledgeOrganization.calls.poll.length");
+  await waitFor(`window.knowledgeOrganization.calls.poll.length>${beforeProgress+1}`);
+  await assert("document.querySelector('.knowledge-stages').open",'Progress polling closes the plan while the user reads it');
+  await evaluate(`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(resumed)},'cancelled',null);f.latest.result.checkpoint={plan:'保留计划',batches:[],completed:[]};}`);
+  await waitFor("!document.querySelector('[data-organize-fresh]').hidden");
+  const beforeFresh=await evaluate('window.knowledgeOrganization.calls.start.length');
+  await evaluate("document.querySelector('[data-organize-fresh]').click()");
+  await waitFor(`window.knowledgeOrganization.calls.start.length===${beforeFresh+1}`);
+  await assert("window.knowledgeOrganization.calls.start.at(-1).resume_job_id===undefined",'Replan reuses a checkpoint unexpectedly');
+  await evaluate("window.knowledgeOrganization.finish(window.knowledgeOrganization.latest.id,'cancelled',null)");
+  await waitFor("!document.querySelector('[data-organize-start]').disabled");
 
   // An initial status error has a usable retry button.
   await visitHistory();

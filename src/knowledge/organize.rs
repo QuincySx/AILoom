@@ -12,7 +12,10 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+mod runtime;
 mod task;
+mod workflow;
+pub use workflow::Checkpoint;
 
 const RUNNERS: &[(&str, &str, &str)] = &[
     ("codex", "Codex", "codex"),
@@ -120,6 +123,7 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
         "runners":runners(),
         "report_key":input.report_path,
         "worktrees":input.worktrees,
+        "runtime_policy":runtime::policy(),
     }))
 }
 
@@ -128,6 +132,7 @@ pub struct Prepared {
     runner: Runner,
     focus: String,
     collection: Option<Value>,
+    started: Instant,
 }
 
 impl Prepared {
@@ -168,6 +173,7 @@ pub fn prepare(data: &Path, root: &Path, runner: &str, focus: &str) -> Result<Pr
         runner,
         focus: focus.into(),
         collection: None,
+        started: Instant::now(),
     })
 }
 
@@ -369,7 +375,30 @@ pub fn generate(
     progress: impl Fn(&str),
     retain: impl Fn(&str),
 ) -> Result<String> {
-    generate_draft(prepared, cancelled, progress, retain, Instant::now(), None)
+    generate_draft(
+        prepared,
+        cancelled,
+        progress,
+        retain,
+        prepared.started,
+        DraftTask::Compile,
+    )
+}
+
+pub fn generate_planned(
+    prepared: &Prepared,
+    resume: Option<Value>,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+    retain: impl Fn(&Checkpoint),
+) -> Result<String> {
+    workflow::run(prepared, resume, cancelled, progress, retain)
+}
+
+enum DraftTask<'a> {
+    Compile,
+    Repair(&'a str, &'a Error),
+    Stage(&'a str, &'a Value),
 }
 
 fn generate_draft(
@@ -378,19 +407,31 @@ fn generate_draft(
     progress: impl Fn(&str),
     retain: impl Fn(&str),
     started: Instant,
-    correction: Option<(&str, &Error)>,
+    draft_task: DraftTask<'_>,
 ) -> Result<String> {
     if cancelled() {
         return Err(fail("整理已取消，原有知识和整理结果保留"));
     }
     let work = tempfile::tempdir()?;
     let output_path = work.path().join("report.md");
-    // Prepare bounded input before launching any tool; all detail remains in task files.
-    let prompt = if let Some((report, issue)) = correction {
-        task::repair(prepared, work.path(), report, issue)?
+    let control = work.path().join("run-control.json");
+    let stage_started = Instant::now();
+    let target = Duration::from_secs(if matches!(draft_task, DraftTask::Stage("plan", _)) {
+        5 * 60
     } else {
-        task::prepare(prepared, work.path())?
+        runtime::BATCH_MINUTES * 60
+    });
+    if started.elapsed() >= runtime::MAXIMUM {
+        return Err(runtime::paused());
+    }
+    runtime::write_control(&control, started, stage_started, target)?;
+    // Prepare bounded input before launching any tool; all detail remains in task files.
+    let prompt = match &draft_task {
+        DraftTask::Repair(report, issue) => task::repair(prepared, work.path(), report, issue)?,
+        DraftTask::Stage(phase, context) => task::stage(prepared, work.path(), phase, context)?,
+        DraftTask::Compile => task::prepare(prepared, work.path())?,
     };
+    let prompt = task::with_runtime(prompt, &control, started)?;
     let mut child = command(prepared, &output_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -412,21 +453,49 @@ fn generate_draft(
         Arc::clone(&stderr_count),
     );
     let mut last_note = Duration::ZERO;
-    let mut last_activity = Duration::ZERO;
+    let mut last_activity = started.elapsed();
     let mut observed = 0;
     let mut retained_size = 0;
     let mut exited = None;
-    progress(if correction.is_some() {
-        "AI 正在核对具体文件与诊断，修订现有整理稿"
-    } else {
-        "正在自主查找本地 Markdown、阅读资料并核对代码"
-    });
+    let phase_label = match &draft_task {
+        DraftTask::Stage("plan", _) => "制定整理计划".into(),
+        DraftTask::Stage("batch", context) => format!(
+            "编纂本批：{}",
+            context["next_batch"]["title"]
+                .as_str()
+                .unwrap_or("模块知识")
+        ),
+        DraftTask::Stage("synthesize", _) => "汇总阶段稿并核对跨模块关系".into(),
+        DraftTask::Repair(..) => "核对诊断并修订整理稿".into(),
+        _ => "阅读资料并核对代码".into(),
+    };
+    progress(&phase_label);
+    let mut wrap_request = "";
     let outcome = loop {
         if cancelled() {
             terminate(&mut child);
             break Err(fail("整理已取消，已有正文保留为未完成草稿"));
         }
         let elapsed = started.elapsed();
+        let requested = if elapsed >= runtime::WRAP_UP {
+            "round"
+        } else if stage_started.elapsed() >= target {
+            "stage"
+        } else {
+            ""
+        };
+        if !requested.is_empty() && requested != wrap_request {
+            if let Err(error) = runtime::write_control(&control, started, stage_started, target) {
+                terminate(&mut child);
+                break Err(error);
+            }
+            progress(if requested == "round" {
+                "已进入收尾预算：已请求 AI 停止扩大阅读范围，返回阶段稿、未完成范围与下一步；已有批次持续保留"
+            } else {
+                "本阶段已到预估时间，已请求 AI 返回阶段稿及未完成范围；继续等待收尾，不中途丢弃成果"
+            });
+            wrap_request = requested;
+        }
         let report_size = output_path.metadata().map(|m| m.len()).unwrap_or(0);
         let bytes = stdout_count.load(Ordering::Relaxed)
             + stderr_count.load(Ordering::Relaxed)
@@ -440,11 +509,23 @@ fn generate_draft(
             observed = bytes;
         }
         if elapsed.saturating_sub(last_note) >= PROGRESS_INTERVAL {
+            if let Err(error) = runtime::write_control(&control, started, stage_started, target) {
+                terminate(&mut child);
+                break Err(error);
+            }
             progress(&format!(
-                "AI 已运行 {} 分 {} 秒；距最近输出 {} 秒，任务继续，可随时取消",
+                "{}；本轮已运行 {} 分 {} 秒；距最近输出 {} 秒，{}，可随时取消",
+                phase_label,
                 elapsed.as_secs() / 60,
                 elapsed.as_secs() % 60,
-                elapsed.saturating_sub(last_activity).as_secs()
+                elapsed.saturating_sub(last_activity).as_secs(),
+                if elapsed.saturating_sub(last_activity) >= Duration::from_secs(15 * 60) {
+                    "长时间未返回输出，请关注工具状态；任务继续"
+                } else if !wrap_request.is_empty() {
+                    "正在收尾，已有阶段稿保留；任务继续"
+                } else {
+                    "任务继续"
+                }
             ));
             last_note = elapsed;
             if report_size != retained_size {
@@ -465,6 +546,14 @@ fn generate_draft(
         if exited.is_some() && stdout.is_finished() && stderr.is_finished() && writer.is_finished()
         {
             break Ok(exited.take().unwrap());
+        }
+        if elapsed >= runtime::MAXIMUM {
+            // The agent knew the budget from launch and received a wrap-up request 30 minutes ago.
+            // A stuck tool cannot hold the task forever; returned stage results remain in the ledger.
+            retain_candidate(&output_path, &retain);
+            progress("收尾窗口已结束，工具仍未退出；停止本次进程并保留阶段稿，可继续整理");
+            terminate(&mut child);
+            break Err(runtime::paused());
         }
         std::thread::sleep(Duration::from_millis(200));
     };
@@ -555,6 +644,7 @@ pub struct Completion {
     pub saved: bool,
     pub report_path: Option<PathBuf>,
     pub needs_revision: bool,
+    pub needs_continuation: bool,
     pub warning: Option<String>,
     pub repair_attempts: usize,
 }
@@ -580,6 +670,7 @@ pub fn complete(
                     saved: true,
                     report_path: Some(path),
                     needs_revision: false,
+                    needs_continuation: false,
                     warning: None,
                     repair_attempts: attempt,
                 })
@@ -593,6 +684,7 @@ pub fn complete(
                 saved: false,
                 report_path: None,
                 needs_revision: true,
+                needs_continuation: false,
                 warning: Some(format!(
                     "AI 已修订两次，草稿及诊断已保留，仍待修订：{}",
                     issue.message
@@ -609,15 +701,16 @@ pub fn complete(
             &cancelled,
             &progress,
             |draft| retain(draft, None, true),
-            Instant::now(),
-            Some((&report, &issue)),
+            prepared.started,
+            DraftTask::Repair(&report, &issue),
         ) {
             Ok(report) => report,
             Err(error) if !cancelled() => {
                 return Ok(Completion {
                     saved: false,
                     report_path: None,
-                    needs_revision: true,
+                    needs_revision: error.context["kind"] != "organization_budget",
+                    needs_continuation: error.context["kind"] == "organization_budget",
                     warning: Some(format!(
                         "AI 修订未完成，已有草稿及诊断已保留：{}",
                         error.message
@@ -668,6 +761,7 @@ mod tests {
             },
             focus: "数据库维护".into(),
             collection: None,
+            started: Instant::now(),
         }
     }
 
@@ -2047,7 +2141,7 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text({report:?},
         ));
         p.runner.executable = Some(executable);
         let issue = fail("具体引用需要核对");
-        for correction in [None, Some(("旧草稿", &issue))] {
+        for correction in [DraftTask::Compile, DraftTask::Repair("旧草稿", &issue)] {
             let notes = std::cell::RefCell::new(Vec::new());
             let drafts = std::cell::RefCell::new(Vec::new());
             // Advance the same production clock by 45 minutes without a 45-minute test.
@@ -2197,5 +2291,254 @@ sys.exit(3)
             original
         );
         assert!(p.input.path.join(&p.input.report_path).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn planned_batches_are_checkpointed_and_resume_without_repeating_returned_work() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let trace = root.join("phases.txt");
+        let report = test_report("汇总后的证据与知识。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys, pathlib, json, time, re
+prompt=sys.stdin.read()
+assert '总预算 120 分钟' in prompt and '收尾协议' in prompt
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+context=json.loads((output.parent/'stage-context.json').read_text())
+phase=context['phase']
+index=len(context['checkpoint']['completed'])
+with open({trace:?},'a') as log: log.write(phase+':'+str(index)+'\n')
+if phase=='plan':
+    value=json.dumps({{'batches':[{{'title':'模块甲','scope':'先核对模块甲代码与文档'}},{{'title':'模块乙','scope':'核对模块乙约束和历史'}}]}},ensure_ascii=False)
+elif phase=='batch':
+    value='# 模块'+str(index)+'\n实际证据与未完成范围。'
+else:
+    assert [pathlib.Path(row['path']).read_text() for row in context['checkpoint']['completed']]==['# 模块0\n实际证据与未完成范围。','# 模块1\n实际证据与未完成范围。']
+    value={report:?}
+output.write_text(value,encoding='utf-8')
+"#,
+            trace = trace.to_str().unwrap()
+        ));
+        p.runner.executable = Some(executable);
+        let saved = std::cell::RefCell::new(None);
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let first = workflow::run_with_elapsed(
+            &p,
+            None,
+            || false,
+            |_| {},
+            |cp| {
+                let value = json!(cp);
+                if value["completed"].as_array().unwrap().len() == 1 {
+                    elapsed.set(runtime::WRAP_UP);
+                }
+                *saved.borrow_mut() = Some(value);
+            },
+            || elapsed.get(),
+        )
+        .unwrap_err();
+        assert_eq!(first.context["kind"], "organization_budget");
+        let checkpoint = saved.borrow().clone().unwrap();
+        assert_eq!(checkpoint["completed"].as_array().unwrap().len(), 1);
+        assert!(checkpoint["completed"][0]
+            .as_str()
+            .unwrap()
+            .contains("实际证据"));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+        p.started = Instant::now();
+        let result = generate_planned(
+            &p,
+            Some(checkpoint),
+            || false,
+            |_| {},
+            |cp| *saved.borrow_mut() = Some(json!(cp)),
+        )
+        .unwrap();
+        assert_eq!(result, report);
+        assert_eq!(
+            std::fs::read_to_string(trace).unwrap(),
+            "plan:0\nbatch:0\nbatch:1\nsynthesize:2\n"
+        );
+        assert_eq!(
+            saved.borrow().as_ref().unwrap()["completed"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before,
+            "stage results never publish themselves"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wrap_up_is_told_to_the_agent_before_the_last_resort_budget_stop() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, json
+prompt=sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+control=json.loads((output.parent/'run-control.json').read_text())
+assert control['action']=='finish_current_stage'
+assert control['remaining_seconds']>0
+output.write_text('# 已按收尾要求返回\n未完成范围留待下一轮。',encoding='utf-8')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        p.started = Instant::now() - runtime::WRAP_UP;
+        let notes = std::cell::RefCell::new(Vec::new());
+        assert!(generate(
+            &p,
+            || false,
+            |n| notes.borrow_mut().push(n.to_string()),
+            |_| {}
+        )
+        .unwrap()
+        .contains("按收尾要求返回"));
+        assert!(notes.borrow().iter().any(|n| n.contains("收尾预算")));
+
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, time
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+output.write_text('# 已收到的本阶段正文',encoding='utf-8')
+time.sleep(30)
+"#,
+        );
+        p.runner.executable = Some(executable);
+        p.started = Instant::now() - runtime::MAXIMUM + Duration::from_millis(1500);
+        let retained = std::cell::RefCell::new(String::new());
+        let now = Instant::now();
+        let error =
+            generate(&p, || false, |_| {}, |s| *retained.borrow_mut() = s.into()).unwrap_err();
+        assert_eq!(error.context["kind"], "organization_budget");
+        assert!(retained.borrow().contains("已收到"));
+        assert!(now.elapsed() < Duration::from_secs(5));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn planning_format_variations_keep_the_plan_and_other_project_checkpoints_are_rejected() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, json
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+phase=json.loads((output.parent/'stage-context.json').read_text())['phase']
+output.write_text('先核对业务规则，再核对历史取舍。' if phase=='plan' else '# 保留实际返回的知识',encoding='utf-8')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let saved = std::cell::RefCell::new(None);
+        assert!(generate_planned(
+            &p,
+            None,
+            || false,
+            |_| {},
+            |s| *saved.borrow_mut() = Some(json!(s))
+        )
+        .unwrap()
+        .contains("实际返回"));
+        let mut value = saved.borrow().clone().unwrap();
+        assert!(value["plan"].as_str().unwrap().contains("历史取舍"));
+        value["project_id"] = json!("another-project");
+        assert!(generate_planned(&p, Some(value), || false, |_| {}, |_| {})
+            .unwrap_err()
+            .message
+            .contains("本项目身份"));
+    }
+
+    #[test]
+    fn repairs_share_the_round_budget_and_keep_the_full_received_draft() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        p.started = Instant::now() - runtime::MAXIMUM;
+        // There is no CLI executable: an expired round must not start a fresh repair budget.
+        let draft = "# 已收到的完整草稿\n章节格式仍需修订。";
+        let retained = std::cell::RefCell::new(Vec::new());
+        let result = complete(
+            &data,
+            &p,
+            draft.into(),
+            || false,
+            |_| {},
+            |body, _, _| retained.borrow_mut().push(body.to_string()),
+        )
+        .unwrap();
+        assert!(!result.saved && result.needs_continuation && !result.needs_revision);
+        assert!(result.warning.unwrap().contains("本轮预算已到"));
+        assert!(retained.borrow().iter().any(|body| body == draft));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unfinished_batch_keeps_its_evidence_and_continues_the_same_scope() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let report = test_report("最终汇总已有证据和后续证据。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys, pathlib, json
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+context=json.loads((output.parent/'stage-context.json').read_text())
+if context['phase']=='plan':
+    text='{{"batches":[{{"title":"同一模块","scope":"先甲资料，再乙资料"}}]}}'
+elif context['phase']=='batch':
+    pending=context['checkpoint']['pending']
+    if not pending:
+        text='# 已有证据\n乙资料尚未读取。\n<!-- ailoom:continue -->'
+    else:
+        assert '已有证据' in pathlib.Path(pending[0]['path']).read_text()
+        text='# 后续证据\n乙资料已读取并核对。'
+else:
+    merged=pathlib.Path(context['checkpoint']['completed'][0]['path']).read_text()
+    assert '已有证据' in merged and '后续证据' in merged
+    text={report:?}
+output.write_text(text,encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        let saved = std::cell::RefCell::new(None);
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let first = workflow::run_with_elapsed(
+            &p,
+            None,
+            || false,
+            |_| {},
+            |cp| {
+                let value = json!(cp);
+                if value["pending"].as_array().unwrap().len() == 1 {
+                    elapsed.set(runtime::WRAP_UP);
+                }
+                *saved.borrow_mut() = Some(value);
+            },
+            || elapsed.get(),
+        )
+        .unwrap_err();
+        assert_eq!(first.context["kind"], "organization_budget");
+        let checkpoint = saved.borrow().clone().unwrap();
+        assert!(checkpoint["completed"].as_array().unwrap().is_empty());
+        assert!(checkpoint["pending"][0]
+            .as_str()
+            .unwrap()
+            .contains("已有证据"));
+        let final_report =
+            generate_planned(&p, Some(checkpoint), || false, |_| {}, |_| {}).unwrap();
+        assert_eq!(final_report, report);
     }
 }

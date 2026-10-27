@@ -60,6 +60,41 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
     }) {
         return Response::json(202, json!({"job_id":existing.id,"reused":true}));
     }
+    let resume = if let Some(resume_id) = req.body["resume_job_id"].as_str() {
+        let previous = ledger.get(resume_id).filter(|job| {
+            job.kind == JobKind::KnowledgeOrganize
+                && job.result["knowledge_id"] == prepared.knowledge_id()
+                && job.result["report_key"] == json!(prepared.report_key())
+                && job.result["saved"] != true
+                && job.result["checkpoint"].is_object()
+                && !matches!(job.status, JobStatus::Queued | JobStatus::Running)
+        });
+        match previous {
+            Some(job) => {
+                let mut checkpoint = job.result["checkpoint"].clone();
+                // A later corrective pass may have returned a newer draft than the synthesis.
+                if job.result["repair_history"].is_array() {
+                    if let Some(report) = job.result["report"].as_str() {
+                        let prior = checkpoint["partial"].as_str().unwrap_or_default();
+                        if prior != report {
+                            checkpoint["partial"] = json!(format!(
+                                "{prior}\n\n## 上轮后续修订稿（仍需核对）\n\n{report}"
+                            ));
+                        }
+                    }
+                }
+                Some(checkpoint)
+            }
+            None => {
+                return Response::json(
+                    400,
+                    json!({"error":"没有找到本项目可继续的阶段稿，原有记录保留"}),
+                )
+            }
+        }
+    } else {
+        None
+    };
     let id = format!("knowledge-{}", crate::ids::new_id());
     // 登录等快速失败后可在同一秒重试，不能把新任务误判为旧任务。
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
@@ -89,11 +124,23 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
     );
     let worker = Arc::clone(state);
     let worker_id = id.clone();
-    std::thread::spawn(move || run(&worker, &worker_id, prepared));
+    std::thread::spawn(move || run(&worker, &worker_id, prepared, resume));
     Response::json(202, json!({"job_id":id}))
 }
 
-fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
+fn run(
+    state: &Arc<ServerState>,
+    id: &str,
+    mut prepared: organize::Prepared,
+    resume: Option<Value>,
+) {
+    // Persist the continuation before collection too, so a failed collection cannot lose it.
+    if let Some(checkpoint) = resume.as_ref() {
+        let mut ledger = state.jobs.lock_ok();
+        let job = ledger.get_mut(id).unwrap();
+        job.result["checkpoint"] = checkpoint.clone();
+        jobs::persist_job(&state.data_root, job);
+    }
     jobs::set_status(state, id, JobStatus::Running, "保留原始资料与工作目录出处");
     let collection = organize::collect_sources(
         &state.data_root,
@@ -125,15 +172,34 @@ fn run(state: &Arc<ServerState>, id: &str, mut prepared: organize::Prepared) {
         }
     }
     jobs::set_status(state, id, JobStatus::Running, "启动本机 AI 工具");
-    let result = organize::generate(
+    let result = organize::generate_planned(
         &prepared,
+        resume,
         || jobs::is_cancelled(state, id),
         |note| jobs::set_status(state, id, JobStatus::Running, note),
-        |report| retain_draft(state, id, report, None, true),
+        |checkpoint| {
+            let mut ledger = state.jobs.lock_ok();
+            let job = ledger.get_mut(id).unwrap();
+            job.result["checkpoint"] = json!(checkpoint);
+            job.result["report"] = json!(checkpoint.preview());
+            job.result["saved"] = json!(false);
+            job.result["report_partial"] = json!(true);
+            jobs::persist_job(&state.data_root, job);
+        },
     );
     let report = match result {
         Ok(report) => report,
         Err(e) => {
+            if e.context["kind"] == "organization_budget" && !jobs::is_cancelled(state, id) {
+                finish(
+                    state,
+                    id,
+                    JobStatus::Success,
+                    Some(json!({"saved":false,"needs_continuation":true,"warning":e.message})),
+                    None,
+                );
+                return;
+            }
             finish(
                 state,
                 id,
@@ -202,7 +268,7 @@ fn finish(
     result: Option<Value>,
     error: Option<String>,
 ) {
-    let needs_revision = {
+    let (needs_revision, needs_continuation) = {
         let mut ledger = state.jobs.lock_ok();
         if let Some(job) = ledger.get_mut(id) {
             job.error = error;
@@ -212,15 +278,23 @@ fn finish(
                 }
             }
         }
-        ledger
-            .get(id)
-            .is_some_and(|job| job.result["needs_revision"] == true)
+        (
+            ledger
+                .get(id)
+                .is_some_and(|job| job.result["needs_revision"] == true),
+            ledger
+                .get(id)
+                .is_some_and(|job| job.result["needs_continuation"] == true),
+        )
     };
     jobs::set_status(
         state,
         id,
         status,
         match status {
+            JobStatus::Success if needs_continuation => {
+                "本轮已收尾，计划与阶段稿已保留；可继续整理，当前知识未替换"
+            }
             JobStatus::Success if needs_revision => "整理稿与诊断已保留，仍待修订；当前知识未替换",
             JobStatus::Success => "整理完成，开发知识已保存；内容尚需独立评估，后续检索可用",
             JobStatus::Cancelled => "整理已取消",
