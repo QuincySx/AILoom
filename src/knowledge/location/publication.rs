@@ -14,6 +14,7 @@ fn restore(path: &Path, journal: &Journal) -> Result<()> {
         if p.components().any(|c| !matches!(c, Component::Normal(_)))
             || !(p == Path::new("README.md")
                 || p == Path::new(".ailoom/wiki.json")
+                || p == Path::new(".ailoom/review.json")
                 || (p.starts_with("wiki") && p.extension().is_some_and(|e| e == "md")))
         {
             return Err(fail("Wiki 恢复记录包含无效路径"));
@@ -102,6 +103,22 @@ pub(super) fn commit(
                     wiki::markdown_path(&page.path)
                 )
                 .as_bytes(),
+            );
+        }
+    }
+    // Navigation for preserved manual pages is now final; bind the review to these exact bytes.
+    if let Some(encoded) = files.get(Path::new(".ailoom/review.json")) {
+        let mut proof: Value = serde_json::from_slice(encoded)?;
+        if proof["verdict"] == "pass" {
+            proof["pages"] = json!(files
+                .iter()
+                .filter(|(p, _)| **p != Path::new(".ailoom/review.json")
+                    && **p != Path::new(".ailoom/wiki.json"))
+                .map(|(p, b)| (p.to_string_lossy().into_owned(), crate::ids::sha256_hex(b)))
+                .collect::<BTreeMap<_, _>>());
+            files.insert(
+                ".ailoom/review.json".into(),
+                serde_json::to_vec_pretty(&proof)?,
             );
         }
     }

@@ -6,6 +6,11 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
 
+struct Resume {
+    checkpoint: Value,
+    candidate: Option<String>,
+}
+
 pub(super) fn status(state: &Arc<ServerState>, root: &Path) -> Response {
     match organize::status(&state.data_root, root) {
         Ok(mut status) => {
@@ -83,7 +88,24 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
                         }
                     }
                 }
-                Some(checkpoint)
+                if let Some(assessment) = job.result["assessment_partial"]
+                    .is_object()
+                    .then_some(&job.result["assessment_partial"])
+                    .or_else(|| {
+                        job.result["assessment_history"]
+                            .as_array()
+                            .and_then(|rows| rows.last())
+                    })
+                {
+                    checkpoint["previous_assessment"] = json!({"assessment":assessment["report"],"candidate_sha256":assessment["candidate_sha256"],"input_sha256":assessment["input_sha256"],"complete":assessment["complete"],"verdict":assessment["verdict"],"reason":"reassess"});
+                }
+                let candidate = (job.result["report_partial"] == false)
+                    .then(|| job.result["report"].as_str().map(str::to_owned))
+                    .flatten();
+                Some(Resume {
+                    checkpoint,
+                    candidate,
+                })
             }
             None => {
                 return Response::json(
@@ -132,13 +154,18 @@ fn run(
     state: &Arc<ServerState>,
     id: &str,
     mut prepared: organize::Prepared,
-    resume: Option<Value>,
+    resume: Option<Resume>,
 ) {
     // Persist the continuation before collection too, so a failed collection cannot lose it.
     if let Some(checkpoint) = resume.as_ref() {
         let mut ledger = state.jobs.lock_ok();
         let job = ledger.get_mut(id).unwrap();
-        job.result["checkpoint"] = checkpoint.clone();
+        job.result["checkpoint"] = checkpoint.checkpoint.clone();
+        if let Some(candidate) = &checkpoint.candidate {
+            job.result["report"] = json!(candidate);
+            job.result["report_partial"] = json!(false);
+            job.result["saved"] = json!(false);
+        }
         jobs::persist_job(&state.data_root, job);
     }
     jobs::set_status(state, id, JobStatus::Running, "保留原始资料与工作目录出处");
@@ -172,21 +199,31 @@ fn run(
         }
     }
     jobs::set_status(state, id, JobStatus::Running, "启动本机 AI 工具");
-    let result = organize::generate_planned(
-        &prepared,
-        resume,
-        || jobs::is_cancelled(state, id),
-        |note| jobs::set_status(state, id, JobStatus::Running, note),
-        |checkpoint| {
-            let mut ledger = state.jobs.lock_ok();
-            let job = ledger.get_mut(id).unwrap();
-            job.result["checkpoint"] = json!(checkpoint);
-            job.result["report"] = json!(checkpoint.preview());
-            job.result["saved"] = json!(false);
-            job.result["report_partial"] = json!(true);
-            jobs::persist_job(&state.data_root, job);
-        },
-    );
+    let result = if let Some(candidate) = resume.as_ref().and_then(|r| r.candidate.as_ref()) {
+        jobs::set_status(
+            state,
+            id,
+            JobStatus::Running,
+            "沿用已保留的候选稿，重新核对本轮资料并继续评估与修订",
+        );
+        Ok(candidate.clone())
+    } else {
+        organize::generate_planned(
+            &prepared,
+            resume.as_ref().map(|r| r.checkpoint.clone()),
+            || jobs::is_cancelled(state, id),
+            |note| jobs::set_status(state, id, JobStatus::Running, note),
+            |checkpoint| {
+                let mut ledger = state.jobs.lock_ok();
+                let job = ledger.get_mut(id).unwrap();
+                job.result["checkpoint"] = json!(checkpoint);
+                job.result["report"] = json!(checkpoint.preview());
+                job.result["saved"] = json!(false);
+                job.result["report_partial"] = json!(true);
+                jobs::persist_job(&state.data_root, job);
+            },
+        )
+    };
     let report = match result {
         Ok(report) => report,
         Err(e) => {
@@ -214,13 +251,39 @@ fn run(
             return;
         }
     };
-    match organize::complete(
+    if let Some(record) = state
+        .jobs
+        .lock_ok()
+        .get(id)
+        .map(|j| j.result["checkpoint"].clone())
+    {
+        prepared.set_execution_record(record);
+    }
+    match organize::complete_with_assessment(
         &state.data_root,
         &prepared,
         report,
         || jobs::is_cancelled(state, id),
         |note| jobs::set_status(state, id, JobStatus::Running, note),
         |report, issue, partial| retain_draft(state, id, report, issue, partial),
+        |assessment| {
+            let mut ledger = state.jobs.lock_ok();
+            let job = ledger.get_mut(id).unwrap();
+            if assessment.complete {
+                if !job.result["assessment_history"].is_array() {
+                    job.result["assessment_history"] = json!([]);
+                }
+                job.result["assessment_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!(assessment));
+                job.result["assessment_status"] = json!(assessment.verdict);
+                job.result["assessment_partial"] = Value::Null;
+            } else {
+                job.result["assessment_partial"] = json!(assessment);
+            }
+            jobs::persist_job(&state.data_root, job);
+        },
     ) {
         Ok(result) => finish(state, id, JobStatus::Success, Some(json!(result)), None),
         Err(e) => finish(
@@ -296,7 +359,9 @@ fn finish(
                 "本轮已收尾，计划与阶段稿已保留；可继续整理，当前知识未替换"
             }
             JobStatus::Success if needs_revision => "整理稿与诊断已保留，仍待修订；当前知识未替换",
-            JobStatus::Success => "整理完成，开发知识已保存；内容尚需独立评估，后续检索可用",
+            JobStatus::Success => {
+                "独立 AI 评估通过，开发知识与本轮评估已保存；后续仍需结合当前代码使用"
+            }
             JobStatus::Cancelled => "整理已取消",
             _ => "整理失败，原有知识与上次整理结果保留",
         },

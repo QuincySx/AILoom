@@ -315,7 +315,7 @@ pub(super) struct OrganizationInput {
     pub origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     pub historical_origins: BTreeMap<PathBuf, Vec<ingest::Origin>>,
     pub worktrees: Vec<ingest::Source>,
-    fingerprint: String,
+    pub(super) fingerprint: String,
 }
 
 pub(super) fn organization_input(data: &Path, root: &Path) -> Result<OrganizationInput> {
@@ -443,7 +443,92 @@ pub(super) fn publish_organization(
     input: &OrganizationInput,
     report: &str,
 ) -> Result<PathBuf> {
+    publish_organization_with_review(data, input, report, None)
+}
+
+pub(super) fn validate_organization(
+    data: &Path,
+    input: &OrganizationInput,
+    report: &str,
+) -> Result<()> {
     let _guard = lock(data)?;
+    organization_projection(data, input, report).map(|_| ())
+}
+
+/// Review is bound to the candidate and input snapshot, and committed with the pages.
+pub(super) fn publish_organization_with_review(
+    data: &Path,
+    input: &OrganizationInput,
+    report: &str,
+    review: Option<(&str, Value)>,
+) -> Result<PathBuf> {
+    let _guard = lock(data)?;
+    let (tree, mut files, catalog) = organization_projection(data, input, report)?;
+    if let Some((assessment, mut proof)) = review {
+        if proof["verdict"] != "pass"
+            || proof["project_id"] != input.project_id
+            || proof["knowledge_id"] != input.knowledge_id
+            || proof["candidate_sha256"] != crate::ids::sha256_hex(report.as_bytes())
+            || proof["input_sha256"] != input.fingerprint
+        {
+            return Err(fail("评估与本次候选稿或资料不匹配，未替换当前知识"));
+        }
+        for (path, bytes) in &mut files {
+            if path.starts_with("wiki") {
+                let text = String::from_utf8_lossy(bytes);
+                *bytes = text
+                    .replacen("review_status: unreviewed", "review_status: ai_reviewed", 1)
+                    .into_bytes();
+            }
+        }
+        let managed: BTreeMap<PathBuf, String> = tree
+            .get(Path::new(".ailoom/wiki.json"))
+            .map(|bytes| serde_json::from_slice(bytes))
+            .transpose()?
+            .unwrap_or_default();
+        let reusable = |path: &Path| {
+            tree.get(path).is_none_or(|bytes| {
+                managed
+                    .get(path)
+                    .is_some_and(|hash| *hash == crate::ids::sha256_hex(bytes))
+            })
+        };
+        let mut review_path = PathBuf::from("wiki/review.md");
+        let mut suffix = 0;
+        while !reusable(&review_path) {
+            suffix += 1;
+            let digest = crate::ids::sha256_hex(report.as_bytes());
+            review_path = PathBuf::from(format!("wiki/review-{}-{suffix}.md", &digest[..12]));
+        }
+        proof["report_path"] = json!(review_path);
+        files.insert(review_path.clone(),format!("# 本轮独立 AI 评估\n\n[项目索引](../README.md)\n\n评估时间：{}。仅针对本轮候选稿和所列范围，不代表人工批准、执行过测试或永久适用；后续修改与代码变化仍需复核。\n\n{assessment}",proof["evaluated_at"].as_str().unwrap_or("未记录")).into_bytes());
+        let home = files.get_mut(Path::new("README.md")).unwrap();
+        home.extend_from_slice(format!("\n\n## 本轮评估\n\n以上自检为编纂阶段记录；随后[独立 AI 评估与资料处理核对]({})已通过。核对范围和限制以评估记录为准，后续维护仍需结合当前代码。\n",review_path.display()).as_bytes());
+        files.insert(
+            ".ailoom/review.json".into(),
+            serde_json::to_vec_pretty(&proof)?,
+        );
+    } else if tree.contains_key(Path::new(".ailoom/review.json")) {
+        files.insert(".ailoom/review.json".into(),serde_json::to_vec_pretty(&json!({"schema":"ailoom-ai-review/v1","verdict":"unreviewed","project_id":input.project_id,"knowledge_id":input.knowledge_id}))?);
+    }
+    let mut projected = tree.clone();
+    projected.extend(files.clone());
+    projected.extend(catalog.clone());
+    if projected.len() > 10000
+        || projected.values().map(Vec::len).sum::<usize>() > 128 * 1024 * 1024
+    {
+        return Err(fail("整理结果及评估记录超出知识库容量，原有正文保留"));
+    }
+    write_tree(&input.path, &catalog)?;
+    publication::commit(&input.path, &tree, files, &input.previous_documents)?;
+    Ok(input.path.join(&input.report_path))
+}
+
+fn organization_projection(
+    data: &Path,
+    input: &OrganizationInput,
+    report: &str,
+) -> Result<(Tree, Tree, Tree)> {
     let current = organization_input_unlocked(data, &input.root)?;
     if current.fingerprint != input.fingerprint
         || current.knowledge_id != input.knowledge_id
@@ -478,10 +563,7 @@ pub(super) fn publish_organization(
     {
         return Err(fail("整理结果超出知识库容量，原有正文保留"));
     }
-    write_tree(&current.path, &catalog)?;
-    publication::commit(&current.path, &tree, files, &input.previous_documents)?;
-    let dest = current.path.join(&input.report_path);
-    Ok(dest)
+    Ok((tree, files, catalog))
 }
 
 /// Upgrade an existing report structurally, without regenerating or approving its claims.

@@ -6,7 +6,7 @@ const running = job => job && ['queued','running'].includes(job.status);
 export function collectionDetails(collection) {
   if(!collection)return '';
   const skipped=collection.skipped||[];
-  return `<details class="knowledge-collection"><summary>本次资料读取情况${skipped.length?' · 存在未读取或未保存项':''}</summary><p>检查 ${esc(collection.worktree_count||0)} 个工作目录，读取 ${esc(collection.documents_read||0)} 篇候选资料。</p>${skipped.length?`<ul>${skipped.map(s=>`<li>${esc([s.directory,s.path].filter(Boolean).join(' / '))}：${esc(s.reason)}</li>`).join('')}</ul>`:''}</details>`;
+  return `<details class="knowledge-collection"><summary>原文采集情况${skipped.length?' · 存在未读取或未保存项':''}</summary><p>自动采集检查 ${esc(collection.worktree_count||0)} 个工作目录，读取 ${esc(collection.documents_read||0)} 篇候选资料；这不代表 AI 已逐篇研读。实际阅读、未采用与跳过原因见阶段稿和评估记录。</p>${skipped.length?`<ul>${skipped.map(s=>`<li>${esc([s.directory,s.path].filter(Boolean).join(' / '))}：${esc(s.reason)}</li>`).join('')}</ul>`:''}</details>`;
 }
 
 export function organizationOutcome(job) {
@@ -20,6 +20,13 @@ export function revisionDetails(result) {
   return `${result?.warning?`<p class="muted" role="status">${esc(result.warning)}</p>`:''}${history.length?`<details class="knowledge-revisions"><summary>AI 修订记录（${history.length}）</summary>${history.map((entry,i)=>`<details><summary>第 ${i+1} 份草稿 · ${esc(entry.diagnostic?.message||'待核对')}</summary><pre class="knowledge-organization-report">${esc(entry.report)}</pre></details>`).join('')}</details>`:''}`;
 }
 
+export function assessmentDetails(result) {
+  const history=result?.assessment_history||[],partial=result?.assessment_partial;
+  if(!history.length&&!partial)return '';
+  const label={pass:'通过',revise:'需修订',insufficient:'评估资料不足',unconfirmed:'结论待确认'};
+  return `<details class="knowledge-assessments"><summary>独立 AI 评估 · ${history.length} 轮${partial?'，本轮尚未完成':''}</summary><p class="muted">评估针对对应候选稿及记录的证据范围，不代表人工批准或永久适用。</p>${history.map((entry,i)=>`<details><summary>第 ${i+1} 轮 · ${esc(label[entry.verdict]||'结论待确认')}</summary><pre class="knowledge-organization-report">${esc(entry.report)}</pre><details><summary>本轮对应的候选稿</summary><pre class="knowledge-organization-report">${esc(entry.candidate||'')}</pre></details></details>`).join('')}${partial?`<details><summary>本轮未完成的评估正文</summary><pre class="knowledge-organization-report">${esc(partial.report)}</pre></details>`:''}</details>`;
+}
+
 export function stageDetails(result) {
   const checkpoint=result?.checkpoint;
   if(!checkpoint)return '';
@@ -29,7 +36,7 @@ export function stageDetails(result) {
 
 export function KnowledgeOrganization(container, {rootPath}) {
   const root=document.createElement('section');root.className='knowledge-organization';container.append(root);
-  let alive=true, state=null, job=null, timer=null, busy=false, checking=false, runner='codex', focus='', pageRequest=0, stagesKey='';
+  let alive=true, state=null, job=null, timer=null, busy=false, checking=false, runner='codex', focus='', pageRequest=0, stagesKey='',assessmentKey='';
   const q=s=>root.querySelector(s);
   const request=body=>api.knowledge({root:rootPath,...body});
   const message=text=>{if(alive)q('[data-organize-message]').textContent=text;};
@@ -49,13 +56,14 @@ export function KnowledgeOrganization(container, {rootPath}) {
   }
   function render() {
     stagesKey='';
+    assessmentKey='';
     const tools=state.runners||[];
     if(!tools.some(r=>r.id===runner&&r.available))runner=tools.find(r=>r.available)?.id||'codex';
     const report=state.report;
     const worktrees=state.worktrees||[];
     root.innerHTML=`<h2>整理知识</h2><p class="muted" data-organize-default>直接开始，无需填写提示词或挑选文档。AI 会从本仓库各工作目录的资料和已有知识中识别业务规则、开发流程、模块约束、决策取舍与问题经验，去重整理，保留背景、演变和出处。</p>
       <p data-organize-count>已有 ${esc(state.source_count||0)} 篇知识资料 · 开始后自动收集 ${esc(worktrees.length)} 个工作目录及其子目录的资料</p>
-      <p class="muted" data-organize-evidence>AI 会对照相关代码核对当前实现，注明分支与核对范围；过时文档保留历史背景，无法确认的结论标为待核实。整理完成后仍需独立评估。</p>
+      <p class="muted" data-organize-evidence>AI 会对照相关代码核对当前实现，注明分支与核对范围；过时文档保留历史背景，无法确认的结论标为待核实。生成候选稿后，另起独立上下文评估知识保留、资料处理和代码依据；未通过会保留草稿并修订，通过后再保存。</p>
       ${state.project_id?`<p data-organize-project>所属项目：<strong>${esc(state.project_name)}</strong></p><details><summary>原文与整理结果分别保存</summary><p>打开知识库根目录的 README.md 即可导航，wiki/ 中的 Markdown 可由你或 AI 直接维护，sources/ 保留原始资料与出处。</p><div class="path">原文：${esc(state.raw_path)}</div><div class="path">知识入口：${esc(state.report_path)}</div>${state.excluded_documents?.length?`<p>${esc(state.excluded_documents.length)} 篇旧文档缺少匹配的项目归属，本次未纳入。</p>`:''}</details>`:''}
       <details data-organize-sources><summary>查看整理范围</summary><ul>${worktrees.map(s=>`<li>${esc(s.label)}<div class="path muted">${esc(s.path)}</div></li>`).join('')}</ul><p class="muted">保留原文和各分支出处，AI 按内容判断是否值得纳入开发知识。无法读取或超出范围的资料会在结果中说明。</p></details>
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>
@@ -65,7 +73,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
       ${!state.source_count?'<p class="muted">还没有入库资料也可以直接开始，系统会自动读取工作目录内的文档。配置恢复副本和工具资源不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-fresh hidden>重新规划整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
-      <div data-organize-collection></div><div data-organize-stages></div><div data-organize-revisions></div>
+      <div data-organize-collection></div><div data-organize-stages></div><div data-organize-assessments></div><div data-organize-revisions></div>
       <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库开发知识</summary>${state.pages?.length?`<nav class="knowledge-pages" aria-label="知识页面"><button type="button" data-wiki-index>知识首页</button>${state.pages.map((p,i)=>`<button type="button" data-wiki-page="${i}">${esc(p.title)}</button>`).join('')}</nav>`:''}<p data-wiki-path class="path">${esc(state.report_path||'')}</p><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
       <details data-organize-draft hidden><summary>本次未保存的整理草稿</summary><pre class="knowledge-organization-report"></pre></details>`;
     q('[data-organize-runner]').onchange=()=>{remember();controls();};
@@ -88,6 +96,13 @@ export function KnowledgeOrganization(container, {rootPath}) {
     message(organizationOutcome(job)+(job.error?'：'+job.error:note?' · '+note:''));
     q('[data-organize-collection]').innerHTML=collectionDetails(job.result?.collection);
     q('[data-organize-revisions]').innerHTML=revisionDetails(job.result);
+    const reviewKey=JSON.stringify([job.result?.assessment_history,job.result?.assessment_partial]);
+    if(reviewKey!==assessmentKey){
+      const reviews=q('[data-organize-assessments]'),opened=[...reviews.querySelectorAll('details')].map((d,i)=>d.open?i:-1);
+      reviews.innerHTML=assessmentDetails(job.result);
+      reviews.querySelectorAll('details').forEach((d,i)=>{if(opened.includes(i))d.open=true;});
+      assessmentKey=reviewKey;
+    }
     const stageKey=JSON.stringify(job.result?.checkpoint??null);
     if(stageKey!==stagesKey){
       const stages=q('[data-organize-stages]'),opened=[...stages.querySelectorAll('details')].map((d,i)=>d.open?i:-1);

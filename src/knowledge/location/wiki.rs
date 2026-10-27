@@ -50,12 +50,15 @@ pub(super) fn current(tree: &Tree, project: &str) -> Result<Vec<Page>> {
                 }
             }
             let stem = path.file_stem().unwrap().to_string_lossy();
-            let kind =
-                if ["sources", "changes", "maintenance", "questions"].contains(&stem.as_ref()) {
-                    stem.to_string()
-                } else {
-                    "topic".into()
-                };
+            let kind = if stem.starts_with("review-") {
+                "review".into()
+            } else if ["sources", "changes", "maintenance", "questions", "review"]
+                .contains(&stem.as_ref())
+            {
+                stem.to_string()
+            } else {
+                "topic".into()
+            };
             let title = text
                 .lines()
                 .find_map(|l| l.strip_prefix("# "))

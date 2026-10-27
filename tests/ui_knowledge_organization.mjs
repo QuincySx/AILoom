@@ -17,7 +17,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
       const job=fixture.jobs.find(j=>j.id===id);
       Object.assign(job,{status,updated_at:new Date().toISOString(),result:{knowledge_id:'fixture-knowledge',report_key:'maintenance/recommendations',runner:job.runner,source_count:fixture.sourceCount,report,saved,report_path:'/fixture/Knowledge/maintenance/recommendations.md'}});
       if(status==='failed')job.error='保存失败：只读目录 '+injection;
-      if(saved)fixture.report=report;
+      if(saved){fixture.report=report;Object.assign(job.result,{assessment_status:'pass',assessment_history:[{complete:true,verdict:'pass',report:'# 独立 AI 评估\n结论：通过\n对应资料与缺口已核对。'+injection,candidate:report}]});}
     };
     api.state=async()=>({repos:[{repo_id:'knowledge-fixture',common_dir:root+'/.git',project:{name:'项目知识整理验收'},worktrees:{main:{path:root,status:'active',branch:'refs/heads/main'}}}]});
     api.approveDir=async()=>({});
@@ -120,6 +120,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await assert("document.querySelectorAll('[data-organize-runner] option').length===4 && document.querySelector('[data-organize-runner] option[value=pi]').disabled && !document.querySelector('[data-organize-runner] option[value=claude]').disabled && !document.querySelector('[data-organize-runner] option[value=cursor]').disabled",'Runner detection does not expose installed alternatives only');
   await assert("!document.querySelector('.knowledge-location').open && document.querySelector('.knowledge-location summary').textContent==='保存位置与恢复配置'",'Location and recovery settings are not collapsed below organization');
   await assert("document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && !document.querySelector('[data-organize-report]').hidden",'Previously saved report is missing');
+  await assert("!document.querySelector('.knowledge-assessments')",'Historical knowledge was retroactively marked as assessed');
   await noInjection();
   for(const width of [1440,390,320])await capture('ready',width);
 
@@ -186,13 +187,15 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
 
   // Unresolved editorial issues retain every draft and show a review state, not success/failure.
   const pending=await start();
-  await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(pending)},'success','# 待修订草稿\n有效知识仍保留。'+f.injection);Object.assign(f.latest.result,{needs_revision:true,warning:'引用仍待核对 '+f.injection,repair_attempts:2,repair_history:[{report:'# 原始草稿\n'+f.injection,diagnostic:{message:'具体引用需要核对 '+f.injection}}]});}`);
+  await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(pending)},'success','# 待修订草稿\n有效知识仍保留。'+f.injection);Object.assign(f.latest.result,{needs_revision:true,assessment_status:'revise',assessment_history:[{complete:true,verdict:'revise',report:'# 独立评估：需修订\n未采用理由需要核对。'+f.injection,candidate:'# 对应的候选稿\n保留原始约束。'+f.injection}],assessment_partial:{complete:false,verdict:'incomplete',report:'# 未完成评估正文 '+f.injection},warning:'引用仍待核对 '+f.injection,repair_attempts:2,repair_history:[{report:'# 原始草稿\n'+f.injection,diagnostic:{message:'具体引用需要核对 '+f.injection}}]});}`);
   await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理稿待修订') && !document.querySelector('[data-organize-start]').disabled");
   await assert("!document.querySelector('[data-organize-draft]').hidden && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report && document.querySelector('[data-organize-revisions]').textContent.includes('原始草稿')",'Review state discarded the draft/history or replaced the saved report');
+  await assert("document.querySelector('.knowledge-assessments').textContent.includes('独立评估：需修订') && document.querySelector('.knowledge-assessments').textContent.includes('对应的候选稿') && document.querySelector('.knowledge-assessments').textContent.includes('未完成评估正文')",'Assessment verdicts, matching candidates or partial feedback are missing');
   await noInjection();
   await visitHistory();
   await evaluate(`document.querySelector('[data-job-open="${pending}"]').click()`);
   await assert("document.querySelector('[data-detail-body] .badge').textContent==='待修订' && document.querySelector('[data-detail-body] .badge').classList.contains('warn') && document.querySelector('[data-detail-body]').textContent.includes('引用仍待核对') && document.querySelector('[data-detail-body]').textContent.includes('原始草稿')",'Task history mislabels a retained draft or hides the diagnostic');
+  await assert("document.querySelector('[data-detail-body] .knowledge-assessments').textContent.includes('未采用理由需要核对')",'History hides the evidence assessment');
   await noInjection();
   await visitKnowledge();
   await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理稿待修订')");
@@ -269,7 +272,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   // Reports in history remain readable and disclose whether they were saved.
   await visitHistory();
   await evaluate(`document.querySelector('[data-job-open="${first}"]').click()`);
-  await assert("document.querySelector('[data-detail-body]').textContent.includes('已保存到知识库') && document.querySelector('[data-detail-body] .knowledge-organization-report').textContent===window.knowledgeOrganization.report && document.querySelector('[data-undo-actions]').hidden",'Saved report is missing or offers an unrelated undo action');
+  await assert("document.querySelector('[data-detail-body]').textContent.includes('已保存到知识库') && document.querySelector('[data-detail-body] > .knowledge-organization-report').textContent===window.knowledgeOrganization.report && document.querySelector('[data-undo-actions]').hidden && document.querySelector('[data-detail-body] .knowledge-assessments').textContent.includes('结论：通过')",'Saved report or matching assessment is missing or offers an unrelated undo action');
   await evaluate(`document.querySelector('[data-job-open="${failed}"]').click()`);
   await assert("document.querySelector('[data-detail-body]').textContent.includes('本次结果尚未保存') && document.querySelector('[data-detail-body] .knowledge-organization-report').textContent.includes('未保存的草稿') && document.querySelector('[data-detail-body]').textContent.includes('失败')",'History hides failed drafts or their save status');
   await noInjection();

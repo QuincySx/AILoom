@@ -12,9 +12,11 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+mod review;
 mod runtime;
 mod task;
 mod workflow;
+pub use review::Assessment;
 pub use workflow::Checkpoint;
 
 const RUNNERS: &[(&str, &str, &str)] = &[
@@ -133,9 +135,13 @@ pub struct Prepared {
     focus: String,
     collection: Option<Value>,
     started: Instant,
+    execution_record: Option<Value>,
 }
 
 impl Prepared {
+    pub fn set_execution_record(&mut self, record: Value) {
+        self.execution_record = Some(record);
+    }
     pub fn knowledge_id(&self) -> &str {
         &self.input.knowledge_id
     }
@@ -174,6 +180,7 @@ pub fn prepare(data: &Path, root: &Path, runner: &str, focus: &str) -> Result<Pr
         focus: focus.into(),
         collection: None,
         started: Instant::now(),
+        execution_record: None,
     })
 }
 
@@ -399,6 +406,7 @@ enum DraftTask<'a> {
     Compile,
     Repair(&'a str, &'a Error),
     Stage(&'a str, &'a Value),
+    Review(&'a str, Option<&'a Value>),
 }
 
 fn generate_draft(
@@ -430,6 +438,9 @@ fn generate_draft(
         DraftTask::Repair(report, issue) => task::repair(prepared, work.path(), report, issue)?,
         DraftTask::Stage(phase, context) => task::stage(prepared, work.path(), phase, context)?,
         DraftTask::Compile => task::prepare(prepared, work.path())?,
+        DraftTask::Review(report, feedback) => {
+            task::review(prepared, work.path(), report, *feedback)?
+        }
     };
     let prompt = task::with_runtime(prompt, &control, started)?;
     let mut child = command(prepared, &output_path)
@@ -467,6 +478,7 @@ fn generate_draft(
         ),
         DraftTask::Stage("synthesize", _) => "汇总阶段稿并核对跨模块关系".into(),
         DraftTask::Repair(..) => "核对诊断并修订整理稿".into(),
+        DraftTask::Review(..) => "独立评估资料处理、知识保留与代码依据".into(),
         _ => "阅读资料并核对代码".into(),
     };
     progress(&phase_label);
@@ -647,82 +659,33 @@ pub struct Completion {
     pub needs_continuation: bool,
     pub warning: Option<String>,
     pub repair_attempts: usize,
+    pub assessment_status: String,
 }
 
-/// Editorial problems go back to the agent; storage conflicts never trigger a rewrite.
+/// A fresh evidence review gates publication; structural checks alone never approve content.
 pub fn complete(
     data: &Path,
     prepared: &Prepared,
-    mut report: String,
+    report: String,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
     retain: impl Fn(&str, Option<&Error>, bool),
 ) -> Result<Completion> {
-    retain(&report, None, false);
-    for attempt in 0..=2 {
-        if cancelled() {
-            return Err(fail("整理已取消，本次草稿保留在操作记录中"));
-        }
-        progress("核对知识库内容并保存整理结果");
-        let issue = match publish(data, prepared, &report) {
-            Ok(path) => {
-                return Ok(Completion {
-                    saved: true,
-                    report_path: Some(path),
-                    needs_revision: false,
-                    needs_continuation: false,
-                    warning: None,
-                    repair_attempts: attempt,
-                })
-            }
-            Err(error) if error.context["kind"] == "draft_issue" => error,
-            Err(error) => return Err(error),
-        };
-        retain(&report, Some(&issue), false);
-        if attempt == 2 {
-            return Ok(Completion {
-                saved: false,
-                report_path: None,
-                needs_revision: true,
-                needs_continuation: false,
-                warning: Some(format!(
-                    "AI 已修订两次，草稿及诊断已保留，仍待修订：{}",
-                    issue.message
-                )),
-                repair_attempts: attempt,
-            });
-        }
-        progress(&format!(
-            "发现需要核对的格式或引用，交给 AI 修订（第 {} 次）",
-            attempt + 1
-        ));
-        report = match generate_draft(
-            prepared,
-            &cancelled,
-            &progress,
-            |draft| retain(draft, None, true),
-            prepared.started,
-            DraftTask::Repair(&report, &issue),
-        ) {
-            Ok(report) => report,
-            Err(error) if !cancelled() => {
-                return Ok(Completion {
-                    saved: false,
-                    report_path: None,
-                    needs_revision: error.context["kind"] != "organization_budget",
-                    needs_continuation: error.context["kind"] == "organization_budget",
-                    warning: Some(format!(
-                        "AI 修订未完成，已有草稿及诊断已保留：{}",
-                        error.message
-                    )),
-                    repair_attempts: attempt + 1,
-                })
-            }
-            Err(error) => return Err(error),
-        };
-        retain(&report, None, false);
-    }
-    unreachable!()
+    review::complete(data, prepared, report, cancelled, progress, retain, |_| {})
+}
+
+pub fn complete_with_assessment(
+    data: &Path,
+    prepared: &Prepared,
+    report: String,
+    cancelled: impl Fn() -> bool,
+    progress: impl Fn(&str),
+    retain: impl Fn(&str, Option<&Error>, bool),
+    assessed: impl Fn(&Assessment),
+) -> Result<Completion> {
+    review::complete(
+        data, prepared, report, cancelled, progress, retain, assessed,
+    )
 }
 
 #[cfg(test)]
@@ -762,6 +725,7 @@ mod tests {
             focus: "数据库维护".into(),
             collection: None,
             started: Instant::now(),
+            execution_record: None,
         }
     }
 
@@ -993,6 +957,10 @@ mod tests {
             r#"import sys, pathlib, json
 text = sys.stdin.read()
 assert len(text.encode()) <= 65536
+if '## 本轮独立评估入口' in text:
+    args=sys.argv[1:]
+    pathlib.Path(args[args.index('--output-last-message')+1]).write_text('# 开发知识评估\n\n结论：通过\n关键知识和缺口已核对。\n<!-- ailoom-review: pass -->',encoding='utf-8')
+    sys.exit(0)
 entry = json.loads(text.split('## 本次任务入口\n\n',1)[1].split('\n## 核对并修订已有整理稿',1)[0])
 files = json.loads(text.strip().splitlines()[-1])
 draft = pathlib.Path(files['draft']).read_text()
@@ -2540,5 +2508,265 @@ output.write_text(text,encoding='utf-8')
         let final_report =
             generate_planned(&p, Some(checkpoint), || false, |_| {}, |_| {}).unwrap();
         assert_eq!(final_report, report);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn semantic_review_repairs_and_reassesses_before_atomic_publication() {
+        let (_tmp, root, data) = fixture();
+        let knowledge = location::organization_input(&data, &root).unwrap().path;
+        std::fs::create_dir_all(knowledge.join("wiki")).unwrap();
+        std::fs::write(
+            knowledge.join("wiki/review.md"),
+            "# 人工维护的评审经验\n这些原有内容不能被本轮评估覆盖。\n",
+        )
+        .unwrap();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let candidate = test_report("这里错误地把历史做法标为当前规则。");
+        let corrected = test_report("历史约束及当时选择应保留；当前适用性待核实。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys, pathlib, json
+text=sys.stdin.read()
+assert len(text.encode())<65536
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+if '## 本轮独立评估入口' in text:
+    candidate=(output.parent/'review-candidate.md').read_text()
+    assert '先从原文建立关键知识清单' in text and '未读不能归为无价值' in text
+    if '错误地' in candidate:
+        value='# 开发知识评估\n结论：需修订\n必须修订项：历史文档不能证明当前实现，补回适用边界。\n<!-- ailoom-review: revise -->'
+    else:
+        prior=json.loads((output.parent/'previous-assessment.json').read_text())
+        assert '历史文档' in pathlib.Path(prior['assessment_file']).read_text()
+        value='# 开发知识评估\n结论：通过\n资料处理：已读采用、历史保留及未读范围已区分；关键知识按原文保留。\n<!-- ailoom-review: pass -->'
+else:
+    issue=json.loads((output.parent/'draft-issue.json').read_text())
+    assert issue['context']['stage']=='semantic_review'
+    value={corrected:?}
+output.write_text(value,encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        let assessments = std::cell::RefCell::new(Vec::new());
+        let result = complete_with_assessment(
+            &data,
+            &p,
+            candidate,
+            || false,
+            |_| {},
+            |_, _, _| {},
+            |assessment| {
+                assert_eq!(
+                    std::fs::read(p.input.path.join("README.md")).unwrap(),
+                    before,
+                    "no candidate is published during review or repair"
+                );
+                if assessment.complete {
+                    assessments.borrow_mut().push(assessment.clone());
+                }
+            },
+        )
+        .unwrap();
+        assert!(result.saved && result.assessment_status == "pass");
+        assert_eq!(result.repair_attempts, 1);
+        let history = assessments.borrow();
+        assert_eq!(
+            history
+                .iter()
+                .map(|a| a.verdict.as_str())
+                .collect::<Vec<_>>(),
+            ["revise", "pass"]
+        );
+        assert_ne!(history[0].candidate_sha256, history[1].candidate_sha256);
+        let topic = std::fs::read_to_string(p.input.path.join("wiki/topic-migration.md")).unwrap();
+        assert!(topic.contains("review_status: ai_reviewed") && topic.contains("历史约束"));
+        let proof: Value = serde_json::from_slice(
+            &std::fs::read(p.input.path.join(".ailoom/review.json")).unwrap(),
+        )
+        .unwrap();
+        assert_ne!(proof["report_path"], "wiki/review.md");
+        assert!(std::fs::read_to_string(p.input.path.join("wiki/review.md"))
+            .unwrap()
+            .contains("人工维护的评审经验"));
+        assert!(
+            std::fs::read_to_string(p.input.path.join(proof["report_path"].as_str().unwrap()))
+                .unwrap()
+                .contains("结论：通过")
+        );
+        assert_eq!(
+            proof["candidate_sha256"],
+            crate::ids::sha256_hex(corrected.as_bytes())
+        );
+        for (file, digest) in proof["pages"].as_object().unwrap() {
+            assert_eq!(
+                digest.as_str().unwrap(),
+                crate::ids::sha256_hex(&std::fs::read(p.input.path.join(file)).unwrap())
+            );
+        }
+        assert!(std::fs::read_to_string(p.input.path.join("README.md"))
+            .unwrap()
+            .contains("wiki/review.md"));
+        assert!(!p.input.path.join(".ailoom/wiki-transaction.json").exists());
+        let current = prepared(&data, &root);
+        publish(&data, &current, &test_report("未经过新评估的后续草稿。")).unwrap();
+        let proof: Value = serde_json::from_slice(
+            &std::fs::read(p.input.path.join(".ailoom/review.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            proof["verdict"], "unreviewed",
+            "old review is not inherited by a different draft"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn insufficient_and_ambiguous_assessments_keep_candidates_without_publishing() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        for assessment in ["# 开发知识评估\n结论：评估资料不足\n缺少关键分支的原文，不能确认主张。\n<!-- ailoom-review: insufficient -->","已查看候选稿，但这段没有给出明确结论。"] {
+            let (_script,executable)=fake_cli(&format!("import sys,pathlib\nsys.stdin.read()\npathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text({assessment:?},encoding='utf-8')"));
+            p.runner.executable=Some(executable);
+            let reviews=std::cell::RefCell::new(Vec::new());
+            let result=complete_with_assessment(&data,&p,test_report("已有知识。"),||false,|_|{},|_,_,_|{},|a|if a.complete {reviews.borrow_mut().push(a.clone());}).unwrap();
+            assert!(!result.saved && result.needs_revision);
+            assert!(matches!(result.assessment_status.as_str(),"insufficient"|"unconfirmed"));
+            assert!(!reviews.borrow().is_empty());
+            assert_eq!(std::fs::read(p.input.path.join("README.md")).unwrap(),before);
+            assert!(!p.input.path.join("wiki/review.md").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn review_format_variations_are_clarified_instead_of_failing_the_task() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let (_script, executable) = fake_cli(
+            r#"import sys,pathlib
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+value='# 开发知识评估\n核对证据的正文，尚未明确给出结论。'
+if (output.parent/'previous-assessment.json').exists():
+    value='# 开发知识评估\n\n- **结论**：通过\n\n阅读范围、处理记录和缺口已核对。'
+output.write_text(value,encoding='utf-8')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let result = complete(
+            &data,
+            &p,
+            test_report("已有知识。"),
+            || false,
+            |_| {},
+            |_, _, _| {},
+        )
+        .unwrap();
+        assert!(result.saved && result.assessment_status == "pass");
+        assert_eq!(result.repair_attempts, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_review_preserves_partial_feedback_without_treating_it_as_a_verdict() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let (_script, executable) = fake_cli(
+            r#"import sys,pathlib,time
+sys.stdin.read()
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('# 评估写到一半\n<!-- ailoom-review: pass -->',encoding='utf-8')
+time.sleep(30)
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let now = Instant::now();
+        let candidate = test_report("要保留的候选正文。");
+        let feedback = std::cell::RefCell::new(Vec::new());
+        let drafts = std::cell::RefCell::new(Vec::new());
+        let error = complete_with_assessment(
+            &data,
+            &p,
+            candidate.clone(),
+            || now.elapsed() > Duration::from_millis(700),
+            |_| {},
+            |body, _, _| drafts.borrow_mut().push(body.to_string()),
+            |a| feedback.borrow_mut().push(a.clone()),
+        )
+        .unwrap_err();
+        assert!(error.message.contains("取消"));
+        assert_eq!(drafts.borrow().last().unwrap(), &candidate);
+        assert!(feedback
+            .borrow()
+            .iter()
+            .any(|a| !a.complete && a.verdict == "incomplete" && a.report.contains("写到一半")));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn a_review_cannot_be_applied_to_another_candidate_or_input_snapshot() {
+        let (_tmp, root, data) = fixture();
+        let p = prepared(&data, &root);
+        let before = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let report = test_report("候选知识。");
+        let proof = json!({"schema":"ailoom-ai-review/v1","verdict":"pass","project_id":p.input.project_id,"knowledge_id":p.input.knowledge_id,"input_sha256":p.input.fingerprint,"candidate_sha256":"other-candidate"});
+        let error = location::publish_organization_with_review(
+            &data,
+            &p.input,
+            &report,
+            Some(("结论：通过", proof)),
+        )
+        .unwrap_err();
+        assert!(error.message.contains("不匹配"));
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn large_assessment_feedback_and_work_records_remain_in_readable_task_files() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let large = "证据、跳过理由与缺陷。\n".repeat(100000);
+        let report = test_report(&large);
+        p.set_execution_record(json!({"plan":"按模块核对","completed":[large],"pending":[],"partial":"","previous_assessment":{"assessment":large}}));
+        let work = tempfile::tempdir().unwrap();
+        let prompt = task::review(
+            &p,
+            work.path(),
+            &report,
+            Some(&json!({"assessment":large,"candidate_sha256":"old-candidate"})),
+        )
+        .unwrap();
+        assert!(prompt.len() < 64 * 1024);
+        let metadata = std::fs::read(work.path().join("previous-assessment.json")).unwrap();
+        assert!(metadata.len() < 4096);
+        let metadata: Value = serde_json::from_slice(&metadata).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(metadata["assessment_file"].as_str().unwrap()).unwrap(),
+            large
+        );
+        let stage: Value =
+            serde_json::from_slice(&std::fs::read(work.path().join("stage-context.json")).unwrap())
+                .unwrap();
+        assert!(
+            std::fs::metadata(
+                stage["checkpoint"]["completed"][0]["path"]
+                    .as_str()
+                    .unwrap()
+            )
+            .unwrap()
+            .len()
+                > 1024 * 1024
+        );
+        assert_eq!(
+            std::fs::read_to_string(work.path().join("review-candidate.md")).unwrap(),
+            report
+        );
     }
 }
