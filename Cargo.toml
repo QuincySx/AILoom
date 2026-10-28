@@ -1,6 +1,6 @@
 [package]
 name = "ailoom"
-version = "0.4.0-rc.17"
+version = "0.4.0-rc.18"
 edition = "2021"
 rust-version = "1.85"
 description = "Team AI resource, learning and observation manager (AILoom)"
