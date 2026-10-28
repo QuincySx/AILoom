@@ -214,7 +214,7 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await evaluate(String.raw`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(partial)},'cancelled','# 中途收到的正文\n保留内容。'+f.injection);f.latest.result.report_partial=true;}`);
   await waitFor("!document.querySelector('[data-organize-draft]').hidden && !document.querySelector('[data-organize-start]').disabled");
   await assert("document.querySelector('[data-organize-draft] summary').textContent.includes('未完成') && document.querySelector('[data-organize-draft] pre').textContent.includes('中途收到的正文') && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Cancellation discarded received body or published an incomplete report');
-  await assert("document.querySelector('[data-organize-runtime]').textContent.includes('先规划') && document.querySelector('[data-organize-runtime]').textContent.includes('120 分钟')",'Planning and runtime budget are not visible');
+  await assert("(()=>{const text=document.querySelector('[data-organize-runtime]').textContent;return text.includes('先比较资料、代码与人工 Wiki 的变化') && text.includes('AI 判断影响及未完成项') && text.includes('按模块分批') && text.includes('120 分钟');})()",'Change planning and runtime budget are not visible');
   await noInjection();
   await visitHistory();
   await evaluate(`document.querySelector('[data-job-open="${partial}"]').click()`);
@@ -288,6 +288,17 @@ export async function verifyKnowledgeOrganization({evaluate,waitFor,send,screens
   await waitFor("document.querySelector('[data-organize-message]').textContent.includes('整理完成') && !document.querySelector('[data-organize-start]').disabled");
   await assert("!document.querySelector('[data-organize-options]').open && document.querySelector('[data-organize-focus]').value===''",'Default completion opens or fills the optional input');
   await capture('default-complete',390);
+  // Unchanged input reuses the previous assessment without rewriting Wiki or offering continuation.
+  const unchanged=await start();
+  await evaluate(`{const f=window.knowledgeOrganization;f.finish(${JSON.stringify(unchanged)},'success',null,false);Object.assign(f.latest.result,{unchanged:true,assessment_status:'reused',reuse_reason:'已检查未完成项 '+f.injection,checkpoint:{plan:'沿用已有评估',batches:[],completed:[]},incremental:{mode:'incremental',source_changes:0,code_changes:0,wiki_changes:0,scope:'本项目文件指纹比较',uncertainties:[]}});}`);
+  await waitFor("document.querySelector('[data-organize-message]').textContent.includes('无需更新') && !document.querySelector('[data-organize-start]').disabled");
+  await assert("document.querySelector('[data-organize-start]').textContent==='开始整理' && document.querySelector('[data-organize-fresh]').hidden && document.querySelector('[data-organize-draft]').hidden && document.querySelector('.knowledge-incremental').textContent.includes('沿用上次评估，本轮未重新评估') && document.querySelector('[data-organize-report] pre').textContent===window.knowledgeOrganization.report",'Unchanged result rewrites knowledge, claims a new review or offers continuation');
+  await noInjection();
+  const afterUnchanged=await start();
+  await assert("!window.knowledgeOrganization.calls.start.at(-1).resume_job_id",'Unchanged result was reused as an unfinished checkpoint');
+  await evaluate(`window.knowledgeOrganization.finish(${JSON.stringify(afterUnchanged)},'cancelled',null,false)`);
+  await waitFor("!document.querySelector('[data-organize-start]').disabled");
+
   // An older shared library offers an explicit, repository-only split with a reviewable preview.
   await visitHistory();await evaluate('window.knowledgeOrganization.needsSeparation=true');await visitKnowledge();
   await evaluate("document.querySelector('.knowledge-location').open=true");
