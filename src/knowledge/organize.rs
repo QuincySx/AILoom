@@ -12,6 +12,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+mod incremental;
 mod review;
 mod runtime;
 mod task;
@@ -130,15 +131,20 @@ pub fn status(data: &Path, root: &Path) -> Result<Value> {
 }
 
 pub struct Prepared {
+    data_root: PathBuf,
     input: OrganizationInput,
     runner: Runner,
     focus: String,
     collection: Option<Value>,
     started: Instant,
     execution_record: Option<Value>,
+    incremental: Option<incremental::Context>,
 }
 
 impl Prepared {
+    pub fn incremental_summary(&self) -> Option<&Value> {
+        self.incremental.as_ref().map(|context| &context.summary)
+    }
     pub fn set_execution_record(&mut self, record: Value) {
         self.execution_record = Some(record);
     }
@@ -175,12 +181,14 @@ pub fn prepare(data: &Path, root: &Path, runner: &str, focus: &str) -> Result<Pr
     }
     let input = location::organization_input(data, root)?;
     Ok(Prepared {
+        data_root: data.into(),
         input,
         runner,
         focus: focus.into(),
         collection: None,
         started: Instant::now(),
         execution_record: None,
+        incremental: None,
     })
 }
 
@@ -194,6 +202,8 @@ pub fn collect_sources(
         location::collect_organization_input(data, &prepared.input, &cancelled, &progress)?;
     prepared.input = input;
     prepared.collection = Some(collection.clone());
+    progress("原文采集完成，比较上次成功整理后的资料、代码与人工 Wiki 变化");
+    prepared.incremental = Some(incremental::prepare(data, prepared, &cancelled, &progress)?);
     Ok(collection)
 }
 
@@ -210,10 +220,13 @@ fn manifest(prepared: &Prepared) -> Value {
         "historical_source_origins":input.historical_origins,
         "worktrees":input.worktrees,
         "collection":prepared.collection,
+        "incremental":prepared.incremental_summary(),
+        "incremental_changes":prepared.incremental.as_ref().map(|c| &c.changes),
         "previous_report":input.previous_report.as_ref().map(|_| if input.path.join(&input.report_path).is_file() { input.report_path.clone() } else if input.path.join(location::legacy_wiki_index(&input.project_id)).is_file() {location::legacy_wiki_index(&input.project_id)} else {PathBuf::from("docs/organized").join(format!("{}.md",input.project_id))}),
         "previous_documents":input.previous_documents,
         "excluded_documents":input.excluded_documents,
         "focus":if focus.is_empty() { DEFAULT_FOCUS } else { focus },
+        "additional_focus":!focus.is_empty(),
         "generated_at":crate::ids::now_iso(),
         "schema":"ailoom-repository-wiki/v1",
     })
@@ -392,13 +405,19 @@ pub fn generate(
     )
 }
 
+#[derive(Debug, PartialEq)]
+pub enum DraftOutcome {
+    Draft(String),
+    Unchanged { reason: String },
+}
+
 pub fn generate_planned(
     prepared: &Prepared,
     resume: Option<Value>,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
     retain: impl Fn(&Checkpoint),
-) -> Result<String> {
+) -> Result<DraftOutcome> {
     workflow::run(prepared, resume, cancelled, progress, retain)
 }
 
@@ -715,6 +734,7 @@ mod tests {
 
     fn prepared(data: &Path, root: &Path) -> Prepared {
         Prepared {
+            data_root: data.into(),
             input: location::organization_input(data, root).unwrap(),
             runner: Runner {
                 id: "codex".into(),
@@ -726,6 +746,7 @@ mod tests {
             collection: None,
             started: Instant::now(),
             execution_record: None,
+            incremental: None,
         }
     }
 
@@ -2327,7 +2348,7 @@ output.write_text(value,encoding='utf-8')
             |cp| *saved.borrow_mut() = Some(json!(cp)),
         )
         .unwrap();
-        assert_eq!(result, report);
+        assert_eq!(result, DraftOutcome::Draft(report));
         assert_eq!(
             std::fs::read_to_string(trace).unwrap(),
             "plan:0\nbatch:0\nbatch:1\nsynthesize:2\n"
@@ -2408,15 +2429,9 @@ output.write_text('先核对业务规则，再核对历史取舍。' if phase=='
         );
         p.runner.executable = Some(executable);
         let saved = std::cell::RefCell::new(None);
-        assert!(generate_planned(
-            &p,
-            None,
-            || false,
-            |_| {},
-            |s| *saved.borrow_mut() = Some(json!(s))
-        )
-        .unwrap()
-        .contains("实际返回"));
+        assert!(matches!(generate_planned(
+            &p, None, || false, |_| {}, |s| *saved.borrow_mut() = Some(json!(s))
+        ).unwrap(), DraftOutcome::Draft(report) if report.contains("实际返回")));
         let mut value = saved.borrow().clone().unwrap();
         assert!(value["plan"].as_str().unwrap().contains("历史取舍"));
         value["project_id"] = json!("another-project");
@@ -2507,7 +2522,7 @@ output.write_text(text,encoding='utf-8')
             .contains("已有证据"));
         let final_report =
             generate_planned(&p, Some(checkpoint), || false, |_| {}, |_| {}).unwrap();
-        assert_eq!(final_report, report);
+        assert_eq!(final_report, DraftOutcome::Draft(report));
     }
 
     #[cfg(unix)]
@@ -2767,6 +2782,358 @@ time.sleep(30)
         assert_eq!(
             std::fs::read_to_string(work.path().join("review-candidate.md")).unwrap(),
             report
+        );
+    }
+
+    #[cfg(unix)]
+    fn reviewed_incremental_fixture() -> (tempfile::TempDir, PathBuf, PathBuf, Prepared) {
+        let (tmp, root, data) = fixture();
+        std::fs::write(
+            root.join("README.md"),
+            "# 开发决策\n保留迁移的历史理由与异常约束。\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("module.ts"), "export const rule = 1;\n").unwrap();
+        let mut p = prepared(&data, &root);
+        p.focus.clear();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(p.incremental_summary().unwrap()["mode"], "bootstrap");
+        assert!(!incremental::can_reuse(&p, &|| false, &|_| {}).unwrap());
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+output.write_text('# 开发知识评估\n结论：通过\n范围：测试夹具。\n<!-- ailoom-review: pass -->',encoding='utf-8')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let result = complete(
+            &data,
+            &p,
+            test_report("已核对测试夹具中的迁移规则。"),
+            || false,
+            |_| {},
+            |_, _, _| {},
+        )
+        .unwrap();
+        assert!(result.saved && result.warning.is_none());
+        let mut p = prepared(&data, &root);
+        p.focus.clear();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        assert_eq!(p.incremental_summary().unwrap()["changes"], 0);
+        assert!(incremental::can_reuse(&p, &|| false, &|_| {}).unwrap());
+        (tmp, root, data, p)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_knowledge_only_plans_and_never_rewrites_or_claims_a_new_review() {
+        let (_tmp, _root, _data, mut p) = reviewed_incremental_fixture();
+        let before = std::fs::read(p.input.path.join(".ailoom/review.json")).unwrap();
+        let homepage = std::fs::read(p.input.path.join("README.md")).unwrap();
+        let (_script, executable) = fake_cli(
+            r#"import sys, pathlib, json
+text=sys.stdin.read()
+assert len(text.encode())<65536
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+context=json.loads((output.parent/'stage-context.json').read_text())
+assert context['phase']=='plan', 'unchanged inputs must not compile, synthesize or review'
+task=json.loads((output.parent/'input/task.json').read_text())
+assert task['incremental']['unchanged_review_available'] is True
+assert '未变不代表读完' in text and '未重读' in text
+output.write_text('{"reuse_existing":true,"reason":"已检查来源记录与问题，本轮没有需要继续的事项，沿用原评估范围","batches":[]}',encoding='utf-8')
+"#,
+        );
+        p.runner.executable = Some(executable);
+        let result = generate_planned(&p, None, || false, |_| {}, |_| {}).unwrap();
+        assert!(
+            matches!(result, DraftOutcome::Unchanged { reason } if reason.contains("来源记录"))
+        );
+        assert_eq!(
+            std::fs::read(p.input.path.join(".ailoom/review.json")).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read(p.input.path.join("README.md")).unwrap(),
+            homepage
+        );
+        p.focus = "重新核实迁移".into();
+        assert!(!incremental::can_reuse(&p, &|| false, &|_| {}).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_code_untracked_docs_manual_wiki_and_sources_are_all_visible() {
+        let (_tmp, root, data, p) = reviewed_incremental_fixture();
+        std::fs::write(root.join("module.ts"), "export const rule = 2;\n").unwrap();
+        std::fs::write(root.join("new.md"), "# 新决策\n保留实际理由。\n").unwrap();
+        std::fs::write(
+            p.input.path.join("wiki/human.md"),
+            "# 人工修订\n不能覆盖。\n",
+        )
+        .unwrap();
+        std::fs::write(p.input.path.join(note_path(&p)), "# 迁移\n新增异常约束。\n").unwrap();
+        let mut next = prepared(&data, &root);
+        next.focus.clear();
+        collect_sources(&data, &mut next, || false, |_| {}).unwrap();
+        let changes = &next.incremental.as_ref().unwrap().changes;
+        for (kind, suffix) in [
+            ("code", "module.ts"),
+            ("code", "new.md"),
+            ("wiki", "human.md"),
+            ("source", "migration.md"),
+        ] {
+            assert!(
+                changes
+                    .iter()
+                    .any(|c| c["kind"] == kind && c["path"].as_str().unwrap().ends_with(suffix)),
+                "{kind} {suffix}: {changes:?}"
+            );
+        }
+        assert!(!incremental::can_reuse(&next, &|| false, &|_| {}).unwrap());
+        std::fs::remove_file(root.join("module.ts")).unwrap();
+        collect_sources(&data, &mut next, || false, |_| {}).unwrap();
+        assert!(next
+            .incremental
+            .as_ref()
+            .unwrap()
+            .changes
+            .iter()
+            .any(|c| c["kind"] == "code"
+                && c["change"] == "deleted"
+                && c["path"].as_str().unwrap().ends_with("module.ts")));
+        // Rejected or incomplete candidates cannot advance the successful baseline.
+        let (_script, executable) = fake_cli(
+            r#"import sys,pathlib
+sys.stdin.read()
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text('# 开发知识评估\n结论：评估资料不足\n<!-- ailoom-review: insufficient -->',encoding='utf-8')
+"#,
+        );
+        next.runner.executable = Some(executable);
+        assert!(
+            !complete(
+                &data,
+                &next,
+                test_report("待核实。"),
+                || false,
+                |_| {},
+                |_, _, _| {}
+            )
+            .unwrap()
+            .saved
+        );
+        collect_sources(&data, &mut next, || false, |_| {}).unwrap();
+        assert!(
+            next.incremental_summary().unwrap()["code_changes"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn planner_continues_unread_items_even_when_files_have_not_changed() {
+        let (_tmp, _root, _data, mut p) = reviewed_incremental_fixture();
+        let report = test_report("本轮补读此前未读的证据。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys,pathlib,json
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+phase=json.loads((output.parent/'stage-context.json').read_text())['phase']
+if phase=='plan': text='{{"batches":[{{"title":"补读","scope":"上轮尚未读取的资料，先核对再合并"}}]}}'
+elif phase=='batch': text='# 续读结果\n原有缺口已经按证据核对。'
+else: text={report:?}
+output.write_text(text,encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        assert_eq!(
+            generate_planned(&p, None, || false, |_| {}, |_| {}).unwrap(),
+            DraftOutcome::Draft(report)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changes_during_planning_fall_back_to_compilation_instead_of_reuse_or_failure() {
+        let (_tmp, root, _data, mut p) = reviewed_incremental_fixture();
+        let report = test_report("规划时发现代码更新，已安排核对。");
+        let file = root.join("module.ts").to_str().unwrap().to_string();
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys,pathlib,json
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+phase=json.loads((output.parent/'stage-context.json').read_text())['phase']
+if phase=='plan':
+    pathlib.Path({file:?}).write_text('export const rule = 3;')
+    text='{{"reuse_existing":true,"reason":"检查后建议沿用","batches":[]}}'
+elif phase=='batch': text='# 核对变化\n已重新检查当前代码。'
+else: text={report:?}
+output.write_text(text,encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        assert_eq!(
+            generate_planned(&p, None, || false, |_| {}, |_| {}).unwrap(),
+            DraftOutcome::Draft(report)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn incremental_baselines_are_local_to_project_and_missing_or_corrupt_state_is_safe() {
+        let (_tmp, root, data, p) = reviewed_incremental_fixture();
+        let directory = data.join("knowledge/organization-baselines");
+        let baseline = std::fs::read_dir(&directory)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let bytes = std::fs::read(&baseline).unwrap();
+        for field in ["schema", "project_id", "knowledge_id", "policy"] {
+            let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+            value[field] = json!("different");
+            std::fs::write(&baseline, serde_json::to_vec(&value).unwrap()).unwrap();
+            let context = incremental::prepare(&data, &p, &|| false, &|_| {}).unwrap();
+            assert_eq!(context.summary["mode"], "bootstrap", "{field}");
+        }
+        std::fs::write(&baseline, b"interrupted invalid record").unwrap();
+        assert_eq!(
+            incremental::prepare(&data, &p, &|| false, &|_| {})
+                .unwrap()
+                .summary["mode"],
+            "bootstrap"
+        );
+        std::fs::remove_file(&baseline).unwrap();
+        let mut next = prepared(&data, &root);
+        next.focus.clear();
+        collect_sources(&data, &mut next, || false, |_| {}).unwrap();
+        assert!(!incremental::can_reuse(&next, &|| false, &|_| {}).unwrap());
+        assert!(
+            p.input.path.join("wiki/topic-migration.md").is_file(),
+            "losing the local cache must not lose Wiki pages"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn incremental_scanning_respects_nested_repository_and_symlink_boundaries() {
+        use std::os::unix::fs::symlink;
+        let (tmp, root, data) = fixture();
+        std::fs::create_dir_all(root.join("nested/.git")).unwrap();
+        std::fs::write(root.join("nested/foreign.ts"), "foreign").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/package")).unwrap();
+        std::fs::write(root.join("node_modules/package/index.ts"), "dependency").unwrap();
+        let outside = tmp.path().join("outside.ts");
+        std::fs::write(&outside, "other project").unwrap();
+        symlink(&outside, root.join("linked.ts")).unwrap();
+        std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        std::fs::write(root.join(".github/workflows/check.yml"), "name: Check").unwrap();
+        std::fs::write(root.join("module.ts"), "project code").unwrap();
+        let mut p = prepared(&data, &root);
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        let context = p.incremental.as_ref().unwrap();
+        let code = context
+            .changes
+            .iter()
+            .filter(|r| r["kind"] == "code")
+            .map(|r| r["path"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(code.iter().any(|p| p.ends_with("module.ts")));
+        assert!(code
+            .iter()
+            .any(|p| p.ends_with(".github/workflows/check.yml")));
+        assert!(!code
+            .iter()
+            .any(|p| p.contains("foreign") || p.contains("node_modules") || p.contains("linked")));
+    }
+
+    #[test]
+    fn large_change_and_uncertainty_lists_stay_out_of_the_cli_startup_input() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        let mut context = incremental::prepare(&data, &p, &|| false, &|_| {}).unwrap();
+        context.changes=(0..5000).map(|i| json!({"kind":"code","path":format!("src/{i}/{}.ts","long-module-name-".repeat(20)),"change":"changed"})).collect();
+        context.summary["uncertainties"] = json!((0..5000)
+            .map(|i| format!("无法比较 {i} {}", "long-path-".repeat(20)))
+            .collect::<Vec<_>>());
+        p.incremental = Some(context);
+        let work = tempfile::tempdir().unwrap();
+        let startup = task::prepare(&p, work.path()).unwrap();
+        assert!(startup.len() < 64 * 1024);
+        let task: Value =
+            serde_json::from_slice(&std::fs::read(work.path().join("input/task.json")).unwrap())
+                .unwrap();
+        assert_eq!(task["incremental_changes"]["count"], 5000);
+        assert_eq!(task["incremental"]["uncertainties"]["count"], 5000);
+        for field in [
+            &task["incremental_changes"],
+            &task["incremental"]["uncertainties"],
+        ] {
+            let mut count = 0;
+            for file in field["files"].as_array().unwrap() {
+                let rows: Vec<Value> =
+                    serde_json::from_slice(&std::fs::read(file.as_str().unwrap()).unwrap())
+                        .unwrap();
+                count += rows.len();
+            }
+            assert_eq!(count, 5000, "entries must not be truncated");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manual_edits_after_publication_cannot_be_silently_added_to_the_successful_baseline() {
+        let (_tmp, _root, data, mut p) = reviewed_incremental_fixture();
+        let proof: Value = serde_json::from_slice(
+            &std::fs::read(p.input.path.join(".ailoom/review.json")).unwrap(),
+        )
+        .unwrap();
+        // Recreate the original publication context; the published fixture has already refreshed its input.
+        p.input.fingerprint = proof["input_sha256"].as_str().unwrap().into();
+        std::fs::write(
+            p.input.path.join("wiki/new-human.md"),
+            "# 发布后的人工补充\n此内容尚未纳入评估。\n",
+        )
+        .unwrap();
+        let error = incremental::published(&data, &p, proof["candidate_sha256"].as_str().unwrap())
+            .unwrap_err();
+        assert!(error.message.contains("人工改动"), "{}", error.message);
+        p.input = location::organization_input(&data, &p.input.root).unwrap();
+        let context = incremental::prepare(&data, &p, &|| false, &|_| {}).unwrap();
+        assert!(context
+            .changes
+            .iter()
+            .any(|row| row["kind"] == "wiki" && row["path"] == "wiki/new-human.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreviewed_first_run_cannot_be_skipped_even_if_the_model_requests_reuse() {
+        let (_tmp, root, data) = fixture();
+        let mut p = prepared(&data, &root);
+        p.focus.clear();
+        collect_sources(&data, &mut p, || false, |_| {}).unwrap();
+        let report = test_report("首次建立证据基线，不能直接沿用未评估知识。");
+        let (_script, executable) = fake_cli(&format!(
+            r#"import sys,pathlib,json
+sys.stdin.read()
+output=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
+context=json.loads((output.parent/'stage-context.json').read_text())
+if context['phase']=='plan': text='{{"reuse_existing":true,"reason":"模型错误地建议沿用","batches":[]}}'
+elif context['phase']=='batch':
+    assert '复查条件不成立' in context['next_batch']['scope']
+    text='# 已安排首次核对\n原有资料与代码。'
+else: text={report:?}
+output.write_text(text,encoding='utf-8')
+"#
+        ));
+        p.runner.executable = Some(executable);
+        assert_eq!(
+            generate_planned(&p, None, || false, |_| {}, |_| {}).unwrap(),
+            DraftOutcome::Draft(report)
         );
     }
 }

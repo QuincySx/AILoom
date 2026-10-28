@@ -240,12 +240,21 @@ pub(super) fn complete(
                         &report,
                         Some((&assessment.report, assessment.proof())),
                     )?;
+                    let warning =
+                        super::incremental::published(data, prepared, &assessment.candidate_sha256)
+                            .err()
+                            .map(|error| {
+                                format!(
+                                    "知识与评估已保存，但增量基线未能保存，下次会重新核对：{}",
+                                    error.message
+                                )
+                            });
                     return Ok(Completion {
                         saved: true,
                         report_path: Some(path),
                         needs_revision: false,
                         needs_continuation: false,
-                        warning: None,
+                        warning,
                         repair_attempts: attempts,
                         assessment_status,
                     });

@@ -2,6 +2,7 @@ import { api, esc } from '../services/api.js';
 
 const labels = {queued:'等待开始',running:'正在整理',success:'整理完成',failed:'整理失败',cancelled:'已取消',interrupted:'整理已中断'};
 const running = job => job && ['queued','running'].includes(job.status);
+const resumable = job => job?.result?.checkpoint && !job.result.saved && !job.result.unchanged;
 
 export function collectionDetails(collection) {
   if(!collection)return '';
@@ -10,9 +11,16 @@ export function collectionDetails(collection) {
 }
 
 export function organizationOutcome(job) {
+  if(job?.result?.unchanged)return '无需更新';
   if(job?.result?.needs_continuation)return '整理待继续';
   if(job?.result?.needs_revision)return '整理稿待修订';
   return labels[job?.status]||job?.status||'';
+}
+
+export function incrementalDetails(result) {
+  const delta=result?.incremental;
+  if(!delta)return '';
+  return `<details class="knowledge-incremental"><summary>${delta.mode==='incremental'?'按变化维护':'建立首次增量基线'}</summary><p>资料及出处变化 ${esc(delta.source_changes??0)} 项，代码与本地文档变化 ${esc(delta.code_changes??0)} 项，Wiki 变化 ${esc(delta.wiki_changes??0)} 项。AI 判断受影响主题，并检查未读资料与待核实事项。</p>${delta.baseline_published_at?`<p>上次成功整理：${esc(delta.baseline_published_at)}</p>`:''}<p class="muted">${esc(delta.scope||'')}</p>${delta.uncertainties?.length?`<p>部分指纹无法比较，本轮不会直接沿用：</p><ul>${delta.uncertainties.map(text=>`<li>${esc(text)}</li>`).join('')}</ul>`:''}${result.unchanged?`<p>${esc(result.reuse_reason||'本轮无需更新')}。沿用上次评估，本轮未重新评估；已有 Wiki 未改写。</p>`:''}</details>`;
 }
 
 export function revisionDetails(result) {
@@ -50,8 +58,8 @@ export function KnowledgeOrganization(container, {rootPath}) {
     q('[data-organize-cancel]').hidden=!running(job);
     q('[data-organize-cancel]').disabled=busy||job?.cancel_requested;
     q('[data-organize-progress]').hidden=!running(job);
-    q('[data-organize-start]').textContent=job?.result?.checkpoint&&!job.result.saved?'继续整理':'开始整理';
-    q('[data-organize-fresh]').hidden=!(job?.result?.checkpoint&&!job.result.saved&&!pending);
+    q('[data-organize-start]').textContent=resumable(job)?'继续整理':'开始整理';
+    q('[data-organize-fresh]').hidden=!(resumable(job)&&!pending);
     q('[data-organize-fresh]').disabled=checking||pending;
   }
   function render() {
@@ -69,11 +77,11 @@ export function KnowledgeOrganization(container, {rootPath}) {
       <div class="knowledge-organization-options"><label>执行工具<select data-organize-runner aria-label="整理知识的执行工具">${tools.map(r=>`<option value="${esc(r.id)}" ${r.id===runner?'selected':''} ${r.available?'':'disabled'}>${esc(r.name)}${r.available?'':'（未找到 CLI）'}</option>`).join('')}</select></label><button type="button" data-organize-detect>重新检测</button></div>
       <details data-organize-options ${focus.trim()?'open':''}><summary>补充整理要求（可选）</summary><label>额外关注的内容<textarea data-organize-focus rows="2" maxlength="2000" placeholder="留空即按默认规则全面整理，例如也可补充：优先整理硬件连接的排障经验">${esc(focus)}</textarea></label></details>
       <p class="muted">调用所选工具的本机配置和登录状态，使用其模型服务。整理结果会保存到本项目知识库，后续检索可用。</p>
-      <p class="muted" data-organize-runtime>先规划，再按模块分批保存阶段稿，每批约 ${esc(state.runtime_policy?.batch_minutes??20)} 分钟。${esc(state.runtime_policy?.wrap_up_minutes??90)} 分钟进入收尾，总预算 ${esc(state.runtime_policy?.maximum_minutes??120)} 分钟；到预算边界保留进度，可继续整理。页面持续更新耗时与最近输出，可随时取消。</p>
+      <p class="muted" data-organize-runtime>先比较资料、代码与人工 Wiki 的变化，由 AI 判断影响及未完成项，再按模块分批保存阶段稿，每批约 ${esc(state.runtime_policy?.batch_minutes??20)} 分钟。${esc(state.runtime_policy?.wrap_up_minutes??90)} 分钟进入收尾，总预算 ${esc(state.runtime_policy?.maximum_minutes??120)} 分钟；到预算边界保留进度，可继续整理。页面持续更新耗时与最近输出，可随时取消。</p>
       ${!state.source_count?'<p class="muted">还没有入库资料也可以直接开始，系统会自动读取工作目录内的文档。配置恢复副本和工具资源不参与整理。</p>':''}
       <div class="actions"><button type="button" class="primary" data-organize-start>开始整理</button><button type="button" data-organize-fresh hidden>重新规划整理</button><button type="button" data-organize-cancel hidden>取消整理</button><a href="#/tasks">查看整理记录</a></div>
       <progress data-organize-progress aria-label="知识整理进度" hidden></progress><p data-organize-message role="status" aria-live="polite"></p>
-      <div data-organize-collection></div><div data-organize-stages></div><div data-organize-assessments></div><div data-organize-revisions></div>
+      <div data-organize-incremental></div><div data-organize-collection></div><div data-organize-stages></div><div data-organize-assessments></div><div data-organize-revisions></div>
       <details data-organize-report ${report?'open':''} ${report?'':'hidden'}><summary>仓库开发知识</summary>${state.pages?.length?`<nav class="knowledge-pages" aria-label="知识页面"><button type="button" data-wiki-index>知识首页</button>${state.pages.map((p,i)=>`<button type="button" data-wiki-page="${i}">${esc(p.title)}</button>`).join('')}</nav>`:''}<p data-wiki-path class="path">${esc(state.report_path||'')}</p><pre class="knowledge-organization-report">${esc(report||'')}</pre></details>
       <details data-organize-draft hidden><summary>本次未保存的整理草稿</summary><pre class="knowledge-organization-report"></pre></details>`;
     q('[data-organize-runner]').onchange=()=>{remember();controls();};
@@ -94,6 +102,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
     if(!job)return;
     const note=job.progress?.at(-1)||'';
     message(organizationOutcome(job)+(job.error?'：'+job.error:note?' · '+note:''));
+    q('[data-organize-incremental]').innerHTML=incrementalDetails(job.result);
     q('[data-organize-collection]').innerHTML=collectionDetails(job.result?.collection);
     q('[data-organize-revisions]').innerHTML=revisionDetails(job.result);
     const reviewKey=JSON.stringify([job.result?.assessment_history,job.result?.assessment_partial]);
@@ -140,7 +149,7 @@ export function KnowledgeOrganization(container, {rootPath}) {
       if(!alive)return;
       for(const source of scope.worktrees||[])await api.approveDir(source.path);
       if(!alive)return;
-      const resume_job_id=fresh!==true&&job?.result?.checkpoint&&!job.result.saved?job.id:undefined;
+      const resume_job_id=fresh!==true&&resumable(job)?job.id:undefined;
       const result=await request({action:'organize',runner,focus,resume_job_id,idempotency_key:crypto.randomUUID()});
       if(!alive)return;
       job={id:result.job_id,status:'queued',progress:['等待本机 AI 工具开始整理']};

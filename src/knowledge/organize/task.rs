@@ -96,7 +96,7 @@ pub(super) fn review(
         None
     };
     let input = json!({"review_report":candidate,"report_destination":"docs/organized/","candidate_sha256":crate::ids::sha256_hex(report.as_bytes()),"input_sha256":prepared.input.fingerprint,"execution_record":execution,"previous_assessment":prior});
-    prompt.push_str(&format!("\n## 本轮独立评估入口\n\n{input}\n\n这是新的独立上下文，先从原文建立关键知识清单，再读候选稿；不要以生成者自检替代评估。execution_record 的计划与阶段稿只用于核对处理范围、跳过理由和遗漏，不是原始证据。逐项核对候选稿的已读、采用、沿用、历史保留、去重、未采用和未读记录；未记处理状态不得推断为已读。未采用要有内容判断依据；未读/不可读取要披露原因与影响，不能伪装成无价值。核对旧稿差异、人工内容、阶段取舍与相关代码，不能每次只看新稿自己选中的结论。\nprevious_assessment 和执行记录中的 assessment_file 指向完整评估正文，需按范围读取。若 previous_assessment 存在，先定位上轮实际核对范围、未完成项和缺陷，对同一输入优先续核剩余资料及受修订影响的主张，避免每次全盘重读；旧评估或未完成评估只提供线索，不能代替当前代码核对或当成已通过。核对其证据和矛盾并明确结论，不是为通过而换标签；必要时重读相关原文与代码，保留仍成立的缺陷。评估来源使用知识库相对路径、代码使用仓库相对路径及行号的纯文本定位，不构造相对 Markdown 链接。最终输出完整中文评估，并在末尾注明 <!-- ailoom-review: pass -->、<!-- ailoom-review: revise --> 或 <!-- ailoom-review: insufficient --> 之一；自然语言结论必须一致。\n"));
+    prompt.push_str(&format!("\n## 本轮独立评估入口\n\n{input}\n\n这是新的独立上下文，先从原文建立关键知识清单，再读候选稿；不要以生成者自检替代评估。先读 incremental 与变化分段、上次评估和资料处理记录，独立判断受影响主题、调用方和未完成项，重点核对新增/修订/冲突及跨模块影响，抽查未变主题的沿用依据；未变且已有评估的范围可沿用原核对记录，但必须注明其原日期、范围和本轮未重读，不能把未重读写成重新核验。无可信基线时不能假定旧知识通过。execution_record 的计划与阶段稿只用于核对处理范围、跳过理由和遗漏，不是原始证据。逐项核对候选稿的已读、采用、沿用、历史保留、去重、未采用和未读记录；未记处理状态不得推断为已读。未采用要有内容判断依据；未读/不可读取要披露原因与影响，不能伪装成无价值。核对旧稿差异、人工内容、阶段取舍与相关代码，不能每次只看新稿自己选中的结论。\nprevious_assessment 和执行记录中的 assessment_file 指向完整评估正文，需按范围读取。若 previous_assessment 存在，先定位上轮实际核对范围、未完成项和缺陷，对同一输入优先续核剩余资料及受修订影响的主张，避免每次全盘重读；旧评估或未完成评估只提供线索，不能代替当前代码核对或当成已通过。核对其证据和矛盾并明确结论，不是为通过而换标签；必要时重读相关原文与代码，保留仍成立的缺陷。评估来源使用知识库相对路径、代码使用仓库相对路径及行号的纯文本定位，不构造相对 Markdown 链接。最终输出完整中文评估，并在末尾注明 <!-- ailoom-review: pass -->、<!-- ailoom-review: revise --> 或 <!-- ailoom-review: insufficient --> 之一；自然语言结论必须一致。\n"));
     bounded(prompt)
 }
 
@@ -109,8 +109,8 @@ pub(super) fn stage(
     let mut prompt = prepare(prepared, work)?;
     let path = write_stage_context(work, context)?;
     let instructions = match phase {
-        "plan" => "这是规划阶段，先用约 5 分钟列目录、阅读导航和少量代表资料，判断规模、模块、历史分支及代码核对入口。不要先通读全部原文。按知识语义及工作量拆成每批约 20 分钟可交付的批次，优先新增、变化、缺证与受代码变化影响的主题，给汇总、独立评估和修订预留约 40 分钟；小项目可一批，规模过大可跨轮继续。最终回复仅输出 JSON：{\"batches\":[{\"title\":\"模块或问题名\",\"scope\":\"实际目录、资料线索、代码核对位置、优先级、预估耗时及本批交付范围\"}]}。这是计划，不是已完成的阅读记录。不要编造不存在的路径。",
-        "batch" => "这是分批编纂阶段。读取 stage-context.json 中 next_batch 和 checkpoint，只深入本批模块及必要的跨模块证据；其他批次通过已保存阶段稿了解，不从头重读全部项目。以约 20 分钟返回可保留的阶段稿为目标；范围过大时明确本批已读、未读、代码核对范围和后续任务，不用赶工覆盖证据。保留直接出处、真实决策背景、冲突与适用条件，沿用既有主题 ID。最终回复仅输出本批中文 Markdown 阶段稿：主题正文、资料处理记录（定位、读取深度、采用/合并/沿用/历史保留/未采用及理由/未读/读取失败、对应主题与代码核对）、未完成范围与下一步；无需输出全库索引。阶段稿不会直接发布。checkpoint.partial_file 是上次未完成阶段的线索，核实后接着做；旧阶段稿不是独立原始证据。",
+        "plan" => "这是规划阶段，先用约 5 分钟列目录、阅读导航和少量代表资料，判断规模、模块、历史分支及代码核对入口。不要先通读全部原文。按知识语义及工作量拆成每批约 20 分钟可交付的批次，优先新增、变化、缺证与受代码变化影响的主题，给汇总、独立评估和修订预留约 40 分钟；小项目可一批，规模过大可跨轮继续。最终回复仅输出 JSON：{\"batches\":[{\"title\":\"模块或问题名\",\"scope\":\"实际目录、资料线索、代码核对位置、优先级、预估耗时及本批交付范围\"}]}。这是计划，不是已完成的阅读记录。不要编造不存在的路径。 先读 task_index 的 incremental 与 incremental_changes：程序只报告文件事实，影响哪些主题、是否扩大到调用方/依赖、保留还是纠错由你判断。未变不代表读完，旧 sources、questions、上次评估及未完成计划中的资料优先续做；允许暂缓但说明真实理由。仅在 unchanged_review_available=true、没有新增/变化/删除、additional_focus=false、也没有本轮需要继续的未读/待核实事项时，可输出 {\"reuse_existing\":true,\"reason\":\"说明检查了哪些未完成项、为何本轮无需继续及原评估边界\",\"batches\":[]}。不能只因文件未变就沿用；不满足时正常规划批次。",
+        "batch" => "这是分批编纂阶段。读取 stage-context.json 中 next_batch 和 checkpoint，只深入本批模块及必要的跨模块证据；其他批次通过已保存阶段稿了解，不从头重读全部项目。以约 20 分钟返回可保留的阶段稿为目标；范围过大时明确本批已读、未读、代码核对范围和后续任务，不用赶工覆盖证据。保留直接出处、真实决策背景、冲突与适用条件，沿用既有主题 ID。最终回复仅输出本批中文 Markdown 阶段稿：主题正文、资料处理记录（定位、读取深度、采用/合并/核验后沿用/沿用原评估但本轮未重读/历史保留/未采用及理由/未读/读取失败、对应主题与代码核对）、未完成范围与下一步；无需输出全库索引。阶段稿不会直接发布。checkpoint.partial_file 是上次未完成阶段的线索，核实后接着做；旧阶段稿不是独立原始证据。",
         "synthesize" => "这是汇总与核对阶段。按范围读取 checkpoint 中所有 completed 阶段稿、计划和现有 Wiki；若 partial_file 已有上次汇总正文，先核对它并接着修订，避免从头重做，对跨模块关系、冲突、引用和实际覆盖做核对。阶段稿仅是本轮工作记录，事实仍引用真实原文及代码，不能引用临时 stage-context.json。保留人工修订，不重新从头遍历整个仓库。未读取或预算未完成的事项明确放入 questions、sources 与 validation，不虚构覆盖。最终回复输出符合上文输出约定的完整中文 Wiki 编纂稿，尚未经独立评估。",
         _ => unreachable!("fixed workflow phase"),
     };
@@ -159,9 +159,18 @@ pub(super) fn prepare(prepared: &Prepared, work: &Path) -> Result<String> {
         "previous_documents",
         "excluded_documents",
         "worktrees",
+        "incremental_changes",
     ] {
         let rows = task[field].take().as_array().cloned().unwrap_or_default();
         task[field] = parts(&directory, field, rows)?;
+    }
+    if task["incremental"].is_object() {
+        let errors = task["incremental"]["uncertainties"].take();
+        task["incremental"]["uncertainties"] = parts(
+            &directory,
+            "incremental_uncertainties",
+            errors.as_array().into_iter().flatten().cloned(),
+        )?;
     }
     for field in ["source_origins", "historical_source_origins"] {
         let origins = task[field].take();
@@ -222,7 +231,9 @@ pub(super) fn prepare(prepared: &Prepared, work: &Path) -> Result<String> {
         "source_index":source_index,
         "task_index":index,
         "source_count":prepared.source_count(),
+        "incremental":task["incremental"].as_object().map(|summary| summary.iter().filter(|(key,_)| key.as_str()!="uncertainties").map(|(key,value)| (key.clone(),value.clone())).collect::<serde_json::Map<String,Value>>()),
         "focus":task["focus"],
+        "additional_focus":task["additional_focus"],
         "schema":task["schema"],
         "generated_at":task["generated_at"],
         "previous_report":task["previous_report"],
@@ -230,10 +241,10 @@ pub(super) fn prepare(prepared: &Prepared, work: &Path) -> Result<String> {
     let prompt = format!(
         "{ORGANIZATION_PROMPT}\n\n## 自主发现本地 Markdown\n\n\
         本次 discovery_mode 为 local-markdown。先列目录、搜索本地 Markdown，再按实际内容阅读和识别开发知识；不先通读全部资料清单或出处表。\
-        从 repository 的文档和 source_directories 的已归档原文开始，读取 wiki_directory 与项目首页保留人工维护内容。\
+        先读项目首页、sources、questions 与上次评估的范围和未完成项；有 incremental 时先按变化清单定位相关模块，再读对应旧主题、原文及代码，不从头遍历所有旧主题。人工修改的页面需完整读取并保留。无可信基线时按首次建基线规划，旧知识仍保留并核对。\
         task_index 仅是按需查询入口；如有多个工作目录，先读取其中 worktrees 字段及其文件，固定本轮允许扫描的目录范围。\
         资料归属、原文与分支出处、未读取原因或旧页信息需要核对时，再查询对应字段和相关条目；无需先加载全部记录。\
-        source_documents、previous_documents、excluded_documents、source_origins、historical_source_origins 及 collection.skipped \n\
+        source_documents、previous_documents、excluded_documents、source_origins、historical_source_origins、incremental_changes 及 collection.skipped \n\
         使用 count 和 files 列出完整条目数与分段文件；按文件逐段读取，不要一次拼接或输出全部清单。\
         source_origins 和 historical_source_origins 每行包含 document（库内原文路径）和一个 origin；同一路径的多行来源必须合并理解，不能只取第一行。\
         每次只读取少量条目或不超过 12000 字符，超长单条记录也分段读取；大原文和代码同样按章节或行范围阅读。\

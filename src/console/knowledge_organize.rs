@@ -71,6 +71,7 @@ pub(super) fn start(state: &Arc<ServerState>, root: &Path, req: &Request) -> Res
                 && job.result["knowledge_id"] == prepared.knowledge_id()
                 && job.result["report_key"] == json!(prepared.report_key())
                 && job.result["saved"] != true
+                && job.result["unchanged"] != true
                 && job.result["checkpoint"].is_object()
                 && !matches!(job.status, JobStatus::Queued | JobStatus::Running)
         });
@@ -181,6 +182,7 @@ fn run(
             let job = ledger.get_mut(id).unwrap();
             job.result["collection"] = collection;
             job.result["source_count"] = json!(prepared.source_count());
+            job.result["incremental"] = json!(prepared.incremental_summary());
             jobs::persist_job(&state.data_root, job);
         }
         Err(e) => {
@@ -206,7 +208,7 @@ fn run(
             JobStatus::Running,
             "沿用已保留的候选稿，重新核对本轮资料并继续评估与修订",
         );
-        Ok(candidate.clone())
+        Ok(organize::DraftOutcome::Draft(candidate.clone()))
     } else {
         organize::generate_planned(
             &prepared,
@@ -225,7 +227,19 @@ fn run(
         )
     };
     let report = match result {
-        Ok(report) => report,
+        Ok(organize::DraftOutcome::Draft(report)) => report,
+        Ok(organize::DraftOutcome::Unchanged { reason }) => {
+            finish(
+                state,
+                id,
+                JobStatus::Success,
+                Some(
+                    json!({"saved":false,"unchanged":true,"reuse_reason":reason,"report":null,"report_partial":false,"needs_continuation":false,"needs_revision":false,"assessment_status":"reused"}),
+                ),
+                None,
+            );
+            return;
+        }
         Err(e) => {
             if e.context["kind"] == "organization_budget" && !jobs::is_cancelled(state, id) {
                 finish(
@@ -331,7 +345,7 @@ fn finish(
     result: Option<Value>,
     error: Option<String>,
 ) {
-    let (needs_revision, needs_continuation) = {
+    let (needs_revision, needs_continuation, unchanged) = {
         let mut ledger = state.jobs.lock_ok();
         if let Some(job) = ledger.get_mut(id) {
             job.error = error;
@@ -348,6 +362,9 @@ fn finish(
             ledger
                 .get(id)
                 .is_some_and(|job| job.result["needs_continuation"] == true),
+            ledger
+                .get(id)
+                .is_some_and(|job| job.result["unchanged"] == true),
         )
     };
     jobs::set_status(
@@ -355,6 +372,9 @@ fn finish(
         id,
         status,
         match status {
+            JobStatus::Success if unchanged => {
+                "本轮无需更新，已有知识未改写；沿用上次评估，本轮未重新评估"
+            }
             JobStatus::Success if needs_continuation => {
                 "本轮已收尾，计划与阶段稿已保留；可继续整理，当前知识未替换"
             }

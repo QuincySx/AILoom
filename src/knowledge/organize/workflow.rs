@@ -1,5 +1,7 @@
 //! Persist returned stage results, rather than trusting one unbounded model turn.
-use super::{fail, generate_draft, runtime, DraftTask, Prepared, Result};
+use super::{
+    fail, generate_draft, incremental, runtime, DraftOutcome, DraftTask, Prepared, Result,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -75,13 +77,23 @@ fn parse_plan(plan: &str) -> Vec<Batch> {
     }]
 }
 
+fn reuse_reason(plan: &str) -> Option<String> {
+    let (start, end) = plan.find('{').zip(plan.rfind('}'))?;
+    let plan: Value = serde_json::from_str(plan.get(start..=end)?).ok()?;
+    if plan["reuse_existing"] != true || !plan["batches"].as_array()?.is_empty() {
+        return None;
+    }
+    let reason = plan["reason"].as_str()?.trim();
+    (!reason.is_empty()).then(|| reason.to_string())
+}
+
 pub(super) fn run(
     prepared: &Prepared,
     resume: Option<Value>,
     cancelled: impl Fn() -> bool,
     progress: impl Fn(&str),
     retain: impl Fn(&Checkpoint),
-) -> Result<String> {
+) -> Result<DraftOutcome> {
     run_with_elapsed(prepared, resume, cancelled, progress, retain, || {
         prepared.started.elapsed()
     })
@@ -94,7 +106,8 @@ pub(super) fn run_with_elapsed(
     progress: impl Fn(&str),
     retain: impl Fn(&Checkpoint),
     elapsed: impl Fn() -> std::time::Duration,
-) -> Result<String> {
+) -> Result<DraftOutcome> {
+    let resuming = resume.is_some();
     let mut state = match resume {
         Some(value) => {
             let state: Checkpoint = serde_json::from_value(value)
@@ -127,7 +140,30 @@ pub(super) fn run_with_elapsed(
     if state.plan.is_empty() {
         progress("先盘点资料规模、模块与代码核对入口，制定分批整理计划");
         let plan = stage(prepared, &state, "plan", &cancelled, &progress, &retain)?;
-        state.batches = parse_plan(&plan);
+        let requested_reuse = reuse_reason(&plan);
+        if !resuming {
+            if let Some(reason) = &requested_reuse {
+                // Missing/changed evidence means normal compilation, not a formatting failure.
+                if incremental::can_reuse(prepared, &cancelled, &progress).unwrap_or(false) {
+                    if cancelled() {
+                        return Err(fail("整理已取消，已有知识保留"));
+                    }
+                    state.plan = plan;
+                    state.phase = "无需更新，沿用已有评估（本轮未重新评估）".into();
+                    state.partial.clear();
+                    retain(&state);
+                    return Ok(DraftOutcome::Unchanged {
+                        reason: reason.clone(),
+                    });
+                }
+                progress("沿用条件不成立，继续按资料与代码核对；保留既有知识");
+            }
+        }
+        state.batches = if requested_reuse.is_some() {
+            vec![Batch { title: "重新核对变化与未完成项".into(), scope: "原计划建议沿用，但应用复查条件不成立或当前任务正在续做，不能按无需更新结束。任务清单中的变化是开始时快照；重新盘点当前资料、相关代码及人工页面，检查规划期间变化、额外要求和未完成事项，再按证据维护旧主题。超出本批预算时返回部分成果并标记继续。".into() }]
+        } else {
+            parse_plan(&plan)
+        };
         state.plan = plan;
         state.partial.clear();
         retain(&state);
@@ -178,6 +214,7 @@ pub(super) fn run_with_elapsed(
         &progress,
         &retain,
     )
+    .map(DraftOutcome::Draft)
 }
 
 fn stage(

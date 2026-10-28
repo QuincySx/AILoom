@@ -544,3 +544,36 @@ test('能力资源库连续列出 200 项，按完整身份保留同名条目',a
   assert.equal(ids.length,200);assert.equal(new Set(ids).size,200);
   assert.ok(ids.includes(entries.at(-1).id));assert.ok(!html.includes('data-page='));
 });
+
+
+test('知识增量：显示沿用范围，转义变化信息，无需更新后允许新任务而非续做', async()=>{
+  const nodes=new Map(),section=new Element('section');
+  section.querySelector=key=>{if(!nodes.has(key)){const node=new Element('div');node.querySelectorAll=()=>[];nodes.set(key,node);}return nodes.get(key);};
+  section.querySelectorAll=()=>[];
+  const injection='<img src=x onerror=alert(1)>';
+  const result={unchanged:true,saved:false,assessment_status:'reused',reuse_reason:injection,checkpoint:{plan:'检查过未完成项',batches:[],completed:[]},incremental:{mode:'incremental',source_changes:0,code_changes:0,wiki_changes:0,baseline_published_at:'2026-10-28',scope:injection,uncertainties:[injection]}};
+  const previous={id:'previous',status:'success',result};
+  const calls=[];
+  const api={knowledge:async body=>{
+    if(body.action==='organization-status')return {runners:[{id:'codex',available:true}],source_count:1,worktrees:[],latest_job:previous};
+    calls.push(body);return {job_id:'new'};
+  },job:()=>new Promise(()=>{})};
+  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const context=vm.createContext({document:{createElement:()=>section},crypto:{randomUUID:()=> 'fixture'},setTimeout:()=>0,clearTimeout:()=>{}});
+  const module=new vm.SourceTextModule(await readFile('src/console/ui/features/knowledgeOrganization.js','utf8'),{context});
+  await module.link(()=>new vm.SyntheticModule(['api','esc'],function(){this.setExport('api',api);this.setExport('esc',esc);},{context}));
+  await module.evaluate();
+  assert.equal(module.namespace.organizationOutcome(previous),'无需更新');
+  const text=module.namespace.incrementalDetails(result);
+  assert.ok(text.includes('沿用上次评估，本轮未重新评估'));
+  assert.ok(text.includes('&lt;img'));
+  assert.ok(!text.includes('<img')&&!text.includes('评估通过'));
+  const instance=module.namespace.KnowledgeOrganization(new Element('div'),{rootPath:'/fixture'});
+  await new Promise(setImmediate);
+  assert.equal(section.querySelector('[data-organize-start]').textContent,'开始整理');
+  assert.equal(section.querySelector('[data-organize-fresh]').hidden,true);
+  assert.equal(section.querySelector('[data-organize-draft]').hidden,true);
+  await section.querySelector('[data-organize-start]').onclick();
+  assert.equal(calls[0].resume_job_id,undefined);
+  instance.destroy();
+});
